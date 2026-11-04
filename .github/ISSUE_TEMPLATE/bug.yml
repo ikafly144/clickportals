@@ -1,0 +1,50 @@
+name: 不具合報告 / Bug report
+description: プラグインの不具合を報告する
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: 不具合の内容
+      description: 何が起きたか
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+      value: |
+        1. 
+        2. 
+        3. 
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する動作
+    validations:
+      required: true
+  - type: dropdown
+    id: server
+    attributes:
+      label: サーバー
+      options:
+        - Paper
+        - Folia
+        - その他
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: バージョン
+      description: サーバー・ClickPortals・Vault／経済プラグインのバージョン
+      placeholder: "Paper 1.21.x (build xxx) / ClickPortals 1.0.0 / Vault 1.7.3 + EssentialsX"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ・スタックトレース
+      render: shell

@@ -1,0 +1,41 @@
+name: 機能要望 / Feature request
+description: 新機能・機能追加の提案
+labels: ["type:feature"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 概要
+      description: どのような機能が欲しいか、なぜ必要か
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 完了条件
+      description: 何ができれば完了とするか
+      value: |
+        - [ ] 
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 対象領域
+      multiple: true
+      options:
+        - aetheryte（エーテライト）
+        - warp（ワープ）
+        - dialog-ui（Dialog UI）
+        - economy（コスト・Vault）
+        - permission（パーミッション）
+        - i18n（多言語対応）
+        - persistence（永続化）
+        - platform（Paper/Folia）
+        - performance（パフォーマンス）
+        - build（ビルド・CI）
+  - type: textarea
+    id: related
+    attributes:
+      label: 関連
+      description: 親 Epic や関連 Issue（例：親 Epic: #3）

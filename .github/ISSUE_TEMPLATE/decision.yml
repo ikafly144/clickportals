@@ -1,0 +1,27 @@
+name: 設計決定 / Decision
+description: 仕様・設計について議論して決める
+labels: ["type:decision", "status:needs-discussion"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: 決めること
+      description: 何を決める必要があるか、背景
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: 選択肢
+      description: 検討中の案とそれぞれの長所・短所
+  - type: textarea
+    id: criteria
+    attributes:
+      label: 完了条件
+      value: |
+        - [ ] 結論がこの Issue に記録されている
+  - type: textarea
+    id: related
+    attributes:
+      label: 関連
+      description: 親 Epic や、この決定でブロックされる Issue

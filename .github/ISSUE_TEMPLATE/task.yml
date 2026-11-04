@@ -1,0 +1,23 @@
+name: タスク / Task
+description: 技術的タスク・基盤整備・リファクタリングなど
+labels: ["type:task"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 概要
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 完了条件
+      value: |
+        - [ ] 
+    validations:
+      required: true
+  - type: textarea
+    id: related
+    attributes:
+      label: 関連
+      description: 親 Epic や関連 Issue
