@@ -38,4 +38,4 @@ body:
     id: related
     attributes:
       label: 関連
-      description: 親 Epic や関連 Issue（例：親 Epic: #3）
+      description: "親 Epic や関連 Issue（例：親 Epic: #3）"
