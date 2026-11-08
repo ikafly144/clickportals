@@ -6,3 +6,13 @@ build
 
 # Ignore Kotlin plugin data
 .kotlin
+
+# Ignore local test server directories (run-paper / runFolia)
+/run/
+
+# Ignore IDE files
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
