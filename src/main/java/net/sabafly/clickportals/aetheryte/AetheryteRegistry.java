@@ -1,3 +1,20 @@
+/*
+ * ClickPortals
+ * Copyright (C) 2026 ikafly144
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package net.sabafly.clickportals.aetheryte;
 
 import java.util.ArrayList;
@@ -9,16 +26,18 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
+import org.bukkit.entity.Entity;
 import org.bukkit.persistence.ListPersistentDataType;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 
 /**
- * Thread-safe in-memory index and World PDC persistence manager for {@link Aetheryte} instances (#20, #21).
+ * Thread-safe in-memory index and World/Marker PDC persistence manager for {@link Aetheryte} instances (#6, #20, #21).
  */
 public final class AetheryteRegistry {
 
     public static final NamespacedKey WORLD_AETHERYTES_KEY = new NamespacedKey("clickportals", "aetherytes");
+    public static final NamespacedKey MARKER_AETHERYTE_KEY = new NamespacedKey("clickportals", "aetheryte");
     private static final ListPersistentDataType<PersistentDataContainer, Aetheryte> LIST_TYPE =
             PersistentDataType.LIST.listTypeFrom(AetheryteDataType.INSTANCE);
     private static final Comparator<Aetheryte> DEFAULT_ORDER = Comparator
@@ -56,6 +75,29 @@ public final class AetheryteRegistry {
             loaded.add(normalized);
         }
         return List.copyOf(loaded);
+    }
+
+    /**
+     * Writes the given {@link Aetheryte} data into a Marker entity's {@link PersistentDataContainer} (#6).
+     */
+    public static void writeMarkerData(final Entity marker, final Aetheryte aetheryte) {
+        marker.getPersistentDataContainer().set(MARKER_AETHERYTE_KEY, AetheryteDataType.INSTANCE, aetheryte);
+    }
+
+    /**
+     * Reads {@link Aetheryte} data from an entity's {@link PersistentDataContainer}, if present (#6).
+     */
+    public static Optional<Aetheryte> readMarkerData(final Entity entity) {
+        return Optional.ofNullable(
+                entity.getPersistentDataContainer().get(MARKER_AETHERYTE_KEY, AetheryteDataType.INSTANCE)
+        );
+    }
+
+    /**
+     * Checks whether the given entity is an Aetheryte marker entity (#6).
+     */
+    public static boolean isAetheryteEntity(final Entity entity) {
+        return entity.getPersistentDataContainer().has(MARKER_AETHERYTE_KEY, AetheryteDataType.INSTANCE);
     }
 
     /**

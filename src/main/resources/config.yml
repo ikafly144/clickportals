@@ -1,17 +1,26 @@
-# ClickPortals configuration
+# ClickPortals Configuration
 
 # エーテライト作成用アイテムのクラフトレシピ設定
 recipe:
+  # クラフトレシピを有効にするかどうか
   enabled: true
+  # エーテライト作成用アイテムのベース素材 (機能コンポーネントはマスクされます)
+  item-material: COMPASS
+  # 3x3 クラフトグリッドの形状 (1〜3行、各行1〜3文字)
   shape:
-    - "SSS"
-    - "SAS"
-    - "SSS"
+    - SSS
+    - SAS
+    - SSS
+  # 形状内の文字と Bukkit Material 名の対応
   ingredients:
     S: CHISELED_STONE_BRICKS
     A: AMETHYST_SHARD
 
-# エーテライト上部の名前ホログラム (PacketEvents TextDisplay) 設定
+# エーテライトのクライアントサイド表示 (PacketEvents Display & Interaction) 設定
 hologram:
+  # PacketEvents を用いたクライアントサイド表示とインタラクト判定を有効にするかどうか
   enabled: true
+  # ホログラムおよびモデルの表示距離 (ブロック単位、最小 4.0)
   view-distance: 32.0
+  # エーテライトの筐体としてクライアントに表示するブロック状態
+  display-block: minecraft:lodestone

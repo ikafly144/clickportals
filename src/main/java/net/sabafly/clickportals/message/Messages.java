@@ -1,14 +1,34 @@
+/*
+ * ClickPortals
+ * Copyright (C) 2026 ikafly144
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package net.sabafly.clickportals.message;
 
 import java.util.List;
+import java.util.OptionalDouble;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import org.jspecify.annotations.Nullable;
 
 /**
- * Adventure Component factory for all player-facing messages and UI labels (#18).
+ * Adventure Component factory for all player-facing messages and UI labels (#13, #18).
  */
 public final class Messages {
 
@@ -59,6 +79,13 @@ public final class Messages {
                 .append(Component.text(aetheryteName, NamedTextColor.WHITE, TextDecoration.BOLD))
                 .append(Component.text(" ✦", AETHERYTE_AQUA))
                 .build();
+    }
+
+    /**
+     * Returns the default free cost label component.
+     */
+    public static Component freeCostLabel() {
+        return Component.text("無料", NamedTextColor.GREEN);
     }
 
     /**
@@ -134,20 +161,47 @@ public final class Messages {
     }
 
     /**
-     * Returns the button label for a warp destination entry.
+     * Returns the button label for an available warp destination entry showing its name and cost (#13).
      */
-    public static Component warpDestinationLabel(final Aetheryte destination) {
+    public static Component warpDestinationLabel(final Aetheryte destination, final Component costDisplay) {
         return Component.text()
                 .append(Component.text("✦ ", AETHERYTE_AQUA))
                 .append(Component.text(destination.name(), NamedTextColor.WHITE))
+                .append(Component.text(" [", NamedTextColor.DARK_GRAY))
+                .append(costDisplay)
+                .append(Component.text("]", NamedTextColor.DARK_GRAY))
                 .build();
     }
 
     /**
-     * Returns the button tooltip for a warp destination entry showing world and coordinates.
+     * Returns the button label for an unavailable warp destination entry (insufficient cost or no permission) (#13).
      */
-    public static Component warpDestinationTooltip(final Aetheryte destination) {
+    public static Component warpDestinationUnavailableLabel(final Aetheryte destination, final Component costDisplay) {
         return Component.text()
+                .append(Component.text("✖ ", NamedTextColor.RED))
+                .append(Component.text(destination.name(), NamedTextColor.GRAY))
+                .append(Component.text(" [", NamedTextColor.DARK_GRAY))
+                .append(costDisplay)
+                .append(Component.text("]", NamedTextColor.DARK_GRAY))
+                .build();
+    }
+
+    /**
+     * Returns the button tooltip for a warp destination entry showing world, coordinates, distance, cost, and status (#13).
+     */
+    public static Component warpDestinationTooltip(
+            final Aetheryte current,
+            final Aetheryte destination,
+            final Component costDisplay,
+            final boolean allowed,
+            final @Nullable Component denyReason
+    ) {
+        final OptionalDouble distance = current.distanceTo(destination);
+        final Component distanceText = distance.isPresent()
+                ? Component.text(Math.round(distance.getAsDouble()) + " ブロック", NamedTextColor.WHITE)
+                : Component.text("別ディメンション", NamedTextColor.LIGHT_PURPLE);
+
+        final TextComponent.Builder builder = Component.text()
                 .append(Component.text("ワールド: ", NamedTextColor.GRAY))
                 .append(Component.text(destination.worldName(), ACCENT_GOLD))
                 .append(Component.newline())
@@ -157,8 +211,20 @@ public final class Messages {
                         NamedTextColor.WHITE
                 ))
                 .append(Component.newline())
-                .append(Component.text("クリックしてワープ", NamedTextColor.GREEN))
-                .build();
+                .append(Component.text("距離: ", NamedTextColor.GRAY))
+                .append(distanceText)
+                .append(Component.newline())
+                .append(Component.text("コスト: ", NamedTextColor.GRAY))
+                .append(costDisplay)
+                .append(Component.newline());
+
+        if (allowed) {
+            builder.append(Component.text("クリックしてワープ", NamedTextColor.GREEN));
+        } else {
+            builder.append(Component.text("ワープ不可: ", NamedTextColor.RED))
+                    .append(denyReason != null ? denyReason : Component.text("条件を満たしていません", NamedTextColor.RED));
+        }
+        return builder.build();
     }
 
     /**
@@ -281,6 +347,22 @@ public final class Messages {
      */
     public static Component errorNotOwner() {
         return prefix().append(Component.text("このエーテライトを撤去する権限がありません（設置者のみ撤去可能）。", NamedTextColor.RED));
+    }
+
+    /**
+     * Returns the error message when a player lacks permission for an action.
+     */
+    public static Component errorNoPermission() {
+        return prefix().append(Component.text("この操作を行う権限がありません。", NamedTextColor.RED));
+    }
+
+    /**
+     * Returns the error message when a player cannot afford the warp cost.
+     */
+    public static Component errorWarpDenied(final Component reason) {
+        return prefix().append(
+                Component.text("ワープできません: ", NamedTextColor.RED).append(reason)
+        );
     }
 
     /**

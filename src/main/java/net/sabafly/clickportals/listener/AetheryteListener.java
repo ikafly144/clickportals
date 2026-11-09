@@ -1,3 +1,20 @@
+/*
+ * ClickPortals
+ * Copyright (C) 2026 ikafly144
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package net.sabafly.clickportals.listener;
 
 import java.util.List;
@@ -25,6 +42,7 @@ import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
@@ -88,12 +106,29 @@ public final class AetheryteListener implements Listener {
         final Player player = event.getPlayer();
         final World world = clicked.getWorld();
 
-        // 1. Check if clicking an existing Aetheryte
-        final Optional<Aetheryte> existing = registry.getByPosition(world, clicked.getX(), clicked.getY(), clicked.getZ());
-        if (existing.isPresent()) {
+        // 1. Check if clicking an existing Aetheryte directly or on the support face immediately below/adjacent
+        final Optional<Aetheryte> existingDirect = registry.getByPosition(world, clicked.getX(), clicked.getY(), clicked.getZ());
+        if (existingDirect.isPresent()) {
             event.setCancelled(true);
             if (event.getHand() == EquipmentSlot.HAND) {
-                dialogFactory.openWarpDialog(player, existing.get());
+                dialogFactory.openWarpDialog(player, existingDirect.get());
+            }
+            return;
+        }
+
+        final Block relativeBlock = clicked.getRelative(event.getBlockFace());
+        final Optional<Aetheryte> existingRelative = registry.getByPosition(
+                world,
+                relativeBlock.getX(),
+                relativeBlock.getY(),
+                relativeBlock.getZ()
+        );
+        if (existingRelative.isPresent()
+                && !isInteractableBlock(clicked)
+                && !AetheryteItemFactory.isAetheryteItem(event.getItem())) {
+            event.setCancelled(true);
+            if (event.getHand() == EquipmentSlot.HAND) {
+                dialogFactory.openWarpDialog(player, existingRelative.get());
             }
             return;
         }
@@ -104,9 +139,14 @@ public final class AetheryteListener implements Listener {
         }
 
         event.setCancelled(true);
+        if (!AetheryteService.canPlace(player)) {
+            player.sendMessage(Messages.errorNoPermission());
+            return;
+        }
+
         final Block targetBlock = AetheryteService.isReplaceableBlock(clicked)
                 ? clicked
-                : clicked.getRelative(event.getBlockFace());
+                : relativeBlock;
 
         if (registry.getByPosition(world, targetBlock.getX(), targetBlock.getY(), targetBlock.getZ()).isPresent()) {
             player.sendMessage(Messages.errorAlreadyExists());
@@ -127,17 +167,23 @@ public final class AetheryteListener implements Listener {
     }
 
     /**
-     * Prevents direct block placement of the Aetheryte creation item without going through the creation dialog.
+     * Prevents direct block placement of the Aetheryte creation item or placing blocks into an occupied Aetheryte space.
      */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockPlace(final BlockPlaceEvent event) {
         if (AetheryteItemFactory.isAetheryteItem(event.getItemInHand())) {
             event.setCancelled(true);
+            return;
+        }
+        final Block placed = event.getBlockPlaced();
+        if (registry.getByPosition(placed.getWorld(), placed.getX(), placed.getY(), placed.getZ()).isPresent()) {
+            event.setCancelled(true);
+            event.getPlayer().sendMessage(Messages.errorAlreadyExists());
         }
     }
 
     /**
-     * Protects placed Aetheryte Lodestone blocks from direct breaking.
+     * Protects placed Aetheryte positions from direct breaking.
      */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockBreak(final BlockBreakEvent event) {
@@ -209,6 +255,14 @@ public final class AetheryteListener implements Listener {
     }
 
     /**
+     * Cleans up per-player hologram interaction state when a player quits the server.
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerQuit(final PlayerQuitEvent event) {
+        hologramService.removePlayer(event.getPlayer().getUniqueId());
+    }
+
+    /**
      * Schedules a delayed hologram refresh on the player's entity scheduler.
      */
     private void scheduleHologramRefresh(final Player player) {
@@ -224,6 +278,14 @@ public final class AetheryteListener implements Listener {
      */
     private void protectExplosionBlocks(final List<Block> blocks) {
         blocks.removeIf(block -> registry.getByPosition(block.getWorld(), block.getX(), block.getY(), block.getZ()).isPresent());
+    }
+
+    /**
+     * Checks whether the given block has a native right-click interaction (e.g. chest, door, button).
+     */
+    @SuppressWarnings("deprecation")
+    private static boolean isInteractableBlock(final Block block) {
+        return block.getType().isInteractable();
     }
 
     /**
