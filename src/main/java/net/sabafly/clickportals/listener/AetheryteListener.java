@@ -41,6 +41,9 @@ public final class AetheryteListener implements Listener {
     private final AetheryteDialogFactory dialogFactory;
     private final HologramService hologramService;
 
+    /**
+     * Creates a new {@link AetheryteListener}.
+     */
     public AetheryteListener(
             final Plugin plugin,
             final AetheryteRegistry registry,
@@ -53,16 +56,25 @@ public final class AetheryteListener implements Listener {
         this.hologramService = hologramService;
     }
 
+    /**
+     * Loads Aetherytes from the world's PDC when a world is loaded.
+     */
     @EventHandler(priority = EventPriority.NORMAL)
     public void onWorldLoad(final WorldLoadEvent event) {
         registry.loadWorld(event.getWorld());
     }
 
+    /**
+     * Unloads Aetherytes from the in-memory index when a world is unloaded.
+     */
     @EventHandler(priority = EventPriority.NORMAL)
     public void onWorldUnload(final WorldUnloadEvent event) {
         registry.unloadWorld(event.getWorld().getUID());
     }
 
+    /**
+     * Handles right-click interactions on placed Aetherytes and with the Aetheryte creation item.
+     */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onPlayerInteract(final PlayerInteractEvent event) {
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK) {
@@ -114,6 +126,9 @@ public final class AetheryteListener implements Listener {
         );
     }
 
+    /**
+     * Prevents direct block placement of the Aetheryte creation item without going through the creation dialog.
+     */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockPlace(final BlockPlaceEvent event) {
         if (AetheryteItemFactory.isAetheryteItem(event.getItemInHand())) {
@@ -121,6 +136,9 @@ public final class AetheryteListener implements Listener {
         }
     }
 
+    /**
+     * Protects placed Aetheryte Lodestone blocks from direct breaking.
+     */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockBreak(final BlockBreakEvent event) {
         final Block block = event.getBlock();
@@ -130,16 +148,25 @@ public final class AetheryteListener implements Listener {
         }
     }
 
+    /**
+     * Protects placed Aetherytes from block explosions.
+     */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockExplode(final BlockExplodeEvent event) {
         protectExplosionBlocks(event.blockList());
     }
 
+    /**
+     * Protects placed Aetherytes from entity explosions.
+     */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onEntityExplode(final EntityExplodeEvent event) {
         protectExplosionBlocks(event.blockList());
     }
 
+    /**
+     * Prevents pistons from pushing placed Aetherytes.
+     */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onPistonExtend(final BlockPistonExtendEvent event) {
         if (containsAetheryte(event.getBlocks())) {
@@ -147,6 +174,9 @@ public final class AetheryteListener implements Listener {
         }
     }
 
+    /**
+     * Prevents sticky pistons from pulling placed Aetherytes.
+     */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onPistonRetract(final BlockPistonRetractEvent event) {
         if (containsAetheryte(event.getBlocks())) {
@@ -154,21 +184,33 @@ public final class AetheryteListener implements Listener {
         }
     }
 
+    /**
+     * Refreshes client-side holograms when a player joins the server.
+     */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerJoin(final PlayerJoinEvent event) {
         scheduleHologramRefresh(event.getPlayer());
     }
 
+    /**
+     * Refreshes client-side holograms when a player changes worlds.
+     */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerChangedWorld(final PlayerChangedWorldEvent event) {
         scheduleHologramRefresh(event.getPlayer());
     }
 
+    /**
+     * Refreshes client-side holograms when a player respawns.
+     */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerRespawn(final PlayerRespawnEvent event) {
         scheduleHologramRefresh(event.getPlayer());
     }
 
+    /**
+     * Schedules a delayed hologram refresh on the player's entity scheduler.
+     */
     private void scheduleHologramRefresh(final Player player) {
         player.getScheduler().runDelayed(plugin, task -> {
             if (player.isOnline()) {
@@ -177,10 +219,16 @@ public final class AetheryteListener implements Listener {
         }, null, 5L);
     }
 
+    /**
+     * Removes any registered Aetheryte blocks from an explosion's block list.
+     */
     private void protectExplosionBlocks(final List<Block> blocks) {
         blocks.removeIf(block -> registry.getByPosition(block.getWorld(), block.getX(), block.getY(), block.getZ()).isPresent());
     }
 
+    /**
+     * Checks whether any block in the list is a registered Aetheryte.
+     */
     private boolean containsAetheryte(final List<Block> blocks) {
         for (final Block block : blocks) {
             if (registry.getByPosition(block.getWorld(), block.getX(), block.getY(), block.getZ()).isPresent()) {

@@ -81,13 +81,16 @@ public final class ClickPortals extends JavaPlugin {
         getComponentLogger().info("ClickPortals disabled.");
     }
 
+    /**
+     * Creates the appropriate {@link HologramService} based on configuration and PacketEvents availability.
+     */
     private HologramService createHologramService(final PluginConfig config) {
         if (!config.hologramEnabled()) {
             return NoopHologramService.INSTANCE;
         }
         if (Bukkit.getPluginManager().getPlugin("packetevents") != null) {
             getComponentLogger().info("PacketEvents detected; enabling client-side Aetheryte holograms.");
-            return new PacketEventsHologramService();
+            return new PacketEventsHologramService(config.hologramViewDistance());
         }
         return NoopHologramService.INSTANCE;
     }

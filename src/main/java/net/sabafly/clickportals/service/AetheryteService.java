@@ -33,6 +33,9 @@ public final class AetheryteService {
     private final AetheryteRegistry registry;
     private final HologramService hologramService;
 
+    /**
+     * Creates a new {@link AetheryteService}.
+     */
     public AetheryteService(
             final Plugin plugin,
             final AetheryteRegistry registry,
@@ -43,10 +46,16 @@ public final class AetheryteService {
         this.hologramService = hologramService;
     }
 
+    /**
+     * Returns the backing {@link AetheryteRegistry}.
+     */
     public AetheryteRegistry registry() {
         return registry;
     }
 
+    /**
+     * Returns the active {@link HologramService}.
+     */
     public HologramService hologramService() {
         return hologramService;
     }
@@ -60,6 +69,15 @@ public final class AetheryteService {
             return Optional.empty();
         }
         return Optional.of(trimmed);
+    }
+
+    /**
+     * Checks whether the given player is allowed to remove the specified Aetheryte.
+     */
+    public static boolean canRemove(final Player player, final Aetheryte aetheryte) {
+        return aetheryte.ownerId().equals(player.getUniqueId())
+                || player.hasPermission("clickportals.admin")
+                || player.isOp();
     }
 
     /**
@@ -143,7 +161,7 @@ public final class AetheryteService {
     }
 
     /**
-     * Removes an existing Aetheryte and returns the creation item to the player.
+     * Removes an existing Aetheryte and returns the creation item to the player if permitted.
      */
     public void removeAetheryte(final Player player, final UUID aetheryteId) {
         final Optional<Aetheryte> opt = registry.getById(aetheryteId);
@@ -152,6 +170,10 @@ public final class AetheryteService {
             return;
         }
         final Aetheryte aetheryte = opt.get();
+        if (!canRemove(player, aetheryte)) {
+            player.sendMessage(Messages.errorNotOwner());
+            return;
+        }
         final World world = Bukkit.getWorld(aetheryte.worldId());
         if (world == null) {
             player.sendMessage(Messages.errorNotFound());
@@ -182,7 +204,8 @@ public final class AetheryteService {
     }
 
     /**
-     * Warps a player to the specified Aetheryte using Folia-compatible region checks and {@code teleportAsync}.
+     * Warps a player to the specified Aetheryte using Folia-compatible region checks and {@code teleportAsync}
+     * invoked from the player's entity scheduler.
      */
     public void warpToAetheryte(final Player player, final UUID destinationId) {
         final Optional<Aetheryte> opt = registry.getById(destinationId);
@@ -209,29 +232,37 @@ public final class AetheryteService {
                 return;
             }
 
-            final CompletableFuture<Void> unused = player.teleportAsync(destinationLoc).thenAccept(success -> {
-                if (Boolean.TRUE.equals(success)) {
-                    player.sendMessage(Messages.warpedTo(destination));
-                    player.getScheduler().run(plugin, task -> {
-                        player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
-                        hologramService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
-                    }, null);
+            player.getScheduler().run(plugin, task -> {
+                final CompletableFuture<Void> unused = player.teleportAsync(destinationLoc).thenAccept(success -> {
+                    if (Boolean.TRUE.equals(success)) {
+                        player.sendMessage(Messages.warpedTo(destination));
+                        player.getScheduler().run(plugin, postTask -> {
+                            player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
+                            hologramService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
+                        }, null);
+                    }
+                }).exceptionally(ex -> {
+                    plugin.getSLF4JLogger().warn("Failed to teleport player {} to aetheryte {}", player.getName(), destination.id(), ex);
+                    return null;
+                });
+                if (unused.isCancelled()) {
+                    return;
                 }
-            }).exceptionally(ex -> {
-                plugin.getSLF4JLogger().warn("Failed to teleport player {} to aetheryte {}", player.getName(), destination.id(), ex);
-                return null;
-            });
-            if (unused.isCancelled()) {
-                return;
-            }
+            }, null);
         });
     }
 
+    /**
+     * Checks whether the given block is air or replaceable (e.g. tall grass, snow layer).
+     */
     public static boolean isReplaceableBlock(final Block block) {
         final Material type = block.getType();
         return type.isAir() || block.isReplaceable();
     }
 
+    /**
+     * Verifies that the Aetheryte Lodestone block still exists and the two blocks above it are safe to stand in.
+     */
     public static boolean isSafeLanding(final World world, final int blockX, final int blockY, final int blockZ) {
         final Block base = world.getBlockAt(blockX, blockY, blockZ);
         if (base.getType() != Material.LODESTONE) {
@@ -242,6 +273,9 @@ public final class AetheryteService {
         return isPassableAndSafe(feet) && isPassableAndSafe(head);
     }
 
+    /**
+     * Checks that a single block is passable and not lava or fire.
+     */
     private static boolean isPassableAndSafe(final Block block) {
         final Material type = block.getType();
         if (type == Material.LAVA || type == Material.FIRE || type == Material.SOUL_FIRE) {
@@ -250,6 +284,9 @@ public final class AetheryteService {
         return block.isPassable() || !type.isSolid();
     }
 
+    /**
+     * Consumes a single Aetheryte creation item from the player's hands or storage contents.
+     */
     private static boolean consumeOneAetheryteItem(final PlayerInventory inventory) {
         final ItemStack mainHand = inventory.getItemInMainHand();
         if (AetheryteItemFactory.isAetheryteItem(mainHand)) {
@@ -276,6 +313,9 @@ public final class AetheryteService {
         return false;
     }
 
+    /**
+     * Returns one Aetheryte creation item to the player's inventory, or drops it at the fallback location.
+     */
     private void refundItemToPlayer(final Player player, final Location fallbackDropLocation) {
         final ItemStack item = AetheryteItemFactory.createItem(1);
         final boolean scheduled = player.getScheduler().run(plugin, task -> {

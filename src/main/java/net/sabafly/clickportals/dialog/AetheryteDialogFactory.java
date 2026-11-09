@@ -31,6 +31,9 @@ public final class AetheryteDialogFactory {
 
     private final AetheryteService service;
 
+    /**
+     * Creates a new {@link AetheryteDialogFactory}.
+     */
     public AetheryteDialogFactory(final AetheryteService service) {
         this.service = service;
     }
@@ -109,20 +112,37 @@ public final class AetheryteDialogFactory {
                     .build());
         }
 
-        // Management button to remove this Aetheryte
-        buttons.add(ActionButton.builder(Messages.buttonOpenRemoveConfirm())
-                .tooltip(Messages.buttonOpenRemoveConfirmTooltip())
-                .width(200)
-                .action(DialogAction.customClick((view, audience) -> {
-                    if (audience instanceof Player clicker) {
-                        openRemoveConfirmDialog(clicker, current);
-                    }
-                }, SINGLE_USE_CALLBACK))
-                .build());
+        if (AetheryteService.canRemove(player, current)) {
+            buttons.add(ActionButton.builder(Messages.buttonOpenRemoveConfirm())
+                    .tooltip(Messages.buttonOpenRemoveConfirmTooltip())
+                    .width(200)
+                    .action(DialogAction.customClick((view, audience) -> {
+                        if (audience instanceof Player clicker) {
+                            openRemoveConfirmDialog(clicker, current);
+                        }
+                    }, SINGLE_USE_CALLBACK))
+                    .build());
+        }
 
         final ActionButton closeButton = ActionButton.builder(Messages.buttonClose())
                 .width(150)
                 .build();
+
+        if (buttons.isEmpty()) {
+            final Dialog noticeDialog = Dialog.create(factory -> factory.empty()
+                    .base(DialogBase.builder(Messages.warpDialogTitle(current))
+                            .canCloseWithEscape(true)
+                            .pause(false)
+                            .afterAction(DialogBase.DialogAfterAction.CLOSE)
+                            .body(List.of(
+                                    DialogBody.plainMessage(Messages.warpDialogBody(current, 0))
+                            ))
+                            .build())
+                    .type(DialogType.notice(closeButton))
+            );
+            player.showDialog(noticeDialog);
+            return;
+        }
 
         final Dialog dialog = Dialog.create(factory -> factory.empty()
                 .base(DialogBase.builder(Messages.warpDialogTitle(current))

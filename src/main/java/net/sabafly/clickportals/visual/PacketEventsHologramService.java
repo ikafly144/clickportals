@@ -30,13 +30,26 @@ public final class PacketEventsHologramService implements HologramService {
 
     private static final int METADATA_BILLBOARD_INDEX = 15;
     private static final byte BILLBOARD_CENTER = 3;
+    private static final int METADATA_VIEW_RANGE_INDEX = 17;
+    private static final double BASE_VIEW_RANGE_BLOCKS = 64.0;
     private static final int METADATA_TEXT_INDEX = 23;
     private static final int METADATA_STYLE_FLAGS_INDEX = 27;
     private static final byte STYLE_FLAG_SHADOW = 0x01;
 
     private final AtomicInteger entityIdGenerator = new AtomicInteger(1_500_000_000);
     private final Map<UUID, Integer> entityIdsByAetheryte = new ConcurrentHashMap<>();
+    private final float viewRangeMultiplier;
 
+    /**
+     * Creates a new {@link PacketEventsHologramService} with the given view distance in blocks.
+     */
+    public PacketEventsHologramService(final double viewDistanceBlocks) {
+        this.viewRangeMultiplier = (float) Math.max(0.05, viewDistanceBlocks / BASE_VIEW_RANGE_BLOCKS);
+    }
+
+    /**
+     * Returns or allocates a deterministic client-side entity ID for the given Aetheryte UUID.
+     */
     private int getOrCreateEntityId(final UUID aetheryteId) {
         return entityIdsByAetheryte.computeIfAbsent(aetheryteId, ignored -> entityIdGenerator.getAndIncrement());
     }
@@ -102,6 +115,9 @@ public final class PacketEventsHologramService implements HologramService {
         }
     }
 
+    /**
+     * Sends the spawn and metadata packets for a single Aetheryte hologram to the given player.
+     */
     private void sendSpawnPackets(final PacketEventsAPI<?> api, final Player player, final Aetheryte aetheryte) {
         final int entityId = getOrCreateEntityId(aetheryte.id());
         final Vector3d position = new Vector3d(
@@ -123,6 +139,7 @@ public final class PacketEventsHologramService implements HologramService {
         final Component title = Messages.hologramTitle(aetheryte.name());
         final List<EntityData<?>> metadata = List.of(
                 new EntityData<>(METADATA_BILLBOARD_INDEX, EntityDataTypes.BYTE, BILLBOARD_CENTER),
+                new EntityData<>(METADATA_VIEW_RANGE_INDEX, EntityDataTypes.FLOAT, viewRangeMultiplier),
                 new EntityData<>(METADATA_TEXT_INDEX, EntityDataTypes.ADV_COMPONENT, title),
                 new EntityData<>(METADATA_STYLE_FLAGS_INDEX, EntityDataTypes.BYTE, STYLE_FLAG_SHADOW)
         );

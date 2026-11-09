@@ -21,6 +21,9 @@ public record PluginConfig(
         double hologramViewDistance
 ) {
 
+    /**
+     * Returns the default configuration values.
+     */
     public static PluginConfig defaultConfig() {
         final Map<Character, Material> defaultIngredients = new LinkedHashMap<>();
         defaultIngredients.put('S', Material.CHISELED_STONE_BRICKS);
@@ -34,6 +37,9 @@ public record PluginConfig(
         );
     }
 
+    /**
+     * Loads and validates {@link PluginConfig} from a Bukkit {@link FileConfiguration}.
+     */
     public static PluginConfig fromFileConfiguration(final FileConfiguration config, final Logger logger) {
         final PluginConfig defaults = defaultConfig();
         final boolean recipeEnabled = config.getBoolean("recipe.enabled", defaults.recipeEnabled());
@@ -77,6 +83,14 @@ public record PluginConfig(
             ingredients.putAll(defaults.recipeIngredients());
         }
 
+        if (!isValidRecipeCombination(shape, ingredients)) {
+            logger.warn("Invalid recipe shape/ingredients combination; falling back to default recipe");
+            shape.clear();
+            shape.addAll(defaults.recipeShape());
+            ingredients.clear();
+            ingredients.putAll(defaults.recipeIngredients());
+        }
+
         final boolean hologramEnabled = config.getBoolean("hologram.enabled", defaults.hologramEnabled());
         final double hologramViewDistance = Math.max(4.0, config.getDouble("hologram.view-distance", defaults.hologramViewDistance()));
 
@@ -87,5 +101,32 @@ public record PluginConfig(
                 hologramEnabled,
                 hologramViewDistance
         );
+    }
+
+    /**
+     * Checks that the shape rows are rectangular and that shape symbols and ingredient keys match.
+     */
+    static boolean isValidRecipeCombination(final List<String> shape, final Map<Character, Material> ingredients) {
+        if (shape.isEmpty() || ingredients.isEmpty()) {
+            return false;
+        }
+        final boolean rectangular = shape.stream().mapToInt(String::length).distinct().count() == 1;
+        if (!rectangular) {
+            return false;
+        }
+        final boolean allIngredientKeysInShape = ingredients.keySet().stream()
+                .allMatch(key -> shape.stream().anyMatch(row -> row.indexOf(key) >= 0));
+        if (!allIngredientKeysInShape) {
+            return false;
+        }
+        for (final String row : shape) {
+            for (int i = 0; i < row.length(); i++) {
+                final char symbol = row.charAt(i);
+                if (symbol != ' ' && !ingredients.containsKey(symbol)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 }

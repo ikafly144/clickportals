@@ -110,18 +110,30 @@ public final class AetheryteRegistry {
         }
     }
 
+    /**
+     * Looks up an Aetheryte by its unique ID in O(1) time.
+     */
     public Optional<Aetheryte> getById(final UUID id) {
         return Optional.ofNullable(byId.get(id));
     }
 
+    /**
+     * Looks up an Aetheryte by its world UUID and block coordinates in O(1) time.
+     */
     public Optional<Aetheryte> getByPosition(final UUID worldId, final int x, final int y, final int z) {
         return Optional.ofNullable(byPos.get(new BlockPosKey(worldId, x, y, z)));
     }
 
+    /**
+     * Looks up an Aetheryte by its Bukkit {@link World} and block coordinates in O(1) time.
+     */
     public Optional<Aetheryte> getByPosition(final World world, final int x, final int y, final int z) {
         return getByPosition(world.getUID(), x, y, z);
     }
 
+    /**
+     * Returns all Aetherytes registered in the specified world, ordered deterministically.
+     */
     public List<Aetheryte> getByWorld(final UUID worldId) {
         return byId.values().stream()
                 .filter(a -> a.worldId().equals(worldId))
@@ -129,12 +141,18 @@ public final class AetheryteRegistry {
                 .toList();
     }
 
+    /**
+     * Returns all registered Aetherytes across all loaded worlds, ordered deterministically.
+     */
     public List<Aetheryte> getAll() {
         return byId.values().stream()
                 .sorted(DEFAULT_ORDER)
                 .toList();
     }
 
+    /**
+     * Clears the in-memory index without modifying world PDC data.
+     */
     public void clear() {
         byId.clear();
         byPos.clear();

@@ -8,10 +8,13 @@ import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.command.brigadier.argument.ArgumentTypes;
 import io.papermc.paper.command.brigadier.argument.resolvers.selector.PlayerSelectorArgumentResolver;
 import java.util.List;
+import java.util.Map;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
 import net.sabafly.clickportals.message.Messages;
+import org.bukkit.Location;
+import org.bukkit.World;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -26,6 +29,9 @@ public final class ClickPortalsCommand {
     private ClickPortalsCommand() {
     }
 
+    /**
+     * Builds the {@code /clickportals} Brigadier command node.
+     */
     public static LiteralCommandNode<CommandSourceStack> createCommand(final Plugin plugin) {
         return Commands.literal("clickportals")
                 .requires(source -> source.getSender().hasPermission("clickportals.admin") || source.getSender().isOp())
@@ -62,6 +68,9 @@ public final class ClickPortalsCommand {
                 .build();
     }
 
+    /**
+     * Gives Aetheryte items to each target player on their entity scheduler, dropping any overflow at their feet.
+     */
     private static void giveItems(
             final Plugin plugin,
             final CommandSender sender,
@@ -70,7 +79,18 @@ public final class ClickPortalsCommand {
     ) {
         for (final Player target : targets) {
             final ItemStack item = AetheryteItemFactory.createItem(amount);
-            target.getScheduler().run(plugin, task -> target.getInventory().addItem(item), null);
+            target.getScheduler().run(plugin, task -> {
+                final Map<Integer, ItemStack> leftovers = target.getInventory().addItem(item);
+                if (!leftovers.isEmpty()) {
+                    final Location loc = target.getLocation();
+                    final World world = target.getWorld();
+                    if (loc != null) {
+                        for (final ItemStack leftover : leftovers.values()) {
+                            world.dropItemNaturally(loc, leftover);
+                        }
+                    }
+                }
+            }, null);
             sender.sendMessage(Messages.commandGivenItem(target.getName(), amount));
         }
     }
