@@ -1,0 +1,17 @@
+# ClickPortals configuration
+
+# エーテライト作成用アイテムのクラフトレシピ設定
+recipe:
+  enabled: true
+  shape:
+    - "SSS"
+    - "SAS"
+    - "SSS"
+  ingredients:
+    S: CHISELED_STONE_BRICKS
+    A: AMETHYST_SHARD
+
+# エーテライト上部の名前ホログラム (PacketEvents TextDisplay) 設定
+hologram:
+  enabled: true
+  view-distance: 32.0

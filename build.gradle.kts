@@ -9,6 +9,7 @@ import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
+import xyz.jpenilla.resourcefactory.paper.PaperPluginYaml
 import xyz.jpenilla.runpaper.task.RunServer
 
 plugins {
@@ -34,6 +35,9 @@ repositories {
     maven("https://repo.papermc.io/repository/maven-public/") {
         name = "papermc"
     }
+    maven("https://repo.codemc.io/repository/maven-releases/") {
+        name = "codemc-releases"
+    }
 }
 
 val paperLibrary: Configuration = configurations.create("paperLibrary") {
@@ -50,6 +54,7 @@ configurations.named(JavaPlugin.TEST_IMPLEMENTATION_CONFIGURATION_NAME) {
 
 dependencies {
     compileOnly(libs.paper.api)
+    compileOnly(libs.packetevents.spigot)
     compileOnly(libs.jspecify)
     testCompileOnly(libs.jspecify)
 
@@ -133,6 +138,9 @@ paperPluginYaml {
     foliaSupported = true
     authors.add("ikafly144")
     website = "https://github.com/ikafly144/clickportals"
+    dependencies {
+        server("packetevents", PaperPluginYaml.Load.BEFORE, false)
+    }
 }
 
 tasks.named<Jar>("jar") {
@@ -162,6 +170,7 @@ testing {
                 implementation(libs.mockito.junit.jupiter)
                 implementation(libs.assertj.core)
                 implementation(libs.paper.api)
+                implementation(libs.packetevents.spigot)
             }
             targets {
                 all {
@@ -196,9 +205,17 @@ spotless {
 tasks.named<RunServer>("runServer") {
     minecraftVersion(targetMcVersion)
     runDirectory = layout.projectDirectory.dir("run/paper")
+
+    downloadPlugins {
+        modrinth("packetevents", "${libs.versions.packetevents.get()}+spigot")
+    }
 }
 
 runPaper.folia.registerTask {
     minecraftVersion(targetMcVersion)
     runDirectory = layout.projectDirectory.dir("run/folia")
+
+    downloadPlugins {
+        modrinth("packetevents", "${libs.versions.packetevents.get()}+spigot")
+    }
 }
