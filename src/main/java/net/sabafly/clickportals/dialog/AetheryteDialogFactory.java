@@ -1,3 +1,20 @@
+/*
+ * ClickPortals
+ * Copyright (C) 2026 ikafly144
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package net.sabafly.clickportals.dialog;
 
 import io.papermc.paper.dialog.Dialog;
@@ -10,10 +27,12 @@ import io.papermc.paper.registry.data.dialog.type.DialogType;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickCallback;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.service.AetheryteService;
+import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 
@@ -92,7 +111,7 @@ public final class AetheryteDialogFactory {
     }
 
     /**
-     * Opens the warp destination selection and management dialog when interacting with an Aetheryte.
+     * Opens the warp destination selection and management dialog when interacting with an Aetheryte (#13).
      */
     public void openWarpDialog(final Player player, final Aetheryte current) {
         final List<Aetheryte> allDestinations = service.registry().getAll().stream()
@@ -101,12 +120,24 @@ public final class AetheryteDialogFactory {
 
         final List<ActionButton> buttons = new ArrayList<>(allDestinations.size() + 1);
         for (final Aetheryte destination : allDestinations) {
-            buttons.add(ActionButton.builder(Messages.warpDestinationLabel(destination))
-                    .tooltip(Messages.warpDestinationTooltip(destination))
-                    .width(200)
+            final WarpEvaluation evaluation = service.evaluateWarp(player, current, destination);
+            final Component label = evaluation.allowed()
+                    ? Messages.warpDestinationLabel(destination, evaluation.costDisplay())
+                    : Messages.warpDestinationUnavailableLabel(destination, evaluation.costDisplay());
+            final Component tooltip = Messages.warpDestinationTooltip(
+                    current,
+                    destination,
+                    evaluation.costDisplay(),
+                    evaluation.allowed(),
+                    evaluation.denyReason()
+            );
+
+            buttons.add(ActionButton.builder(label)
+                    .tooltip(tooltip)
+                    .width(220)
                     .action(DialogAction.customClick((view, audience) -> {
                         if (audience instanceof Player clicker) {
-                            service.warpToAetheryte(clicker, destination.id());
+                            service.warpToAetheryte(clicker, current, destination.id());
                         }
                     }, SINGLE_USE_CALLBACK))
                     .build());
@@ -115,7 +146,7 @@ public final class AetheryteDialogFactory {
         if (AetheryteService.canRemove(player, current)) {
             buttons.add(ActionButton.builder(Messages.buttonOpenRemoveConfirm())
                     .tooltip(Messages.buttonOpenRemoveConfirmTooltip())
-                    .width(200)
+                    .width(220)
                     .action(DialogAction.customClick((view, audience) -> {
                         if (audience instanceof Player clicker) {
                             openRemoveConfirmDialog(clicker, current);

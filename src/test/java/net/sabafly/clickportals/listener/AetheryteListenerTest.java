@@ -1,3 +1,20 @@
+/*
+ * ClickPortals
+ * Copyright (C) 2026 ikafly144
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package net.sabafly.clickportals.listener;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -10,21 +27,27 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.dialog.AetheryteDialogFactory;
 import net.sabafly.clickportals.service.AetheryteService;
+import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation;
 import net.sabafly.clickportals.visual.NoopHologramService;
 import org.bukkit.ExplosionResult;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
+import org.bukkit.block.BlockState;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPistonExtendEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
+import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.plugin.Plugin;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,15 +57,17 @@ class AetheryteListenerTest {
 
     private static final UUID WORLD_ID = UUID.fromString("12345678-1234-1234-1234-1234567890ab");
 
+    private Plugin plugin;
     private AetheryteRegistry registry;
     private AetheryteListener listener;
     private World world;
     private Block aetheryteBlock;
     private Block normalBlock;
+    private Aetheryte registeredAetheryte;
 
     @BeforeEach
     void setUp() {
-        final Plugin plugin = mock(Plugin.class);
+        plugin = mock(Plugin.class);
         registry = new AetheryteRegistry();
         final AetheryteService service = new AetheryteService(plugin, registry, NoopHologramService.INSTANCE);
         final AetheryteDialogFactory dialogFactory = new AetheryteDialogFactory(service);
@@ -65,7 +90,7 @@ class AetheryteListenerTest {
         when(normalBlock.getY()).thenReturn(64);
         when(normalBlock.getZ()).thenReturn(5);
 
-        registry.register(world, new Aetheryte(
+        registeredAetheryte = new Aetheryte(
                 UUID.randomUUID(),
                 "保護テスト用",
                 WORLD_ID,
@@ -75,7 +100,8 @@ class AetheryteListenerTest {
                 5,
                 UUID.randomUUID(),
                 1000L
-        ));
+        );
+        registry.register(world, registeredAetheryte);
     }
 
     @Test
@@ -86,6 +112,28 @@ class AetheryteListenerTest {
         listener.onBlockBreak(breakEvent);
 
         assertThat(breakEvent.isCancelled()).isTrue();
+        verify(player).sendMessage(any(Component.class));
+    }
+
+    @Test
+    void blockPlaceIntoOccupiedAetherytePositionIsCancelled() {
+        final Player player = mock(Player.class);
+        final ItemStack regularBlockItem = mock(ItemStack.class);
+        when(regularBlockItem.isEmpty()).thenReturn(true);
+
+        final BlockPlaceEvent placeEvent = new BlockPlaceEvent(
+                aetheryteBlock,
+                mock(BlockState.class),
+                normalBlock,
+                regularBlockItem,
+                player,
+                true,
+                EquipmentSlot.HAND
+        );
+
+        listener.onBlockPlace(placeEvent);
+
+        assertThat(placeEvent.isCancelled()).isTrue();
         verify(player).sendMessage(any(Component.class));
     }
 
@@ -117,5 +165,26 @@ class AetheryteListenerTest {
         listener.onPistonExtend(pistonEvent);
 
         assertThat(pistonEvent.isCancelled()).isTrue();
+    }
+
+    @Test
+    void warpToAetheryteIsRejectedWhenCostCannotBeAfforded() {
+        final AetheryteService.WarpCostEvaluator expensiveEvaluator = (p, src, dst) ->
+                WarpEvaluation.denied(
+                        Component.text("1000 G", NamedTextColor.GOLD),
+                        Component.text("所持金が不足しています", NamedTextColor.RED)
+                );
+        final AetheryteService customService = new AetheryteService(
+                plugin,
+                registry,
+                NoopHologramService.INSTANCE,
+                expensiveEvaluator
+        );
+        final Player player = mock(Player.class);
+        when(player.isPermissionSet("clickportals.use")).thenReturn(false);
+
+        customService.warpToAetheryte(player, null, registeredAetheryte.id());
+
+        verify(player).sendMessage(any(Component.class));
     }
 }

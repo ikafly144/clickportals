@@ -1,9 +1,27 @@
+/*
+ * ClickPortals
+ * Copyright (C) 2026 ikafly144
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package net.sabafly.clickportals;
 
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import java.util.List;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.command.ClickPortalsCommand;
+import net.sabafly.clickportals.config.ConfigManager;
 import net.sabafly.clickportals.config.PluginConfig;
 import net.sabafly.clickportals.dialog.AetheryteDialogFactory;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
@@ -24,13 +42,15 @@ import org.jspecify.annotations.Nullable;
 @SuppressWarnings("UnstableApiUsage")
 public final class ClickPortals extends JavaPlugin {
 
+    private @Nullable ConfigManager configManager;
     private @Nullable AetheryteRegistry registry;
     private @Nullable HologramService hologramService;
 
     @Override
     public void onEnable() {
-        saveDefaultConfig();
-        final PluginConfig config = PluginConfig.fromFileConfiguration(getConfig(), getSLF4JLogger());
+        final ConfigManager cfgManager = new ConfigManager(getDataPath().resolve("config.yml"), getSLF4JLogger());
+        this.configManager = cfgManager;
+        final PluginConfig config = cfgManager.load();
 
         final AetheryteRegistry aetheryteRegistry = new AetheryteRegistry();
         this.registry = aetheryteRegistry;
@@ -44,6 +64,13 @@ public final class ClickPortals extends JavaPlugin {
 
         final AetheryteService service = new AetheryteService(this, aetheryteRegistry, activeHologramService);
         final AetheryteDialogFactory dialogFactory = new AetheryteDialogFactory(service);
+
+        activeHologramService.setInteractionHandler((player, aetheryteId) ->
+                player.getScheduler().run(this, task ->
+                        aetheryteRegistry.getById(aetheryteId).ifPresent(aetheryte ->
+                                dialogFactory.openWarpDialog(player, aetheryte)
+                        ), null)
+        );
 
         AetheryteItemFactory.registerRecipe(config);
 
@@ -78,7 +105,15 @@ public final class ClickPortals extends JavaPlugin {
             registry.clear();
             registry = null;
         }
+        configManager = null;
         getComponentLogger().info("ClickPortals disabled.");
+    }
+
+    /**
+     * Returns the active {@link ConfigManager}, if the plugin is enabled.
+     */
+    public @Nullable ConfigManager configManager() {
+        return configManager;
     }
 
     /**
@@ -89,8 +124,8 @@ public final class ClickPortals extends JavaPlugin {
             return NoopHologramService.INSTANCE;
         }
         if (Bukkit.getPluginManager().getPlugin("packetevents") != null) {
-            getComponentLogger().info("PacketEvents detected; enabling client-side Aetheryte holograms.");
-            return new PacketEventsHologramService(config.hologramViewDistance());
+            getComponentLogger().info("PacketEvents detected; enabling client-side Aetheryte visuals and interaction.");
+            return new PacketEventsHologramService(config.hologramViewDistance(), config.displayBlock());
         }
         return NoopHologramService.INSTANCE;
     }

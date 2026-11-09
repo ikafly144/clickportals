@@ -1,6 +1,24 @@
+/*
+ * ClickPortals
+ * Copyright (C) 2026 ikafly144
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 package net.sabafly.clickportals.aetheryte;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -10,6 +28,7 @@ import java.util.Map;
 import java.util.UUID;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
+import org.bukkit.entity.Marker;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -84,6 +103,70 @@ class AetheryteRegistryTest {
         assertThat(registry.unregister(world, second.id())).contains(second);
         assertThat(registry.getAll()).isEmpty();
         assertThat(worldPdcStore).doesNotContainKey(AetheryteRegistry.WORLD_AETHERYTES_KEY);
+    }
+
+    @Test
+    void markerEntityPdcStoresAndReadsAetheryteData() {
+        final Marker marker = mock(Marker.class);
+        final PersistentDataContainer markerPdc = AetheryteDataTypeTest.createInMemoryContainer(new HashMap<>());
+        when(marker.getPersistentDataContainer()).thenReturn(markerPdc);
+
+        final Aetheryte aetheryte = new Aetheryte(
+                UUID.randomUUID(),
+                "ウルダハ",
+                WORLD_ID,
+                WORLD_NAME,
+                0,
+                64,
+                0,
+                UUID.randomUUID(),
+                500L
+        );
+
+        assertThat(AetheryteRegistry.isAetheryteEntity(marker)).isFalse();
+        AetheryteRegistry.writeMarkerData(marker, aetheryte);
+        assertThat(AetheryteRegistry.isAetheryteEntity(marker)).isTrue();
+        assertThat(AetheryteRegistry.readMarkerData(marker)).contains(aetheryte);
+    }
+
+    @Test
+    void distanceToComputesEuclideanDistanceInSameWorldAndEmptyAcrossWorlds() {
+        final Aetheryte origin = new Aetheryte(
+                UUID.randomUUID(),
+                "起点",
+                WORLD_ID,
+                WORLD_NAME,
+                0,
+                64,
+                0,
+                UUID.randomUUID(),
+                100L
+        );
+        final Aetheryte sameWorldTarget = new Aetheryte(
+                UUID.randomUUID(),
+                "同ワールド先",
+                WORLD_ID,
+                WORLD_NAME,
+                30,
+                64,
+                40,
+                UUID.randomUUID(),
+                200L
+        );
+        final Aetheryte crossWorldTarget = new Aetheryte(
+                UUID.randomUUID(),
+                "別ワールド先",
+                UUID.randomUUID(),
+                "world_nether",
+                30,
+                64,
+                40,
+                UUID.randomUUID(),
+                300L
+        );
+
+        assertThat(origin.distanceTo(sameWorldTarget)).hasValueCloseTo(50.0, within(0.001));
+        assertThat(origin.distanceTo(crossWorldTarget)).isEmpty();
     }
 
     @Test
