@@ -347,6 +347,9 @@ public final class AetheryteService {
         });
     }
 
+    /**
+     * Removes all backing {@link Marker} entities associated with the given Aetheryte in its chunk.
+     */
     private static void removeMarkerEntitiesAt(final World world, final Aetheryte target) {
         final Chunk chunk = world.getChunkAt(target.blockX() >> 4, target.blockZ() >> 4);
         for (final Entity entity : chunk.getEntities()) {
@@ -497,6 +500,9 @@ public final class AetheryteService {
         return resolveSafeLanding(world, blockX, blockY, blockZ, 0.0f, 0.0f).isPresent();
     }
 
+    /**
+     * Checks whether the given block is a solid, non-hazardous floor suitable for standing on.
+     */
     private static boolean isSafeFloor(final Block block) {
         final Material type = block.getType();
         if (type.isAir() || type == Material.LAVA || type == Material.FIRE

@@ -75,6 +75,9 @@ public final class PacketEventsHologramService implements HologramService {
      * Bundle of client-side entity IDs allocated for a single Aetheryte.
      */
     record ClientEntitySet(int blockDisplayId, int textDisplayId, int interactionId) {
+        /**
+         * Returns the three allocated entity IDs as an int array.
+         */
         int[] toArray() {
             return new int[]{blockDisplayId, textDisplayId, interactionId};
         }
@@ -84,7 +87,7 @@ public final class PacketEventsHologramService implements HologramService {
     private final Map<UUID, ClientEntitySet> entitiesByAetheryte = new ConcurrentHashMap<>();
     private final Map<Integer, UUID> aetheryteByEntityId = new ConcurrentHashMap<>();
     private final float viewRangeMultiplier;
-    private final String displayBlockStateString;
+    private final int resolvedBlockStateId;
     private volatile @Nullable BiConsumer<Player, UUID> interactionHandler;
     private @Nullable PacketListenerCommon registeredListener;
 
@@ -100,10 +103,13 @@ public final class PacketEventsHologramService implements HologramService {
      */
     public PacketEventsHologramService(final double viewDistanceBlocks, final String displayBlockStateString) {
         this.viewRangeMultiplier = (float) Math.max(0.05, viewDistanceBlocks / BASE_VIEW_RANGE_BLOCKS);
-        this.displayBlockStateString = displayBlockStateString;
+        this.resolvedBlockStateId = resolveBlockStateGlobalId(displayBlockStateString);
         registerPacketListenerIfReady();
     }
 
+    /**
+     * Registers a PacketEvents packet listener for {@code INTERACT_ENTITY} packets if PacketEvents is initialized.
+     */
     private void registerPacketListenerIfReady() {
         final PacketEventsAPI<?> api = PacketEvents.getAPI();
         if (api == null || !api.isInitialized()) {
@@ -139,6 +145,9 @@ public final class PacketEventsHologramService implements HologramService {
         this.registeredListener = listener;
     }
 
+    /**
+     * Returns or allocates the bundle of client-side entity IDs for the given Aetheryte UUID.
+     */
     private ClientEntitySet getOrCreateEntitySet(final UUID aetheryteId) {
         return entitiesByAetheryte.computeIfAbsent(aetheryteId, id -> {
             final int blockId = entityIdGenerator.getAndIncrement();
@@ -231,24 +240,35 @@ public final class PacketEventsHologramService implements HologramService {
         }
     }
 
+    /**
+     * Flattens all currently allocated client-side entity IDs into a single primitive array.
+     */
     private int[] collectAllEntityIds() {
         return entitiesByAetheryte.values().stream()
                 .flatMapToInt(set -> java.util.Arrays.stream(set.toArray()))
                 .toArray();
     }
 
-    private int resolveBlockStateGlobalId() {
+    /**
+     * Parses a block state string once into its PacketEvents global block state ID, warning and falling back
+     * to Lodestone if invalid.
+     */
+    private static int resolveBlockStateGlobalId(final String stateString) {
         try {
-            final WrappedBlockState parsed = WrappedBlockState.getByString(displayBlockStateString);
+            final WrappedBlockState parsed = WrappedBlockState.getByString(stateString);
             if (parsed != null) {
                 return parsed.getGlobalId();
             }
         } catch (final Exception ignored) {
             // Fall through to default Lodestone state
         }
+        Bukkit.getLogger().warning("Invalid hologram.display-block '" + stateString + "'; falling back to minecraft:lodestone");
         return WrappedBlockState.getDefaultState(StateTypes.LODESTONE).getGlobalId();
     }
 
+    /**
+     * Derives a deterministic child UUID from a parent Aetheryte UUID and a component role suffix.
+     */
     private static UUID deriveChildUuid(final UUID baseId, final String suffix) {
         return UUID.nameUUIDFromBytes((baseId.toString() + ":" + suffix).getBytes(StandardCharsets.UTF_8));
     }
@@ -275,7 +295,7 @@ public final class PacketEventsHologramService implements HologramService {
         );
         final List<EntityData<?>> blockMeta = List.of(
                 new EntityData<>(DISPLAY_VIEW_RANGE_INDEX, EntityDataTypes.FLOAT, viewRangeMultiplier),
-                new EntityData<>(BLOCK_DISPLAY_STATE_INDEX, EntityDataTypes.BLOCK_STATE, resolveBlockStateGlobalId())
+                new EntityData<>(BLOCK_DISPLAY_STATE_INDEX, EntityDataTypes.BLOCK_STATE, resolvedBlockStateId)
         );
 
         // 2. TEXT_DISPLAY (floating name hologram above the Aetheryte)

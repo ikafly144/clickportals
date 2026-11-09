@@ -135,6 +135,9 @@ public final class ConfigManager {
         return currentConfig;
     }
 
+    /**
+     * Injects {@code @Comment} lines from the {@link CommentedConfigurationNode} tree into the dumped YAML text.
+     */
     private static String renderInlineComments(final String dumpedYaml, final CommentedConfigurationNode root) {
         final List<String> outputLines = new ArrayList<>();
         final String[] lines = dumpedYaml.split("\r?\n", -1);

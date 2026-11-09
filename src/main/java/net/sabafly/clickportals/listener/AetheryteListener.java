@@ -122,7 +122,9 @@ public final class AetheryteListener implements Listener {
                 relativeBlock.getY(),
                 relativeBlock.getZ()
         );
-        if (existingRelative.isPresent() && !AetheryteItemFactory.isAetheryteItem(event.getItem())) {
+        if (existingRelative.isPresent()
+                && !isInteractableBlock(clicked)
+                && !AetheryteItemFactory.isAetheryteItem(event.getItem())) {
             event.setCancelled(true);
             if (event.getHand() == EquipmentSlot.HAND) {
                 dialogFactory.openWarpDialog(player, existingRelative.get());
@@ -267,6 +269,14 @@ public final class AetheryteListener implements Listener {
      */
     private void protectExplosionBlocks(final List<Block> blocks) {
         blocks.removeIf(block -> registry.getByPosition(block.getWorld(), block.getX(), block.getY(), block.getZ()).isPresent());
+    }
+
+    /**
+     * Checks whether the given block has a native right-click interaction (e.g. chest, door, button).
+     */
+    @SuppressWarnings("deprecation")
+    private static boolean isInteractableBlock(final Block block) {
+        return block.getType().isInteractable();
     }
 
     /**

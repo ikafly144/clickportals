@@ -25,8 +25,8 @@
 ./gradlew build
 ```
 
-The shaded plugin jar is generated at `build/libs/clickportals-<version>.jar`.
+The shaded plugin jar is generated at `build/libs/ClickPortals-<version>.jar`.
 
 ## License
 
-This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)** — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **GNU General Public License v3.0 or later (`GPL-3.0-or-later`)** — see the [LICENSE](LICENSE) file for details.

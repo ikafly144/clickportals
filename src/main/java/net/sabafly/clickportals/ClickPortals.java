@@ -19,6 +19,7 @@ package net.sabafly.clickportals;
 
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import java.util.List;
+import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.command.ClickPortalsCommand;
 import net.sabafly.clickportals.config.ConfigManager;
@@ -31,6 +32,7 @@ import net.sabafly.clickportals.visual.HologramService;
 import net.sabafly.clickportals.visual.NoopHologramService;
 import net.sabafly.clickportals.visual.PacketEventsHologramService;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -41,6 +43,8 @@ import org.jspecify.annotations.Nullable;
  */
 @SuppressWarnings("UnstableApiUsage")
 public final class ClickPortals extends JavaPlugin {
+
+    private static final double MAX_INTERACT_DISTANCE_SQUARED = 36.0;
 
     private @Nullable ConfigManager configManager;
     private @Nullable AetheryteRegistry registry;
@@ -67,9 +71,10 @@ public final class ClickPortals extends JavaPlugin {
 
         activeHologramService.setInteractionHandler((player, aetheryteId) ->
                 player.getScheduler().run(this, task ->
-                        aetheryteRegistry.getById(aetheryteId).ifPresent(aetheryte ->
-                                dialogFactory.openWarpDialog(player, aetheryte)
-                        ), null)
+                        aetheryteRegistry.getById(aetheryteId)
+                                .filter(aetheryte -> isWithinReach(player, aetheryte))
+                                .ifPresent(aetheryte -> dialogFactory.openWarpDialog(player, aetheryte)),
+                        null)
         );
 
         AetheryteItemFactory.registerRecipe(config);
@@ -114,6 +119,20 @@ public final class ClickPortals extends JavaPlugin {
      */
     public @Nullable ConfigManager configManager() {
         return configManager;
+    }
+
+    /**
+     * Checks that the player is in the same world and within interaction reach of the target Aetheryte.
+     */
+    private static boolean isWithinReach(final Player player, final Aetheryte aetheryte) {
+        final Location loc = player.getLocation();
+        if (loc == null) {
+            return false;
+        }
+        final World world = loc.getWorld();
+        return world != null
+                && world.getUID().equals(aetheryte.worldId())
+                && loc.distanceSquared(aetheryte.markerLocation(world)) <= MAX_INTERACT_DISTANCE_SQUARED;
     }
 
     /**

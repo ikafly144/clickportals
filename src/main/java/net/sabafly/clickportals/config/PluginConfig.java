@@ -264,12 +264,18 @@ public record PluginConfig(
         return hologram.displayBlock();
     }
 
+    /**
+     * Checks whether the given material is one of the air material variants without initializing the Paper registry.
+     */
     private static boolean isAirMaterial(final Material material) {
         return material == Material.AIR
                 || material == Material.CAVE_AIR
                 || material == Material.VOID_AIR;
     }
 
+    /**
+     * Parses a Bukkit {@link Material} by enum name (supporting optional {@code minecraft:} prefix).
+     */
     private static @Nullable Material parseMaterial(@Nullable final String name) {
         if (name == null || name.isBlank()) {
             return null;
