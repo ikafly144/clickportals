@@ -70,6 +70,7 @@ public final class PacketEventsHologramService implements HologramService {
     private static final int INTERACTION_HEIGHT_INDEX = 9;
     private static final int INTERACTION_RESPONSIVE_INDEX = 10;
     private static final float INTERACTION_BOX_SIZE = 1.0f;
+    private static final long INTERACT_DEBOUNCE_MS = 150L;
 
     /**
      * Bundle of client-side entity IDs allocated for a single Aetheryte.
@@ -86,6 +87,7 @@ public final class PacketEventsHologramService implements HologramService {
     private final AtomicInteger entityIdGenerator = new AtomicInteger(1_500_000_000);
     private final Map<UUID, ClientEntitySet> entitiesByAetheryte = new ConcurrentHashMap<>();
     private final Map<Integer, UUID> aetheryteByEntityId = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> lastInteractMillisByPlayer = new ConcurrentHashMap<>();
     private final float viewRangeMultiplier;
     private final int resolvedBlockStateId;
     private volatile @Nullable BiConsumer<Player, UUID> interactionHandler;
@@ -108,11 +110,11 @@ public final class PacketEventsHologramService implements HologramService {
     }
 
     /**
-     * Registers a PacketEvents packet listener for {@code INTERACT_ENTITY} packets if PacketEvents is initialized.
+     * Registers a PacketEvents packet listener for {@code INTERACT_ENTITY} packets if PacketEvents API is available.
      */
     private void registerPacketListenerIfReady() {
         final PacketEventsAPI<?> api = PacketEvents.getAPI();
-        if (api == null || !api.isInitialized()) {
+        if (api == null) {
             return;
         }
         final PacketListenerAbstract listener = new PacketListenerAbstract(PacketListenerPriority.NORMAL) {
@@ -132,10 +134,12 @@ public final class PacketEventsHologramService implements HologramService {
                     return;
                 }
                 final WrapperPlayClientInteractEntity.InteractAction action = wrapper.getAction();
-                if (action == WrapperPlayClientInteractEntity.InteractAction.INTERACT
+                // In Minecraft 26.1+, ServerboundInteractPacket always decodes as INTERACT_AT in PacketEvents
+                if ((action == WrapperPlayClientInteractEntity.InteractAction.INTERACT
+                        || action == WrapperPlayClientInteractEntity.InteractAction.INTERACT_AT)
                         && wrapper.getHand() == InteractionHand.MAIN_HAND) {
-                    final Object rawPlayer = event.getPlayer();
-                    if (rawPlayer instanceof Player player) {
+                    final Player player = resolveBukkitPlayer(event);
+                    if (player != null && shouldTriggerInteraction(player.getUniqueId())) {
                         handler.accept(player, targetAetheryteId);
                     }
                 }
@@ -143,6 +147,29 @@ public final class PacketEventsHologramService implements HologramService {
         };
         api.getEventManager().registerListener(listener);
         this.registeredListener = listener;
+    }
+
+    /**
+     * Resolves the Bukkit {@link Player} from a PacketEvents {@link PacketReceiveEvent}.
+     */
+    private static @Nullable Player resolveBukkitPlayer(final PacketReceiveEvent event) {
+        final Object rawPlayer = event.getPlayer();
+        if (rawPlayer instanceof Player player) {
+            return player;
+        }
+        if (event.getUser() != null && event.getUser().getUUID() != null) {
+            return Bukkit.getPlayer(event.getUser().getUUID());
+        }
+        return null;
+    }
+
+    /**
+     * Debounces duplicate {@code INTERACT_AT} + {@code INTERACT} packet pairs from a single right-click.
+     */
+    private boolean shouldTriggerInteraction(final UUID playerId) {
+        final long now = System.currentTimeMillis();
+        final Long previous = lastInteractMillisByPlayer.put(playerId, now);
+        return previous == null || (now - previous) >= INTERACT_DEBOUNCE_MS;
     }
 
     /**
@@ -225,6 +252,7 @@ public final class PacketEventsHologramService implements HologramService {
             api.getEventManager().unregisterListener(registeredListener);
             registeredListener = null;
         }
+        lastInteractMillisByPlayer.clear();
         if (entitiesByAetheryte.isEmpty()) {
             return;
         }
