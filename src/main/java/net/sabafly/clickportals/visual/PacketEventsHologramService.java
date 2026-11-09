@@ -23,6 +23,7 @@ import com.github.retrooper.packetevents.event.PacketListenerAbstract;
 import com.github.retrooper.packetevents.event.PacketListenerCommon;
 import com.github.retrooper.packetevents.event.PacketListenerPriority;
 import com.github.retrooper.packetevents.event.PacketReceiveEvent;
+import com.github.retrooper.packetevents.event.UserDisconnectEvent;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
 import com.github.retrooper.packetevents.protocol.entity.type.EntityTypes;
@@ -144,6 +145,13 @@ public final class PacketEventsHologramService implements HologramService {
                     }
                 }
             }
+
+            @Override
+            public void onUserDisconnect(final UserDisconnectEvent event) {
+                if (event.getUser() != null && event.getUser().getUUID() != null) {
+                    lastInteractMillisByPlayer.remove(event.getUser().getUUID());
+                }
+            }
         };
         api.getEventManager().registerListener(listener);
         this.registeredListener = listener;
@@ -168,8 +176,15 @@ public final class PacketEventsHologramService implements HologramService {
      */
     private boolean shouldTriggerInteraction(final UUID playerId) {
         final long now = System.currentTimeMillis();
-        final Long previous = lastInteractMillisByPlayer.put(playerId, now);
-        return previous == null || (now - previous) >= INTERACT_DEBOUNCE_MS;
+        final boolean[] allowed = {false};
+        lastInteractMillisByPlayer.compute(playerId, (id, previous) -> {
+            if (previous == null || (now - previous) >= INTERACT_DEBOUNCE_MS) {
+                allowed[0] = true;
+                return now;
+            }
+            return previous;
+        });
+        return allowed[0];
     }
 
     /**
@@ -195,6 +210,11 @@ public final class PacketEventsHologramService implements HologramService {
     @Override
     public void setInteractionHandler(final BiConsumer<Player, UUID> handler) {
         this.interactionHandler = handler;
+    }
+
+    @Override
+    public void removePlayer(final UUID playerId) {
+        lastInteractMillisByPlayer.remove(playerId);
     }
 
     @Override

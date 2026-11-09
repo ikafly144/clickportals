@@ -33,6 +33,7 @@ import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.dialog.AetheryteDialogFactory;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation;
+import net.sabafly.clickportals.visual.HologramService;
 import net.sabafly.clickportals.visual.NoopHologramService;
 import org.bukkit.ExplosionResult;
 import org.bukkit.Location;
@@ -46,6 +47,7 @@ import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPistonExtendEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataContainer;
@@ -186,5 +188,22 @@ class AetheryteListenerTest {
         customService.warpToAetheryte(player, null, registeredAetheryte.id());
 
         verify(player).sendMessage(any(Component.class));
+    }
+
+    @Test
+    void playerQuitRemovesPlayerFromHologramService() {
+        final HologramService mockHologramService = mock(HologramService.class);
+        final AetheryteService service = new AetheryteService(plugin, registry, mockHologramService);
+        final AetheryteDialogFactory dialogFactory = new AetheryteDialogFactory(service);
+        final AetheryteListener customListener = new AetheryteListener(plugin, registry, dialogFactory, mockHologramService);
+
+        final UUID playerId = UUID.randomUUID();
+        final Player player = mock(Player.class);
+        when(player.getUniqueId()).thenReturn(playerId);
+        final PlayerQuitEvent quitEvent = new PlayerQuitEvent(player, Component.empty(), PlayerQuitEvent.QuitReason.DISCONNECTED);
+
+        customListener.onPlayerQuit(quitEvent);
+
+        verify(mockHologramService).removePlayer(playerId);
     }
 }

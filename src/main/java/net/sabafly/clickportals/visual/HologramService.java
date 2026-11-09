@@ -60,6 +60,12 @@ public interface HologramService {
     }
 
     /**
+     * Cleans up per-player interaction state when a player disconnects.
+     */
+    default void removePlayer(final UUID playerId) {
+    }
+
+    /**
      * Destroys all active client-side entities and unregisters any packet listeners when the plugin disables.
      */
     void destroyAll();

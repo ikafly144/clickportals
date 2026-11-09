@@ -42,6 +42,7 @@ import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
@@ -251,6 +252,14 @@ public final class AetheryteListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerRespawn(final PlayerRespawnEvent event) {
         scheduleHologramRefresh(event.getPlayer());
+    }
+
+    /**
+     * Cleans up per-player hologram interaction state when a player quits the server.
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerQuit(final PlayerQuitEvent event) {
+        hologramService.removePlayer(event.getPlayer().getUniqueId());
     }
 
     /**
