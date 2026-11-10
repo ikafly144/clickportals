@@ -19,6 +19,7 @@ package net.sabafly.clickportals.message;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -197,6 +198,9 @@ public final class Messages {
         viewer.sendMessage(get(viewer, key, resolvers));
     }
 
+    /**
+     * Resolves the best-matching {@link TranslationBundle} for {@code requested} using the 4-step fallback chain.
+     */
     private static TranslationBundle resolveBundle(final State current, final Locale requested) {
         final Locale normalized = LanguageLoader.normalizeLocale(requested);
         final Map<Locale, TranslationBundle> bundles = current.bundles();
@@ -229,6 +233,10 @@ public final class Messages {
         return us != null ? us : TranslationBundle.empty();
     }
 
+    /**
+     * Finds a {@link TranslationBundle} whose locale shares the given language code, selecting the lexicographically
+     * smallest {@link Locale#toString()} for deterministic behavior across JVM restarts.
+     */
     private static @Nullable TranslationBundle findByLanguage(
             final Map<Locale, TranslationBundle> bundles,
             final String language
@@ -240,14 +248,16 @@ public final class Messages {
         if (langOnly != null) {
             return langOnly;
         }
-        for (final Map.Entry<Locale, TranslationBundle> entry : bundles.entrySet()) {
-            if (entry.getKey().getLanguage().equals(language)) {
-                return entry.getValue();
-            }
-        }
-        return null;
+        return bundles.entrySet().stream()
+                .filter(entry -> entry.getKey().getLanguage().equals(language))
+                .min(Map.Entry.comparingByKey(Comparator.comparing(Locale::toString)))
+                .map(Map.Entry::getValue)
+                .orElse(null);
     }
 
+    /**
+     * Looks up a single-line template string for {@code key}, falling back to the default locale and {@code en_US}.
+     */
     private static String lookupString(
             final State current,
             final TranslationBundle bundle,
@@ -268,6 +278,9 @@ public final class Messages {
         return key.path();
     }
 
+    /**
+     * Looks up a multi-line template list for {@code key}, falling back to the default locale and {@code en_US}.
+     */
     private static List<String> lookupList(
             final State current,
             final TranslationBundle bundle,

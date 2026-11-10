@@ -53,6 +53,9 @@ public final class ClickPortals extends JavaPlugin {
     private @Nullable Messages messages;
     private @Nullable AetheryteRegistry registry;
     private @Nullable HologramService hologramService;
+    private @Nullable AetheryteService aetheryteService;
+    private @Nullable AetheryteDialogFactory dialogFactory;
+    private @Nullable AetheryteListener aetheryteListener;
 
     @Override
     public void onEnable() {
@@ -79,22 +82,23 @@ public final class ClickPortals extends JavaPlugin {
         this.hologramService = activeHologramService;
 
         final AetheryteService service = new AetheryteService(this, aetheryteRegistry, activeHologramService, msgService);
-        final AetheryteDialogFactory dialogFactory = new AetheryteDialogFactory(service, msgService);
+        this.aetheryteService = service;
+        final AetheryteDialogFactory dialogs = new AetheryteDialogFactory(service, msgService);
+        this.dialogFactory = dialogs;
 
-        activeHologramService.setInteractionHandler((player, aetheryteId) ->
-                player.getScheduler().run(this, task ->
-                        aetheryteRegistry.getById(aetheryteId)
-                                .filter(aetheryte -> isWithinReach(player, aetheryte))
-                                .ifPresent(aetheryte -> dialogFactory.openWarpDialog(player, aetheryte)),
-                        null)
-        );
+        bindInteractionHandler(activeHologramService, aetheryteRegistry, dialogs);
 
         AetheryteItemFactory.registerRecipe(config, msgService);
 
-        Bukkit.getPluginManager().registerEvents(
-                new AetheryteListener(this, aetheryteRegistry, dialogFactory, activeHologramService, msgService),
-                this
+        final AetheryteListener listener = new AetheryteListener(
+                this,
+                aetheryteRegistry,
+                dialogs,
+                activeHologramService,
+                msgService
         );
+        this.aetheryteListener = listener;
+        Bukkit.getPluginManager().registerEvents(listener, this);
 
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event -> {
             event.registrar().register(
@@ -122,6 +126,9 @@ public final class ClickPortals extends JavaPlugin {
             registry.clear();
             registry = null;
         }
+        aetheryteListener = null;
+        dialogFactory = null;
+        aetheryteService = null;
         messages = null;
         configManager = null;
         getComponentLogger().info("ClickPortals disabled.");
@@ -134,8 +141,17 @@ public final class ClickPortals extends JavaPlugin {
         final ConfigManager cfgManager = this.configManager;
         final Messages msgService = this.messages;
         final AetheryteRegistry aetheryteRegistry = this.registry;
-        final HologramService activeHologramService = this.hologramService;
-        if (cfgManager == null || msgService == null || aetheryteRegistry == null || activeHologramService == null) {
+        final HologramService currentHologramService = this.hologramService;
+        final AetheryteService service = this.aetheryteService;
+        final AetheryteDialogFactory dialogs = this.dialogFactory;
+        final AetheryteListener listener = this.aetheryteListener;
+        if (cfgManager == null
+                || msgService == null
+                || aetheryteRegistry == null
+                || currentHologramService == null
+                || service == null
+                || dialogs == null
+                || listener == null) {
             return;
         }
 
@@ -148,7 +164,16 @@ public final class ClickPortals extends JavaPlugin {
                     getSLF4JLogger()
             );
             AetheryteItemFactory.registerRecipe(reloadedConfig, msgService);
-            activeHologramService.updateSettings(reloadedConfig);
+
+            final HologramService activeHologramService = resolveReloadedHologramService(
+                    reloadedConfig,
+                    msgService,
+                    aetheryteRegistry,
+                    dialogs
+            );
+            service.setHologramService(activeHologramService);
+            listener.setHologramService(activeHologramService);
+
             for (final Player player : Bukkit.getOnlinePlayers()) {
                 player.getScheduler().run(this, task -> {
                     if (player.isOnline()) {
@@ -162,6 +187,53 @@ public final class ClickPortals extends JavaPlugin {
             msgService.send(sender, MessageKey.COMMAND_RELOADED);
             getComponentLogger().info("ClickPortals configuration and translations reloaded.");
         });
+    }
+
+    /**
+     * Re-evaluates {@code hologram.enabled} on reload, switching between {@link PacketEventsHologramService}
+     * and {@link NoopHologramService} and destroying existing displays when disabled.
+     */
+    private HologramService resolveReloadedHologramService(
+            final PluginConfig reloadedConfig,
+            final Messages msgService,
+            final AetheryteRegistry aetheryteRegistry,
+            final AetheryteDialogFactory dialogs
+    ) {
+        final HologramService current = this.hologramService != null
+                ? this.hologramService
+                : NoopHologramService.INSTANCE;
+        if (!reloadedConfig.hologramEnabled()) {
+            if (current != NoopHologramService.INSTANCE) {
+                current.destroyAll();
+            }
+            this.hologramService = NoopHologramService.INSTANCE;
+            return NoopHologramService.INSTANCE;
+        }
+        if (current == NoopHologramService.INSTANCE) {
+            final HologramService created = createHologramService(reloadedConfig, msgService);
+            bindInteractionHandler(created, aetheryteRegistry, dialogs);
+            this.hologramService = created;
+            return created;
+        }
+        current.updateSettings(reloadedConfig);
+        return current;
+    }
+
+    /**
+     * Registers the virtual interaction entity callback on the given {@link HologramService}.
+     */
+    private void bindInteractionHandler(
+            final HologramService targetService,
+            final AetheryteRegistry aetheryteRegistry,
+            final AetheryteDialogFactory dialogs
+    ) {
+        targetService.setInteractionHandler((player, aetheryteId) ->
+                player.getScheduler().run(this, task ->
+                        aetheryteRegistry.getById(aetheryteId)
+                                .filter(aetheryte -> isWithinReach(player, aetheryte))
+                                .ifPresent(aetheryte -> dialogs.openWarpDialog(player, aetheryte)),
+                        null)
+        );
     }
 
     /**

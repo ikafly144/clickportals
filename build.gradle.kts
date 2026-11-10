@@ -167,7 +167,7 @@ paperPluginYaml {
             default = Permission.Default.OP
         }
         register("clickportals.bypass.limit") {
-            description = "Bypass per-player Aetheryte placement limits"
+            description = "Bypass per-player Aetheryte placement limits (reserved; currently inactive)"
             default = Permission.Default.OP
         }
         register("clickportals.bypass.cost.warp") {
@@ -175,7 +175,7 @@ paperPluginYaml {
             default = Permission.Default.OP
         }
         register("clickportals.bypass.cost.place") {
-            description = "Bypass Aetheryte placement costs"
+            description = "Bypass Aetheryte placement costs (reserved; currently inactive)"
             default = Permission.Default.OP
         }
         register("clickportals.admin") {

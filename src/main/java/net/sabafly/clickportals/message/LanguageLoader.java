@@ -178,6 +178,9 @@ public final class LanguageLoader {
         return Map.copyOf(result);
     }
 
+    /**
+     * Copies a bundled classpath YAML resource to the target filesystem path.
+     */
     private static void copyBundledResource(final String resourcePath, final Path target, final Logger logger) {
         try (final InputStream in = LanguageLoader.class.getResourceAsStream(resourcePath)) {
             if (in == null) {
@@ -190,6 +193,9 @@ public final class LanguageLoader {
         }
     }
 
+    /**
+     * Loads and parses a YAML configuration node from a classpath resource path.
+     */
     static @Nullable CommentedConfigurationNode loadClasspathNode(
             final String resourcePath,
             @Nullable final Logger logger
@@ -213,6 +219,9 @@ public final class LanguageLoader {
         }
     }
 
+    /**
+     * Extracts all known {@link MessageKey} entries from {@code root}, merging them over {@code base}.
+     */
     static TranslationBundle extractBundle(
             final ConfigurationNode root,
             final TranslationBundle base,
@@ -262,6 +271,9 @@ public final class LanguageLoader {
         return new TranslationBundle(Map.copyOf(strings), Map.copyOf(lists));
     }
 
+    /**
+     * Recursively logs warnings for any leaf keys in {@code node} that do not match a known {@link MessageKey}.
+     */
     private static void warnUnknownKeys(
             final ConfigurationNode node,
             final String prefix,
@@ -288,6 +300,9 @@ public final class LanguageLoader {
         return List.copyOf(result);
     }
 
+    /**
+     * Recursively appends dot-separated leaf paths from {@code node} into {@code out}.
+     */
     private static void collectLeafPathsRecursive(
             final ConfigurationNode node,
             final String prefix,

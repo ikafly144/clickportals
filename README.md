@@ -12,7 +12,7 @@
 - **Paper Dialog UI**: Native Dialog screens for naming new Aetherytes, selecting warp destinations (with cost and availability indicators), and confirming removal.
 - **Type-Safe Configuration**: Powered by [SpongePowered Configurate 4](https://github.com/SpongePowered/Configurate) (`configurate-yaml`) with comment preservation.
 - **Per-Player Localization (i18n)**: MiniMessage YAML translation files (`lang/en_US.yml`, `lang/ja_JP.yml`) that automatically adapt chat messages, Dialog UIs, and client-side holograms to each player's client language.
-- **Granular Permissions**: Fine-grained permission nodes for warp usage, placement, removal, cost/limit bypass, and commands (`/cp give`, `/cp reload`).
+- **Granular Permissions**: Fine-grained permission nodes for warp usage, placement, removal, warp cost bypass, and commands (`/cp give`, `/cp reload`), plus reserved bypass nodes for future placement limits and placement costs.
 
 ## Documentation
 

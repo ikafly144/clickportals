@@ -96,7 +96,7 @@ public final class AetheryteService {
 
     private final Plugin plugin;
     private final AetheryteRegistry registry;
-    private final HologramService hologramService;
+    private volatile HologramService hologramService;
     private final Messages messages;
     private final WarpCostEvaluator costEvaluator;
 
@@ -170,6 +170,13 @@ public final class AetheryteService {
      */
     public HologramService hologramService() {
         return hologramService;
+    }
+
+    /**
+     * Updates the active {@link HologramService} reference when {@code hologram.enabled} changes on reload.
+     */
+    public void setHologramService(final HologramService hologramService) {
+        this.hologramService = hologramService;
     }
 
     /**

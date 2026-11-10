@@ -137,4 +137,24 @@ class MessagesTest {
         assertThat(lore).hasSize(2);
         assertThat(PLAIN.serialize(lore.getFirst())).contains("ブロックに向かって右クリックして");
     }
+
+    @Test
+    void languageOnlyFallbackIsDeterministicByLocaleStringOrder() throws IOException {
+        final Path langDir = tempDir.resolve("lang-order");
+        Files.createDirectories(langDir);
+        Files.writeString(langDir.resolve("en_GB.yml"), """
+                cost:
+                  free: "<green>Free (UK)</green>"
+                """, StandardCharsets.UTF_8);
+        Files.writeString(langDir.resolve("en_US.yml"), """
+                cost:
+                  free: "<green>Free (US)</green>"
+                """, StandardCharsets.UTF_8);
+
+        final Messages messages = Messages.load(langDir, Locale.JAPAN, true, mock(Logger.class));
+
+        // Requesting en_AU (unregistered region of "en") must deterministically choose en_GB ("en_GB" < "en_US")
+        assertThat(PLAIN.serialize(messages.get(Locale.of("en", "AU"), MessageKey.COST_FREE)))
+                .isEqualTo("Free (UK)");
+    }
 }

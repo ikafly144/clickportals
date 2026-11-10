@@ -59,7 +59,7 @@ public final class AetheryteListener implements Listener {
     private final Plugin plugin;
     private final AetheryteRegistry registry;
     private final AetheryteDialogFactory dialogFactory;
-    private final HologramService hologramService;
+    private volatile HologramService hologramService;
     private final Messages messages;
 
     /**
@@ -89,6 +89,13 @@ public final class AetheryteListener implements Listener {
         this.dialogFactory = dialogFactory;
         this.hologramService = hologramService;
         this.messages = messages;
+    }
+
+    /**
+     * Updates the active {@link HologramService} reference when {@code hologram.enabled} changes on reload.
+     */
+    public void setHologramService(final HologramService hologramService) {
+        this.hologramService = hologramService;
     }
 
     /**

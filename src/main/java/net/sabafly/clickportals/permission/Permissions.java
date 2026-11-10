@@ -52,7 +52,7 @@ public final class Permissions {
     public static final String COMMAND_RELOAD = "clickportals.command.reload";
 
     /**
-     * Allows bypassing per-player Aetheryte placement limits (default: {@code op}).
+     * Allows bypassing per-player Aetheryte placement limits (default: {@code op}; reserved for #43, currently inactive).
      */
     public static final String BYPASS_LIMIT = "clickportals.bypass.limit";
 
@@ -62,7 +62,7 @@ public final class Permissions {
     public static final String BYPASS_COST_WARP = "clickportals.bypass.cost.warp";
 
     /**
-     * Allows bypassing Aetheryte placement costs (default: {@code op}).
+     * Allows bypassing Aetheryte placement costs (default: {@code op}; reserved for #15, currently inactive).
      */
     public static final String BYPASS_COST_PLACE = "clickportals.bypass.cost.place";
 
