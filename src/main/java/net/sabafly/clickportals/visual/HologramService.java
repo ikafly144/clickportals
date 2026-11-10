@@ -22,6 +22,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.BiConsumer;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.config.PluginConfig;
 import org.bukkit.entity.Player;
 
 /**
@@ -29,6 +30,12 @@ import org.bukkit.entity.Player;
  * representing placed Aetherytes (#6).
  */
 public interface HologramService {
+
+    /**
+     * Updates runtime visual settings from a reloaded {@link PluginConfig}.
+     */
+    default void updateSettings(final PluginConfig config) {
+    }
 
     /**
      * Spawns or updates the client-side visual and interaction entities for the given Aetheryte

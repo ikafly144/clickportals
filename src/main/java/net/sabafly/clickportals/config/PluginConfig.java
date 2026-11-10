@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import net.sabafly.clickportals.message.LanguageLoader;
 import org.bukkit.Material;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -30,18 +31,43 @@ import org.spongepowered.configurate.objectmapping.meta.Comment;
 import org.spongepowered.configurate.objectmapping.meta.Setting;
 
 /**
- * Type-safe Configurate root configuration model for ClickPortals (#33).
+ * Type-safe Configurate root configuration model for ClickPortals (#19, #33).
  */
 @ConfigSerializable
 public record PluginConfig(
+        @Setting("language")
+        @Comment("Language and localization settings")
+        LanguageSection language,
+
         @Setting("recipe")
-        @Comment("エーテライト作成用アイテムのクラフトレシピ設定")
+        @Comment("Crafting recipe settings for the Aetheryte creation item")
         RecipeSection recipe,
 
         @Setting("hologram")
-        @Comment("エーテライトのクライアントサイド表示 (PacketEvents Display & Interaction) 設定")
+        @Comment("Client-side visual and interaction (PacketEvents Display & Interaction) settings")
         HologramSection hologram
 ) {
+
+    /**
+     * Localization configuration section (#19).
+     */
+    @ConfigSerializable
+    public record LanguageSection(
+            @Setting("default-locale")
+            @Comment("Fallback locale used for console messages, item names, and unsupported client locales (e.g. en_US, ja_JP)")
+            String defaultLocale,
+
+            @Setting("use-client-locale")
+            @Comment("Whether to automatically switch player-facing messages and holograms to match the player's client language")
+            boolean useClientLocale
+    ) {
+        /**
+         * Returns the default language section.
+         */
+        public static LanguageSection defaults() {
+            return new LanguageSection("en_US", true);
+        }
+    }
 
     /**
      * Crafting recipe configuration section.
@@ -49,19 +75,19 @@ public record PluginConfig(
     @ConfigSerializable
     public record RecipeSection(
             @Setting("enabled")
-            @Comment("クラフトレシピを有効にするかどうか")
+            @Comment("Whether the crafting recipe is enabled")
             boolean enabled,
 
             @Setting("item-material")
-            @Comment("エーテライト作成用アイテムのベース素材 (機能コンポーネントはマスクされます)")
+            @Comment("Base material for the Aetheryte creation item (vanilla item components are masked)")
             String itemMaterial,
 
             @Setting("shape")
-            @Comment("3x3 クラフトグリッドの形状 (1〜3行、各行1〜3文字)")
+            @Comment("3x3 crafting grid shape (1-3 rows, 1-3 characters per row)")
             List<String> shape,
 
             @Setting("ingredients")
-            @Comment("形状内の文字と Bukkit Material 名の対応")
+            @Comment("Mapping of shape characters to Bukkit Material names")
             Map<String, String> ingredients
     ) {
         /**
@@ -86,15 +112,15 @@ public record PluginConfig(
     @ConfigSerializable
     public record HologramSection(
             @Setting("enabled")
-            @Comment("PacketEvents を用いたクライアントサイド表示とインタラクト判定を有効にするかどうか")
+            @Comment("Whether PacketEvents client-side displays and interaction hitboxes are enabled")
             boolean enabled,
 
             @Setting("view-distance")
-            @Comment("ホログラムおよびモデルの表示距離 (ブロック単位、最小 4.0)")
+            @Comment("View distance for holograms and models in blocks (minimum 4.0)")
             double viewDistance,
 
             @Setting("display-block")
-            @Comment("エーテライトの筐体としてクライアントに表示するブロック状態")
+            @Comment("Block state displayed to clients as the Aetheryte body")
             String displayBlock
     ) {
         /**
@@ -109,6 +135,9 @@ public record PluginConfig(
      * Compact constructor ensuring non-null sections when deserialized by Configurate.
      */
     public PluginConfig {
+        if (language == null) {
+            language = LanguageSection.defaults();
+        }
         if (recipe == null) {
             recipe = RecipeSection.defaults();
         }
@@ -118,18 +147,31 @@ public record PluginConfig(
     }
 
     /**
+     * Convenience constructor with default language section.
+     */
+    public PluginConfig(final RecipeSection recipe, final HologramSection hologram) {
+        this(LanguageSection.defaults(), recipe, hologram);
+    }
+
+    /**
      * Returns the default {@link PluginConfig}.
      */
     public static PluginConfig defaultConfig() {
-        return new PluginConfig(RecipeSection.defaults(), HologramSection.defaults());
+        return new PluginConfig(LanguageSection.defaults(), RecipeSection.defaults(), HologramSection.defaults());
     }
 
     /**
      * Validates and normalizes this configuration, falling back to safe defaults on invalid values.
      */
     public PluginConfig validated(final Logger logger) {
+        final LanguageSection defaultLanguage = LanguageSection.defaults();
         final RecipeSection defaultRecipe = RecipeSection.defaults();
         final HologramSection defaultHologram = HologramSection.defaults();
+
+        final String rawLocale = language.defaultLocale();
+        final String validDefaultLocale = (rawLocale == null || rawLocale.isBlank())
+                ? defaultLanguage.defaultLocale()
+                : rawLocale.strip();
 
         final Material resolvedItemMat = parseMaterial(recipe.itemMaterial());
         final String validItemMatName;
@@ -192,6 +234,10 @@ public record PluginConfig(
                 : rawDisplayBlock.strip();
 
         return new PluginConfig(
+                new LanguageSection(
+                        validDefaultLocale,
+                        language.useClientLocale()
+                ),
                 new RecipeSection(
                         recipe.enabled(),
                         validItemMatName,
@@ -204,6 +250,20 @@ public record PluginConfig(
                         validDisplayBlock
                 )
         );
+    }
+
+    /**
+     * Returns the parsed default {@link Locale}.
+     */
+    public Locale defaultLocale() {
+        return LanguageLoader.parseLocale(language.defaultLocale());
+    }
+
+    /**
+     * Returns whether player-facing text should adapt to the player's client locale.
+     */
+    public boolean useClientLocale() {
+        return language.useClientLocale();
     }
 
     /**

@@ -183,7 +183,7 @@ class AetheryteListenerTest {
                 expensiveEvaluator
         );
         final Player player = mock(Player.class);
-        when(player.isPermissionSet("clickportals.use")).thenReturn(false);
+        when(player.hasPermission("clickportals.use")).thenReturn(true);
 
         customService.warpToAetheryte(player, null, registeredAetheryte.id());
 

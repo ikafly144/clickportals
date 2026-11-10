@@ -11,6 +11,13 @@
 - **Client-Side Visuals & Interaction**: Uses [PacketEvents](https://github.com/retrooper/packetevents) to render client-only `BLOCK_DISPLAY`, `TEXT_DISPLAY` holograms, and `INTERACTION` hitboxes—leaving zero orphaned display entities if the plugin is removed.
 - **Paper Dialog UI**: Native Dialog screens for naming new Aetherytes, selecting warp destinations (with cost and availability indicators), and confirming removal.
 - **Type-Safe Configuration**: Powered by [SpongePowered Configurate 4](https://github.com/SpongePowered/Configurate) (`configurate-yaml`) with comment preservation.
+- **Per-Player Localization (i18n)**: MiniMessage YAML translation files (`lang/en_US.yml`, `lang/ja_JP.yml`) that automatically adapt chat messages, Dialog UIs, and client-side holograms to each player's client language.
+- **Granular Permissions**: Fine-grained permission nodes for warp usage, placement, removal, cost/limit bypass, and commands (`/cp give`, `/cp reload`).
+
+## Documentation
+
+- [Permissions & Commands Reference](docs/permissions.md)
+- [Localization & Message Formatting (i18n)](docs/i18n.md)
 
 ## Requirements
 
