@@ -460,9 +460,18 @@ public final class AetheryteService {
             final Location destinationLoc = safeLanding.get();
 
             player.getScheduler().run(plugin, task -> {
+                if (!canUse(player)) {
+                    final WarpEvaluation recheck = evaluateWarp(player, source, destination);
+                    final Component reason = recheck.denyReason() != null
+                            ? recheck.denyReason()
+                            : messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION);
+                    player.sendMessage(messages.errorWarpDenied(player, reason));
+                    return;
+                }
+
                 final boolean paid = Permissions.canBypassWarpCost(player)
                         || costEvaluator.charge(player, source, destination);
-                if (!canUse(player) || !paid) {
+                if (!paid) {
                     final WarpEvaluation recheck = evaluateWarp(player, source, destination);
                     final Component reason = recheck.denyReason() != null
                             ? recheck.denyReason()

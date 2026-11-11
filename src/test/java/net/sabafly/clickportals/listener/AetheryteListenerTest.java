@@ -20,6 +20,7 @@ package net.sabafly.clickportals.listener;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -187,6 +188,26 @@ class AetheryteListenerTest {
 
         customService.warpToAetheryte(player, null, registeredAetheryte.id());
 
+        verify(player).sendMessage(any(Component.class));
+    }
+
+    @Test
+    void warpToAetheryteDoesNotChargeCostWhenPlayerLacksUsePermission() {
+        final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
+        when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
+
+        final AetheryteService customService = new AetheryteService(
+                plugin,
+                registry,
+                NoopHologramService.INSTANCE,
+                evaluator
+        );
+        final Player player = mock(Player.class);
+        when(player.hasPermission("clickportals.use")).thenReturn(false);
+
+        customService.warpToAetheryte(player, null, registeredAetheryte.id());
+
+        verify(evaluator, never()).charge(any(), any(), any());
         verify(player).sendMessage(any(Component.class));
     }
 
