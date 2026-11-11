@@ -20,6 +20,7 @@ package net.sabafly.clickportals.listener;
 import java.util.List;
 import java.util.Optional;
 import net.kyori.adventure.text.Component;
+import net.sabafly.clickportals.ClickPortals;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.dialog.AetheryteDialogFactory;
@@ -32,6 +33,7 @@ import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.ClearanceChecker;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.visual.HologramService;
+import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
@@ -51,6 +53,7 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerLocaleChangeEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
+import org.bukkit.event.server.ServerLoadEvent;
 import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
 import org.bukkit.inventory.EquipmentSlot;
@@ -132,6 +135,26 @@ public final class AetheryteListener implements Listener {
      */
     public void setHologramService(final HologramService hologramService) {
         this.hologramService = hologramService;
+    }
+
+    /**
+     * Re-syncs external models when the server finishes loading all plugins and worlds (#46).
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onServerLoad(final ServerLoadEvent event) {
+        if (plugin instanceof ClickPortals clickPortals) {
+            try {
+                Bukkit.getGlobalRegionScheduler().runDelayed(plugin, task -> {
+                    if (clickPortals.isEnabled()) {
+                        clickPortals.syncAllAetheryteModels();
+                    }
+                }, 1L);
+            } catch (final Throwable t) {
+                if (clickPortals.isEnabled()) {
+                    clickPortals.syncAllAetheryteModels();
+                }
+            }
+        }
     }
 
     /**

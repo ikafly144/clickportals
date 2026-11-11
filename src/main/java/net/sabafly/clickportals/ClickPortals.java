@@ -18,8 +18,10 @@
 package net.sabafly.clickportals;
 
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
+import kr.toxicity.model.api.BetterModel;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.command.ClickPortalsCommand;
@@ -140,6 +142,22 @@ public final class ClickPortals extends JavaPlugin {
         this.aetheryteListener = listener;
         Bukkit.getPluginManager().registerEvents(listener, this);
 
+        if (Bukkit.getPluginManager().isPluginEnabled("BetterModel")) {
+            try {
+                BetterModel.platform().addReloadEndHandler(result -> {
+                    if (isEnabled()) {
+                        try {
+                            Bukkit.getGlobalRegionScheduler().execute(this, this::syncAllAetheryteModels);
+                        } catch (final Throwable t) {
+                            syncAllAetheryteModels();
+                        }
+                    }
+                });
+            } catch (final Throwable t) {
+                getSLF4JLogger().debug("Could not register BetterModel reload end handler", t);
+            }
+        }
+
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event -> {
             event.registrar().register(
                     ClickPortalsCommand.createCommand(this, variations, msgService),
@@ -149,7 +167,10 @@ public final class ClickPortals extends JavaPlugin {
         });
 
         for (final Player player : Bukkit.getOnlinePlayers()) {
-            activeHologramService.refreshPlayer(player, aetheryteRegistry.getByWorld(player.getWorld().getUID()));
+            final Collection<Aetheryte> worldAetherytes =
+                    aetheryteRegistry.getByWorld(player.getWorld().getUID());
+            activeHologramService.refreshPlayer(player, worldAetherytes);
+            modelSvc.refreshPlayer(player, worldAetherytes);
         }
 
         getComponentLogger().info(
@@ -228,12 +249,6 @@ public final class ClickPortals extends JavaPlugin {
             final AetheryteModelService reloadedModelService = createModelService();
             this.modelService = reloadedModelService;
             service.setModelService(reloadedModelService);
-            for (final World world : Bukkit.getWorlds()) {
-                for (final Aetheryte aetheryte : aetheryteRegistry.getByWorld(world.getUID())) {
-                    final AetheryteVariation var = variations.getOrDefault(aetheryte.variation());
-                    reloadedModelService.registerAetheryte(aetheryte, var, world);
-                }
-            }
 
             final HologramService activeHologramService = resolveReloadedHologramService(
                     reloadedConfig,
@@ -242,29 +257,58 @@ public final class ClickPortals extends JavaPlugin {
                     aetheryteRegistry,
                     dialogs
             );
+            this.hologramService = activeHologramService;
             service.setHologramService(activeHologramService);
             listener.setHologramService(activeHologramService);
 
-            for (final Player player : Bukkit.getOnlinePlayers()) {
-                player.getScheduler().run(this, task -> {
-                    if (player.isOnline()) {
-                        activeHologramService.refreshPlayer(
-                                player,
-                                aetheryteRegistry.getByWorld(player.getWorld().getUID())
-                        );
-                        reloadedModelService.refreshPlayer(
-                                player,
-                                aetheryteRegistry.getByWorld(player.getWorld().getUID())
-                        );
-                    }
-                }, null);
-            }
+            syncAllAetheryteModels();
+
             msgService.send(sender, MessageKey.COMMAND_RELOADED);
             getComponentLogger().info(
                     "ClickPortals configuration, translations, and {} variations reloaded.",
                     variations.ids().size()
             );
         });
+    }
+
+    /**
+     * Synchronizes all registered Aetherytes with their 3D models and refreshes player visuals (#46).
+     */
+    public void syncAllAetheryteModels() {
+        if (!isEnabled()) {
+            return;
+        }
+        final AetheryteModelService currentModelService = this.modelService;
+        final AetheryteRegistry currentRegistry = this.registry;
+        final VariationRegistry currentVariations = this.variationRegistry;
+        final HologramService currentHologramService = this.hologramService;
+
+        if (currentModelService == null || currentRegistry == null || currentVariations == null) {
+            return;
+        }
+
+        for (final World world : Bukkit.getWorlds()) {
+            final Collection<Aetheryte> aetherytes = currentRegistry.getByWorld(world.getUID());
+            for (final Aetheryte aetheryte : aetherytes) {
+                final AetheryteVariation var = currentVariations.getOrDefault(aetheryte.variation());
+                if (var.bettermodel().enabled()) {
+                    currentModelService.registerAetheryte(aetheryte, var, world);
+                }
+            }
+        }
+
+        if (currentHologramService != null) {
+            for (final Player player : Bukkit.getOnlinePlayers()) {
+                player.getScheduler().run(this, task -> {
+                    if (player.isOnline()) {
+                        final Collection<Aetheryte> worldAetherytes =
+                                currentRegistry.getByWorld(player.getWorld().getUID());
+                        currentHologramService.refreshPlayer(player, worldAetherytes);
+                        currentModelService.refreshPlayer(player, worldAetherytes);
+                    }
+                }, null);
+            }
+        }
     }
 
     /**

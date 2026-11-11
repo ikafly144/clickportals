@@ -28,6 +28,7 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import kr.toxicity.model.api.animation.AnimationIterator;
 import kr.toxicity.model.api.animation.AnimationModifier;
 import kr.toxicity.model.api.data.renderer.ModelRenderer;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
@@ -146,26 +147,79 @@ class BetterModelAetheryteModelServiceTest {
         verify(mockTracker).animate("custom_idle");
 
         // Trigger on-interact
-        final ArgumentCaptor<Runnable> onEndCaptor = ArgumentCaptor.forClass(Runnable.class);
+        final ArgumentCaptor<AnimationModifier> modifierCaptor = ArgumentCaptor.forClass(AnimationModifier.class);
         service.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
-        verify(mockTracker).animate(eq("spin"), eq(AnimationModifier.DEFAULT_WITH_PLAY_ONCE), onEndCaptor.capture());
-
-        // When one-shot ends, idle resumes
-        onEndCaptor.getValue().run();
-        verify(mockTracker, org.mockito.Mockito.times(2)).animate("custom_idle");
+        verify(mockTracker).animate(eq("spin"), modifierCaptor.capture());
+        assertThat(modifierCaptor.getValue().priority()).isEqualTo(1);
+        assertThat(modifierCaptor.getValue().type()).isEqualTo(AnimationIterator.Type.PLAY_ONCE);
 
         // Trigger warp departure and arrival
         service.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_WARP_DEPART);
-        verify(mockTracker).animate(eq("depart"), eq(AnimationModifier.DEFAULT_WITH_PLAY_ONCE), any());
+        verify(mockTracker).animate(eq("depart"), any(AnimationModifier.class));
 
         service.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_WARP_ARRIVE);
-        verify(mockTracker).animate(eq("arrive"), eq(AnimationModifier.DEFAULT_WITH_PLAY_ONCE), any());
+        verify(mockTracker).animate(eq("arrive"), any(AnimationModifier.class));
 
         // Unregister closes tracker
         service.unregisterAetheryte(aetheryte.id());
         verify(mockTracker).close();
         when(mockTracker.isClosed()).thenReturn(true);
         assertThat(service.hasModel(aetheryte.id())).isFalse();
+    }
+
+    @Test
+    void unreadyBetterModelLogsDebugInsteadOfWarning() {
+        final BetterModelAetheryteModelService service = new BetterModelAetheryteModelService(
+                logger,
+                id -> Optional.empty(),
+                (renderer, loc) -> Optional.empty(),
+                () -> false
+        );
+
+        final AetheryteVariation variation = new AetheryteVariation(
+                "Crystal",
+                null, null, null, null, null, null, null,
+                new BetterModelSection(true, "crystal_model", AnimationSection.defaults())
+        );
+
+        service.registerAetheryte(aetheryte, variation, world);
+        assertThat(service.hasModel(aetheryte.id())).isFalse();
+        verify(logger, never()).warn(any(String.class), any(), any());
+        verify(logger).debug(
+                eq("BetterModel model '{}' not loaded yet for Aetheryte variation '{}'; will sync when BetterModel completes loading"),
+                eq("crystal_model"),
+                eq("crystal")
+        );
+    }
+
+    @Test
+    void sameAnimationAsIdlePlaysDirectlyWithoutModifier() {
+        final ModelRenderer mockRenderer = mock(ModelRenderer.class);
+        final ModelTracker mockTracker = mock(ModelTracker.class);
+        when(mockTracker.isClosed()).thenReturn(false);
+
+        final BetterModelAetheryteModelService service = new BetterModelAetheryteModelService(
+                logger,
+                id -> Optional.of(mockRenderer),
+                (renderer, loc) -> Optional.of(mockTracker)
+        );
+
+        final AetheryteVariation variation = new AetheryteVariation(
+                "Crystal",
+                null, null, null, null, null, null, null,
+                new BetterModelSection(
+                        true,
+                        "crystal_model",
+                        new AnimationSection("spin", "spin", "", "")
+                )
+        );
+
+        service.registerAetheryte(aetheryte, variation, world);
+        verify(mockTracker).animate("spin");
+
+        service.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
+        verify(mockTracker, org.mockito.Mockito.times(2)).animate("spin");
+        verify(mockTracker, never()).animate(eq("spin"), any(AnimationModifier.class));
     }
 
     @Test

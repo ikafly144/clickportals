@@ -31,6 +31,13 @@ public interface ModelTracker extends AutoCloseable {
     boolean animate(String animationName);
 
     /**
+     * Plays the specified animation with modifier.
+     */
+    default boolean animate(final String animationName, final AnimationModifier modifier) {
+        return animate(animationName, modifier, () -> {});
+    }
+
+    /**
      * Plays a one-shot animation with modifier, invoking the callback when finished.
      */
     boolean animate(String animationName, AnimationModifier modifier, Runnable onEnd);

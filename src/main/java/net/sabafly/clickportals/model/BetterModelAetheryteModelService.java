@@ -25,8 +25,10 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import kr.toxicity.model.api.BetterModel;
+import kr.toxicity.model.api.animation.AnimationIterator;
 import kr.toxicity.model.api.animation.AnimationModifier;
 import kr.toxicity.model.api.bukkit.platform.BukkitAdapter;
 import kr.toxicity.model.api.data.renderer.ModelRenderer;
@@ -49,6 +51,7 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
     private final Logger logger;
     private final Function<String, Optional<ModelRenderer>> modelSupplier;
     private final BiFunction<ModelRenderer, Location, Optional<ModelTracker>> trackerFactory;
+    private final BooleanSupplier readySupplier;
     private final Map<UUID, ActiveModel> activeModels = new ConcurrentHashMap<>();
 
     private record ActiveModel(ModelTracker tracker, BetterModelSection section, UUID worldId) {}
@@ -63,6 +66,11 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
         @Override
         public boolean animate(final String animationName) {
             return tracker.animate(animationName);
+        }
+
+        @Override
+        public boolean animate(final String animationName, final AnimationModifier modifier) {
+            return tracker.animate(animationName, modifier);
         }
 
         @Override
@@ -126,6 +134,13 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
                     } catch (final Throwable t) {
                         return Optional.empty();
                     }
+                },
+                () -> {
+                    try {
+                        return !BetterModel.models().isEmpty();
+                    } catch (final Throwable t) {
+                        return false;
+                    }
                 }
         );
     }
@@ -142,9 +157,27 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
             final Function<String, Optional<ModelRenderer>> modelSupplier,
             final BiFunction<ModelRenderer, Location, Optional<ModelTracker>> trackerFactory
     ) {
+        this(logger, modelSupplier, trackerFactory, () -> true);
+    }
+
+    /**
+     * Creates a new {@link BetterModelAetheryteModelService} with injected ready check for testing.
+     *
+     * @param logger the logger instance
+     * @param modelSupplier function to look up model renderers by ID
+     * @param trackerFactory factory function to spawn model trackers at locations
+     * @param readySupplier supplier indicating whether BetterModel has finished loading its models
+     */
+    public BetterModelAetheryteModelService(
+            final Logger logger,
+            final Function<String, Optional<ModelRenderer>> modelSupplier,
+            final BiFunction<ModelRenderer, Location, Optional<ModelTracker>> trackerFactory,
+            final BooleanSupplier readySupplier
+    ) {
         this.logger = logger;
         this.modelSupplier = modelSupplier;
         this.trackerFactory = trackerFactory;
+        this.readySupplier = readySupplier;
     }
 
     @Override
@@ -166,8 +199,14 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
         }
 
         if (rendererOpt.isEmpty()) {
-            logger.warn("BetterModel model '{}' not found for Aetheryte variation '{}'; falling back to BLOCK_DISPLAY",
-                    modelId, aetheryte.variation());
+            if (!readySupplier.getAsBoolean()) {
+                logger.debug(
+                        "BetterModel model '{}' not loaded yet for Aetheryte variation '{}'; will sync when BetterModel completes loading",
+                        modelId, aetheryte.variation());
+            } else {
+                logger.warn("BetterModel model '{}' not found for Aetheryte variation '{}'; falling back to BLOCK_DISPLAY",
+                        modelId, aetheryte.variation());
+            }
             unregisterAetheryte(aetheryte.id());
             return;
         }
@@ -297,22 +336,14 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
 
         final String idleAnim = active.section.animations().idle();
         try {
-            if (trigger == ModelAnimationTrigger.IDLE) {
+            if (trigger == ModelAnimationTrigger.IDLE || targetAnim.equals(idleAnim)) {
                 active.tracker.animate(targetAnim);
             } else {
-                active.tracker.animate(
-                        targetAnim,
-                        AnimationModifier.DEFAULT_WITH_PLAY_ONCE,
-                        () -> {
-                            if (!idleAnim.isBlank() && !active.tracker.isClosed()) {
-                                try {
-                                    active.tracker.animate(idleAnim);
-                                } catch (final Throwable t) {
-                                    logger.debug("Failed to resume idle animation on Aetheryte {}", aetheryteId, t);
-                                }
-                            }
-                        }
-                );
+                final AnimationModifier modifier = AnimationModifier.builder()
+                        .type(AnimationIterator.Type.PLAY_ONCE)
+                        .priority(1)
+                        .build();
+                active.tracker.animate(targetAnim, modifier);
             }
         } catch (final Throwable t) {
             logger.warn("Failed to play BetterModel animation '{}' ({}) on Aetheryte {}: {}",
