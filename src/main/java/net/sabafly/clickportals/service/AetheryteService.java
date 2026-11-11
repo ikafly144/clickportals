@@ -297,7 +297,7 @@ public final class AetheryteService {
                     return;
                 }
 
-                if (!block.getType().isAir()) {
+                if (!isAir(block.getType())) {
                     block.setType(Material.AIR, true);
                 }
 
@@ -509,7 +509,14 @@ public final class AetheryteService {
      */
     public static boolean isReplaceableBlock(final Block block) {
         final Material type = block.getType();
-        return type.isAir() || block.isReplaceable();
+        return isAir(type) || block.isReplaceable();
+    }
+
+    /**
+     * Checks whether the given material is an air variant without accessing RegistryAccess.
+     */
+    private static boolean isAir(final Material type) {
+        return type == Material.AIR || type == Material.CAVE_AIR || type == Material.VOID_AIR;
     }
 
     /**
@@ -553,12 +560,12 @@ public final class AetheryteService {
      */
     private static boolean isSafeFloor(final Block block) {
         final Material type = block.getType();
-        if (type.isAir() || type == Material.LAVA || type == Material.FIRE
+        if (isAir(type) || type == Material.LAVA || type == Material.FIRE
                 || type == Material.SOUL_FIRE || type == Material.MAGMA_BLOCK
                 || type == Material.CACTUS) {
             return false;
         }
-        return type.isSolid();
+        return block.isSolid();
     }
 
     /**

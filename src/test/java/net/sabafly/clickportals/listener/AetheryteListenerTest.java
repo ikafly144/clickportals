@@ -19,14 +19,19 @@ package net.sabafly.clickportals.listener;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.papermc.paper.threadedregions.scheduler.EntityScheduler;
+import io.papermc.paper.threadedregions.scheduler.RegionScheduler;
+import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Consumer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
@@ -36,8 +41,11 @@ import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation;
 import net.sabafly.clickportals.visual.HologramService;
 import net.sabafly.clickportals.visual.NoopHologramService;
+import org.bukkit.Bukkit;
 import org.bukkit.ExplosionResult;
 import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.Server;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
@@ -192,23 +200,64 @@ class AetheryteListenerTest {
     }
 
     @Test
-    void warpToAetheryteDoesNotChargeCostWhenPlayerLacksUsePermission() {
-        final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
-        when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
+    void warpToAetheryteDoesNotChargeCostWhenPlayerLacksUsePermission() throws Exception {
+        final Server server = mock(Server.class);
+        final java.lang.reflect.Field serverField = Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            when(server.getWorld(WORLD_ID)).thenReturn(world);
+            final RegionScheduler regionScheduler = mock(RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+            doAnswer(inv -> {
+                ((Runnable) inv.getArgument(2)).run();
+                return null;
+            }).when(regionScheduler).execute(any(), any(Location.class), any());
 
-        final AetheryteService customService = new AetheryteService(
-                plugin,
-                registry,
-                NoopHologramService.INSTANCE,
-                evaluator
-        );
-        final Player player = mock(Player.class);
-        when(player.hasPermission("clickportals.use")).thenReturn(false);
+            final Block safeFloor = mock(Block.class);
+            when(safeFloor.isSolid()).thenReturn(true);
+            when(safeFloor.getType()).thenReturn(Material.STONE);
+            final Block safeAir = mock(Block.class);
+            when(safeAir.isPassable()).thenReturn(true);
+            when(safeAir.getType()).thenReturn(Material.AIR);
 
-        customService.warpToAetheryte(player, null, registeredAetheryte.id());
+            when(world.getBlockAt(5, 63, 5)).thenReturn(safeFloor);
+            when(world.getBlockAt(5, 64, 5)).thenReturn(safeAir);
+            when(world.getBlockAt(5, 65, 5)).thenReturn(safeAir);
 
-        verify(evaluator, never()).charge(any(), any(), any());
-        verify(player).sendMessage(any(Component.class));
+            final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
+            when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
+
+            final AetheryteService customService = new AetheryteService(
+                    plugin,
+                    registry,
+                    NoopHologramService.INSTANCE,
+                    evaluator
+            );
+            final Player player = mock(Player.class);
+            final EntityScheduler entityScheduler = mock(EntityScheduler.class);
+            when(player.getScheduler()).thenReturn(entityScheduler);
+
+            // Initially allowed during preliminary evaluation
+            when(player.hasPermission("clickportals.use")).thenReturn(true);
+            when(player.hasPermission("clickportals.bypass.cost.warp")).thenReturn(false);
+
+            // Revoke permission before the scheduled task charges the cost
+            doAnswer(inv -> {
+                when(player.hasPermission("clickportals.use")).thenReturn(false);
+                @SuppressWarnings("unchecked")
+                final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+                consumer.accept(mock(ScheduledTask.class));
+                return mock(ScheduledTask.class);
+            }).when(entityScheduler).run(any(), any(), any());
+
+            customService.warpToAetheryte(player, null, registeredAetheryte.id());
+
+            verify(evaluator, never()).charge(any(), any(), any());
+            verify(player).sendMessage(any(Component.class));
+        } finally {
+            serverField.set(null, null);
+        }
     }
 
     @Test
