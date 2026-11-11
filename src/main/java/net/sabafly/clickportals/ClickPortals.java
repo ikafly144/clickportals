@@ -216,7 +216,11 @@ public final class ClickPortals extends JavaPlugin {
                     getSLF4JLogger()
             );
             variations.reload(getDataPath().resolve("aetheryte"), getSLF4JLogger());
-            AetheryteItemFactory.registerRecipes(variations, msgService);
+            try {
+                AetheryteItemFactory.registerRecipes(variations, msgService);
+            } catch (final Throwable t) {
+                getSLF4JLogger().warn("Failed to refresh crafting recipes on reload: {}", t.getMessage());
+            }
 
             if (this.modelService != null) {
                 this.modelService.destroyAll();
