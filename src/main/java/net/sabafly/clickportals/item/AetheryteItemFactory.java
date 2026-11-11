@@ -24,10 +24,10 @@ import io.papermc.paper.datacomponent.item.ItemAttributeModifiers;
 import io.papermc.paper.datacomponent.item.ItemLore;
 import io.papermc.paper.datacomponent.item.UseCooldown;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import net.kyori.adventure.key.InvalidKeyException;
 import net.kyori.adventure.key.Key;
@@ -44,10 +44,13 @@ import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.Recipe;
 import org.bukkit.inventory.ShapedRecipe;
 import org.bukkit.inventory.recipe.CraftingBookCategory;
 import org.bukkit.persistence.PersistentDataType;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Factory and recipe registrar for variation-aware Aetheryte creation items (#6, #12, #38).
@@ -82,9 +85,35 @@ public final class AetheryteItemFactory {
         );
     }
 
-    private static final Set<NamespacedKey> REGISTERED_RECIPE_KEYS = ConcurrentHashMap.newKeySet();
+    private static final Logger LOGGER = LoggerFactory.getLogger(AetheryteItemFactory.class);
+
+    private record RecipeSignature(
+            List<String> shape,
+            Map<Character, Material> ingredients,
+            Material resultMaterial
+    ) {}
+
+    /**
+     * Functional interface building crafting {@link Recipe} instances for variations (#38).
+     */
+    @FunctionalInterface
+    interface RecipeBuilder {
+        Recipe build(NamespacedKey recipeKey, String variationId, AetheryteVariation variation, Messages messages);
+    }
+
+    private static final Map<NamespacedKey, RecipeSignature> REGISTERED_RECIPES = new ConcurrentHashMap<>();
     private static volatile VariationRegistry configuredVariations = VariationRegistry.defaults();
     private static volatile Messages configuredMessages = Messages.defaults();
+    private static RecipeBuilder recipeBuilder = (recipeKey, id, variation, messages) -> {
+        final ItemStack result = createItem(id, variation, 1, messages);
+        final ShapedRecipe recipe = new ShapedRecipe(recipeKey, result);
+        recipe.setCategory(CraftingBookCategory.MISC);
+        recipe.shape(variation.recipe().shape().toArray(new String[0]));
+        for (final Map.Entry<Character, Material> ing : variation.recipe().bukkitIngredients().entrySet()) {
+            recipe.setIngredient(ing.getKey(), ing.getValue());
+        }
+        return recipe;
+    };
 
     private AetheryteItemFactory() {
     }
@@ -199,11 +228,18 @@ public final class AetheryteItemFactory {
      * Checks whether the given item stack is an Aetheryte creation item via its PDC marker flag (#6).
      */
     public static boolean isAetheryteItem(@Nullable final ItemStack stack) {
-        if (stack == null || stack.isEmpty()) {
+        if (stack == null) {
             return false;
         }
-        final Byte flag = stack.getPersistentDataContainer().get(ITEM_MARKER_KEY, PersistentDataType.BYTE);
-        return flag != null && flag == (byte) 1;
+        try {
+            if (stack.isEmpty()) {
+                return false;
+            }
+            final Byte flag = stack.getPersistentDataContainer().get(ITEM_MARKER_KEY, PersistentDataType.BYTE);
+            return flag != null && flag == (byte) 1;
+        } catch (final Throwable ignored) {
+            return false;
+        }
     }
 
     /**
@@ -228,12 +264,18 @@ public final class AetheryteItemFactory {
     }
 
     /**
-     * Registers (or re-registers) crafting recipes for all enabled variations in {@link VariationRegistry} (#38).
+     * Registers (or updates) crafting recipes for all enabled variations in {@link VariationRegistry} (#38).
+     *
+     * <p>To prevent Folia multi-threading race conditions (such as {@link java.util.ConcurrentModificationException}
+     * when synchronizing advancements to online players), recipes are diffed against currently registered signatures.
+     * If no recipe definitions have changed, Bukkit's recipe registry is not modified.</p>
      */
     public static void registerRecipes(final VariationRegistry variationRegistry, final Messages messages) {
         configuredVariations = variationRegistry;
         configuredMessages = messages;
-        unregisterRecipes();
+
+        final Map<NamespacedKey, RecipeSignature> desiredSignatures = new LinkedHashMap<>();
+        final Map<NamespacedKey, Recipe> desiredRecipes = new LinkedHashMap<>();
 
         for (final Map.Entry<String, AetheryteVariation> entry : variationRegistry.all().entrySet()) {
             final String id = entry.getKey();
@@ -242,15 +284,56 @@ public final class AetheryteItemFactory {
                 continue;
             }
             final NamespacedKey recipeKey = new NamespacedKey("clickportals", "aetheryte_" + id);
-            final ItemStack result = createItem(id, variation, 1, messages);
-            final ShapedRecipe recipe = new ShapedRecipe(recipeKey, result);
-            recipe.setCategory(CraftingBookCategory.MISC);
-            recipe.shape(variation.recipe().shape().toArray(new String[0]));
-            for (final Map.Entry<Character, Material> ing : variation.recipe().bukkitIngredients().entrySet()) {
-                recipe.setIngredient(ing.getKey(), ing.getValue());
+            final RecipeSignature signature = new RecipeSignature(
+                    List.copyOf(variation.recipe().shape()),
+                    Map.copyOf(variation.recipe().bukkitIngredients()),
+                    variation.item().bukkitMaterial()
+            );
+            desiredSignatures.put(recipeKey, signature);
+
+            final Recipe recipe = recipeBuilder.build(recipeKey, id, variation, messages);
+            desiredRecipes.put(recipeKey, recipe);
+        }
+
+        final List<NamespacedKey> toRemove = new ArrayList<>();
+        for (final Map.Entry<NamespacedKey, RecipeSignature> current : REGISTERED_RECIPES.entrySet()) {
+            final RecipeSignature desired = desiredSignatures.get(current.getKey());
+            if (desired == null || !desired.equals(current.getValue())) {
+                toRemove.add(current.getKey());
             }
-            Bukkit.addRecipe(recipe);
-            REGISTERED_RECIPE_KEYS.add(recipeKey);
+        }
+
+        final List<Recipe> toAdd = new ArrayList<>();
+        for (final Map.Entry<NamespacedKey, RecipeSignature> desired : desiredSignatures.entrySet()) {
+            final RecipeSignature current = REGISTERED_RECIPES.get(desired.getKey());
+            if (current == null || !current.equals(desired.getValue())) {
+                final Recipe recipe = desiredRecipes.get(desired.getKey());
+                if (recipe != null) {
+                    toAdd.add(recipe);
+                }
+            }
+        }
+
+        if (toRemove.isEmpty() && toAdd.isEmpty()) {
+            LOGGER.debug("Aetheryte crafting recipes are unchanged; skipping Bukkit recipe update.");
+            return;
+        }
+
+        try {
+            if (!toRemove.isEmpty()) {
+                Bukkit.removeRecipes(toRemove);
+                for (final NamespacedKey key : toRemove) {
+                    REGISTERED_RECIPES.remove(key);
+                }
+            }
+            if (!toAdd.isEmpty()) {
+                Bukkit.addRecipes(toAdd);
+                for (final Map.Entry<NamespacedKey, RecipeSignature> entry : desiredSignatures.entrySet()) {
+                    REGISTERED_RECIPES.put(entry.getKey(), entry.getValue());
+                }
+            }
+        } catch (final Throwable t) {
+            LOGGER.warn("Failed to synchronize crafting recipes with online players (Folia multi-threading): {}", t.getMessage());
         }
     }
 
@@ -258,9 +341,47 @@ public final class AetheryteItemFactory {
      * Unregisters all currently registered Aetheryte crafting recipes.
      */
     public static void unregisterRecipes() {
-        for (final NamespacedKey key : REGISTERED_RECIPE_KEYS) {
-            Bukkit.removeRecipe(key);
+        if (REGISTERED_RECIPES.isEmpty()) {
+            return;
         }
-        REGISTERED_RECIPE_KEYS.clear();
+        try {
+            Bukkit.removeRecipes(List.copyOf(REGISTERED_RECIPES.keySet()));
+        } catch (final Throwable t) {
+            LOGGER.debug("Failed to unregister crafting recipes during shutdown: {}", t.getMessage());
+        }
+        REGISTERED_RECIPES.clear();
+    }
+
+    /**
+     * Package-private helper returning the count of currently registered recipe signatures for testing.
+     */
+    static int registeredRecipeCount() {
+        return REGISTERED_RECIPES.size();
+    }
+
+    /**
+     * Injects a recipe builder for testing.
+     */
+    static void setRecipeBuilderForTesting(final RecipeBuilder builder) {
+        recipeBuilder = builder;
+    }
+
+    /**
+     * Package-private helper resetting state for testing.
+     */
+    static void resetForTesting() {
+        REGISTERED_RECIPES.clear();
+        configuredVariations = VariationRegistry.defaults();
+        configuredMessages = Messages.defaults();
+        recipeBuilder = (recipeKey, id, variation, messages) -> {
+            final ItemStack result = createItem(id, variation, 1, messages);
+            final ShapedRecipe recipe = new ShapedRecipe(recipeKey, result);
+            recipe.setCategory(CraftingBookCategory.MISC);
+            recipe.shape(variation.recipe().shape().toArray(new String[0]));
+            for (final Map.Entry<Character, Material> ing : variation.recipe().bukkitIngredients().entrySet()) {
+                recipe.setIngredient(ing.getKey(), ing.getValue());
+            }
+            return recipe;
+        };
     }
 }

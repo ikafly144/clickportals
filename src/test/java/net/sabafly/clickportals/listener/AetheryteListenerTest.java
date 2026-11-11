@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.sabafly.clickportals.ClickPortals;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.dialog.AetheryteDialogFactory;
@@ -62,6 +63,7 @@ import org.bukkit.event.block.BlockPistonExtendEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.server.ServerLoadEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataContainer;
@@ -336,5 +338,23 @@ class AetheryteListenerTest {
         currentTick.set(1100L);
         assertThat(service.getRemainingCooldownTicks(player, Aetheryte.DEFAULT_VARIATION)).isZero();
         assertThat(service.checkPlacementCooldown(player, Aetheryte.DEFAULT_VARIATION)).isEmpty();
+    }
+
+    @Test
+    void serverLoadEventTriggersModelSyncWhenPluginIsClickPortals() {
+        final ClickPortals clickPortals = mock(ClickPortals.class);
+        when(clickPortals.isEnabled()).thenReturn(true);
+
+        final AetheryteListener customListener = new AetheryteListener(
+                clickPortals,
+                registry,
+                mock(AetheryteDialogFactory.class),
+                NoopHologramService.INSTANCE
+        );
+
+        final ServerLoadEvent event = mock(ServerLoadEvent.class);
+        customListener.onServerLoad(event);
+
+        verify(clickPortals).syncAllAetheryteModels();
     }
 }

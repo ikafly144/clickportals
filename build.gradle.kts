@@ -56,6 +56,7 @@ configurations.named(JavaPlugin.TEST_IMPLEMENTATION_CONFIGURATION_NAME) {
 dependencies {
     compileOnly(libs.paper.api)
     compileOnly(libs.packetevents.spigot)
+    compileOnly(libs.bettermodel.bukkit.api)
     compileOnly(libs.jspecify)
     testCompileOnly(libs.jspecify)
 
@@ -144,6 +145,7 @@ paperPluginYaml {
     website = "https://github.com/ikafly144/clickportals"
     dependencies {
         server("packetevents", PaperPluginYaml.Load.BEFORE, false)
+        server("BetterModel", PaperPluginYaml.Load.BEFORE, false)
     }
     permissions {
         register("clickportals.use") {
@@ -223,6 +225,7 @@ testing {
                 implementation(libs.assertj.core)
                 implementation(libs.paper.api)
                 implementation(libs.packetevents.spigot)
+                implementation(libs.bettermodel.bukkit.api)
             }
             targets {
                 all {
@@ -282,6 +285,7 @@ tasks.named<RunServer>("runServer") {
 
     downloadPlugins {
         modrinth("packetevents", "${libs.versions.packetevents.get()}+spigot")
+        github("toxicity188", "BetterModel", libs.versions.bettermodel.get(), "bettermodel-${libs.versions.bettermodel.get()}-paper.jar")
     }
 }
 
@@ -291,5 +295,6 @@ runPaper.folia.registerTask {
 
     downloadPlugins {
         modrinth("packetevents", "${libs.versions.packetevents.get()}+spigot")
+        github("toxicity188", "BetterModel", libs.versions.bettermodel.get(), "bettermodel-${libs.versions.bettermodel.get()}-paper.jar")
     }
 }

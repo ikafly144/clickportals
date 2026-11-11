@@ -67,7 +67,11 @@ public record AetheryteVariation(
 
         @Setting("limit")
         @Comment("Per-player placement limit for this variation (#43)")
-        LimitSection limit
+        LimitSection limit,
+
+        @Setting("bettermodel")
+        @Comment("BetterModel animated 3D model engine settings (#46)")
+        BetterModelSection bettermodel
 ) {
 
     /**
@@ -454,7 +458,136 @@ public record AetheryteVariation(
     }
 
     /**
-     * Constructor ensuring non-null sections when deserialized by Configurate.
+     * Animation trigger mapping for BetterModel (#46).
+     */
+    @ConfigSerializable
+    public record AnimationSection(
+            @Setting("idle")
+            @Comment("Looping idle animation name")
+            String idle,
+
+            @Setting("on-interact")
+            @Comment("Animation played when a player interacts with the Aetheryte")
+            String onInteract,
+
+            @Setting("on-warp-depart")
+            @Comment("Animation played when a player warps away from this Aetheryte")
+            String onWarpDepart,
+
+            @Setting("on-warp-arrive")
+            @Comment("Animation played when a player arrives at this Aetheryte")
+            String onWarpArrive
+    ) {
+        /**
+         * Creates an {@link AnimationSection} with null-safe default values.
+         *
+         * @param idle looping idle animation name
+         * @param onInteract animation played on interaction
+         * @param onWarpDepart animation played on warp departure
+         * @param onWarpArrive animation played on warp arrival
+         */
+        public AnimationSection(
+                @Nullable final String idle,
+                @Nullable final String onInteract,
+                @Nullable final String onWarpDepart,
+                @Nullable final String onWarpArrive
+        ) {
+            this.idle = (idle == null || idle.isBlank()) ? "idle" : idle;
+            this.onInteract = onInteract == null ? "" : onInteract;
+            this.onWarpDepart = onWarpDepart == null ? "" : onWarpDepart;
+            this.onWarpArrive = onWarpArrive == null ? "" : onWarpArrive;
+        }
+
+        /**
+         * Returns an {@link AnimationSection} populated with default idle animation ("idle").
+         *
+         * @return default animation configuration
+         */
+        public static AnimationSection defaults() {
+            return new AnimationSection("idle", "", "", "");
+        }
+    }
+
+    /**
+     * BetterModel animated 3D model engine configuration section (#46).
+     */
+    @ConfigSerializable
+    public record BetterModelSection(
+            @Setting("enabled")
+            @Comment("Whether to render this variation using BetterModel")
+            Boolean enabled,
+
+            @Setting("model-id")
+            @Comment("Model identifier registered in BetterModel")
+            String modelId,
+
+            @Setting("animations")
+            @Comment("Event-driven animations")
+            AnimationSection animations
+    ) {
+        /**
+         * Creates a {@link BetterModelSection} with null-safe default values.
+         *
+         * @param enabled whether BetterModel rendering is enabled
+         * @param modelId model identifier registered in BetterModel
+         * @param animations event-driven animation mappings
+         */
+        public BetterModelSection(
+                @Nullable final Boolean enabled,
+                @Nullable final String modelId,
+                @Nullable final AnimationSection animations
+        ) {
+            this.enabled = enabled == null ? false : enabled;
+            this.modelId = modelId == null ? "" : modelId;
+            this.animations = animations == null ? AnimationSection.defaults() : animations;
+        }
+
+        /**
+         * Returns a disabled {@link BetterModelSection}.
+         *
+         * @return disabled BetterModel configuration
+         */
+        public static BetterModelSection disabled() {
+            return new BetterModelSection(false, "", AnimationSection.defaults());
+        }
+
+        /**
+         * Returns default {@link BetterModelSection} settings (disabled by default).
+         *
+         * @return default BetterModel configuration
+         */
+        public static BetterModelSection defaults() {
+            return disabled();
+        }
+    }
+
+    /**
+     * Canonical constructor ensuring non-null sections when deserialized by Configurate.
+     */
+    public AetheryteVariation(
+            @Nullable final String displayName,
+            @Nullable final ItemSection item,
+            @Nullable final RecipeSection recipe,
+            @Nullable final ModelSection model,
+            @Nullable final HitboxSection hitbox,
+            @Nullable final TeleportSection teleport,
+            @Nullable final PlacementSection placement,
+            @Nullable final LimitSection limit,
+            @Nullable final BetterModelSection bettermodel
+    ) {
+        this.displayName = (displayName == null || displayName.isBlank()) ? "<aqua>Aetheryte</aqua>" : displayName;
+        this.item = item == null ? ItemSection.defaults() : item;
+        this.recipe = recipe == null ? RecipeSection.disabled() : recipe;
+        this.model = model == null ? ModelSection.defaults() : model;
+        this.hitbox = hitbox == null ? HitboxSection.defaults() : hitbox;
+        this.teleport = teleport == null ? TeleportSection.defaults() : teleport;
+        this.placement = placement == null ? PlacementSection.defaults() : placement;
+        this.limit = limit == null ? LimitSection.defaults() : limit;
+        this.bettermodel = bettermodel == null ? BetterModelSection.disabled() : bettermodel;
+    }
+
+    /**
+     * Convenience constructor preserving backward compatibility for 8-argument invocations.
      */
     public AetheryteVariation(
             @Nullable final String displayName,
@@ -466,14 +599,7 @@ public record AetheryteVariation(
             @Nullable final PlacementSection placement,
             @Nullable final LimitSection limit
     ) {
-        this.displayName = (displayName == null || displayName.isBlank()) ? "<aqua>Aetheryte</aqua>" : displayName;
-        this.item = item == null ? ItemSection.defaults() : item;
-        this.recipe = recipe == null ? RecipeSection.disabled() : recipe;
-        this.model = model == null ? ModelSection.defaults() : model;
-        this.hitbox = hitbox == null ? HitboxSection.defaults() : hitbox;
-        this.teleport = teleport == null ? TeleportSection.defaults() : teleport;
-        this.placement = placement == null ? PlacementSection.defaults() : placement;
-        this.limit = limit == null ? LimitSection.defaults() : limit;
+        this(displayName, item, recipe, model, hitbox, teleport, placement, limit, BetterModelSection.disabled());
     }
 
     /**
@@ -488,7 +614,8 @@ public record AetheryteVariation(
                 HitboxSection.defaults(),
                 TeleportSection.defaults(),
                 PlacementSection.defaults(),
-                LimitSection.defaults()
+                LimitSection.defaults(),
+                BetterModelSection.disabled()
         );
     }
 
@@ -669,6 +796,20 @@ public record AetheryteVariation(
         final int validCooldownTicks = rawCooldownTicks < -1 ? -1 : rawCooldownTicks;
         final LimitSection validatedLimit = new LimitSection(validMaxPerPlayer, validCooldownTicks);
 
+        // 8. Validate BetterModel section (#46)
+        final boolean bmEnabled = Boolean.TRUE.equals(bettermodel.enabled());
+        final String rawModelId = bettermodel.modelId() == null ? "" : bettermodel.modelId().strip();
+        final AnimationSection rawAnims = bettermodel.animations();
+        final String idleAnim = (rawAnims.idle() == null || rawAnims.idle().isBlank()) ? "idle" : rawAnims.idle().strip();
+        final String onInteract = rawAnims.onInteract() == null ? "" : rawAnims.onInteract().strip();
+        final String onWarpDepart = rawAnims.onWarpDepart() == null ? "" : rawAnims.onWarpDepart().strip();
+        final String onWarpArrive = rawAnims.onWarpArrive() == null ? "" : rawAnims.onWarpArrive().strip();
+        final BetterModelSection validatedBetterModel = new BetterModelSection(
+                bmEnabled,
+                rawModelId,
+                new AnimationSection(idleAnim, onInteract, onWarpDepart, onWarpArrive)
+        );
+
         return new AetheryteVariation(
                 validDisplayName,
                 validatedItem,
@@ -677,7 +818,8 @@ public record AetheryteVariation(
                 validatedHitbox,
                 validatedTeleport,
                 validatedPlacement,
-                validatedLimit
+                validatedLimit,
+                validatedBetterModel
         );
     }
 

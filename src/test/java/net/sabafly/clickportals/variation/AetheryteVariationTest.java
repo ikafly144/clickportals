@@ -22,6 +22,8 @@ import static org.mockito.Mockito.mock;
 
 import java.util.List;
 import java.util.Map;
+import net.sabafly.clickportals.variation.AetheryteVariation.AnimationSection;
+import net.sabafly.clickportals.variation.AetheryteVariation.BetterModelSection;
 import net.sabafly.clickportals.variation.AetheryteVariation.ClearanceSection;
 import net.sabafly.clickportals.variation.AetheryteVariation.CustomModelDataSection;
 import net.sabafly.clickportals.variation.AetheryteVariation.HitboxSection;
@@ -124,6 +126,41 @@ class AetheryteVariationTest {
 
         final ModelSection modelNull = new ModelSection(null, null, null, null);
         assertThat(modelNull.nameHeight()).isEqualTo(1.35);
+
+        final BetterModelSection bmNull = new BetterModelSection(null, null, null);
+        assertThat(bmNull.enabled()).isFalse();
+        assertThat(bmNull.modelId()).isEmpty();
+        assertThat(bmNull.animations().idle()).isEqualTo("idle");
+        assertThat(bmNull.animations().onInteract()).isEmpty();
+        assertThat(bmNull.animations().onWarpDepart()).isEmpty();
+        assertThat(bmNull.animations().onWarpArrive()).isEmpty();
+    }
+
+    @Test
+    void bettermodelCustomValuesAreTrimmedAndPreserved() {
+        final BetterModelSection customBm = new BetterModelSection(
+                true,
+                "  crystal_model  ",
+                new AnimationSection("  loop_idle  ", "click", "depart", "arrive")
+        );
+        final AetheryteVariation raw = new AetheryteVariation(
+                "BM Aetheryte",
+                ItemSection.defaults(),
+                RecipeSection.defaults(),
+                ModelSection.defaults(),
+                HitboxSection.defaults(),
+                TeleportSection.defaults(),
+                PlacementSection.defaults(),
+                LimitSection.defaults(),
+                customBm
+        );
+        final AetheryteVariation validated = raw.validated("bm_test", mock(Logger.class));
+        assertThat(validated.bettermodel().enabled()).isTrue();
+        assertThat(validated.bettermodel().modelId()).isEqualTo("crystal_model");
+        assertThat(validated.bettermodel().animations().idle()).isEqualTo("loop_idle");
+        assertThat(validated.bettermodel().animations().onInteract()).isEqualTo("click");
+        assertThat(validated.bettermodel().animations().onWarpDepart()).isEqualTo("depart");
+        assertThat(validated.bettermodel().animations().onWarpArrive()).isEqualTo("arrive");
     }
 
     @Test

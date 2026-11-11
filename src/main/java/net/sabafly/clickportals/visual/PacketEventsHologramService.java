@@ -48,6 +48,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
+import java.util.function.Predicate;
 import net.kyori.adventure.text.Component;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.config.PluginConfig;
@@ -104,6 +105,7 @@ public final class PacketEventsHologramService implements HologramService {
     private final Map<String, Integer> blockStateIdCache = new ConcurrentHashMap<>();
     private final VariationRegistry variationRegistry;
     private final Messages messages;
+    private final Predicate<UUID> externalModelPredicate;
     private volatile float viewRangeMultiplier;
     private volatile @Nullable BiConsumer<Player, UUID> interactionHandler;
     private @Nullable PacketListenerCommon registeredListener;
@@ -112,7 +114,7 @@ public final class PacketEventsHologramService implements HologramService {
      * Creates a new {@link PacketEventsHologramService} with default variations and messages.
      */
     public PacketEventsHologramService(final double viewDistanceBlocks) {
-        this(viewDistanceBlocks, VariationRegistry.defaults(), Messages.defaults());
+        this(viewDistanceBlocks, VariationRegistry.defaults(), Messages.defaults(), id -> false);
     }
 
     /**
@@ -124,8 +126,21 @@ public final class PacketEventsHologramService implements HologramService {
             final VariationRegistry variationRegistry,
             final Messages messages
     ) {
+        this(viewDistanceBlocks, variationRegistry, messages, id -> false);
+    }
+
+    /**
+     * Creates a new {@link PacketEventsHologramService} with external model predicate (#46).
+     */
+    public PacketEventsHologramService(
+            final double viewDistanceBlocks,
+            final VariationRegistry variationRegistry,
+            final Messages messages,
+            final Predicate<UUID> externalModelPredicate
+    ) {
         this.variationRegistry = variationRegistry;
         this.messages = messages;
+        this.externalModelPredicate = externalModelPredicate;
         this.viewRangeMultiplier = (float) Math.max(0.05, viewDistanceBlocks / BASE_VIEW_RANGE_BLOCKS);
         registerPacketListenerIfReady();
     }
@@ -472,13 +487,28 @@ public final class PacketEventsHologramService implements HologramService {
                 new EntityData<>(INTERACTION_RESPONSIVE_INDEX, EntityDataTypes.BOOLEAN, Boolean.TRUE)
         );
 
-        api.getPlayerManager().sendPacket(player, bodySpawn);
-        api.getPlayerManager().sendPacket(player, new WrapperPlayServerEntityMetadata(set.bodyDisplayId(), bodyMeta));
+        if (shouldSendBodyDisplay(aetheryte.id())) {
+            api.getPlayerManager().sendPacket(player, bodySpawn);
+            api.getPlayerManager().sendPacket(player, new WrapperPlayServerEntityMetadata(set.bodyDisplayId(), bodyMeta));
+        }
 
         api.getPlayerManager().sendPacket(player, textSpawn);
         api.getPlayerManager().sendPacket(player, new WrapperPlayServerEntityMetadata(set.textDisplayId(), textMeta));
 
         api.getPlayerManager().sendPacket(player, interactionSpawn);
         api.getPlayerManager().sendPacket(player, new WrapperPlayServerEntityMetadata(set.interactionId(), interactionMeta));
+    }
+
+    /**
+     * Determines whether the default {@code BLOCK_DISPLAY} body entity should be spawned for the given Aetheryte (#46).
+     *
+     * <p>When an external model (such as BetterModel) is active, this returns {@code false} to prevent duplicate
+     * rendering and Z-fighting.</p>
+     *
+     * @param aetheryteId the UUID of the Aetheryte
+     * @return {@code true} if {@code BLOCK_DISPLAY} should be sent to clients, {@code false} if suppressed
+     */
+    boolean shouldSendBodyDisplay(final UUID aetheryteId) {
+        return !externalModelPredicate.test(aetheryteId);
     }
 }
