@@ -21,7 +21,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.variation.VariationRegistry;
@@ -32,17 +31,13 @@ class PacketEventsHologramServiceTest {
 
     @Test
     void serviceConstructsWithExternalModelPredicateAndHandlesLifecycleSafely() {
-        final AtomicBoolean checkedModel = new AtomicBoolean(false);
         final UUID targetId = UUID.randomUUID();
 
         final PacketEventsHologramService service = new PacketEventsHologramService(
                 48.0,
                 VariationRegistry.defaults(),
                 Messages.defaults(),
-                id -> {
-                    checkedModel.set(true);
-                    return id.equals(targetId);
-                }
+                targetId::equals
         );
 
         final Aetheryte aetheryte = new Aetheryte(
@@ -66,6 +61,24 @@ class PacketEventsHologramServiceTest {
         service.destroyAll();
 
         assertThat(service.resolveInteractionTarget(9999)).isEmpty();
+    }
+
+    @Test
+    void shouldSendBodyDisplaySuppressesBlockDisplayWhenExternalModelPredicateReturnsTrue() {
+        final UUID targetId = UUID.randomUUID();
+        final UUID otherId = UUID.randomUUID();
+
+        final PacketEventsHologramService service = new PacketEventsHologramService(
+                48.0,
+                VariationRegistry.defaults(),
+                Messages.defaults(),
+                targetId::equals
+        );
+
+        // When external model predicate returns true (e.g. BetterModel active), body display is suppressed
+        assertThat(service.shouldSendBodyDisplay(targetId)).isFalse();
+        // When external model predicate returns false, body display is sent
+        assertThat(service.shouldSendBodyDisplay(otherId)).isTrue();
     }
 
     @Test

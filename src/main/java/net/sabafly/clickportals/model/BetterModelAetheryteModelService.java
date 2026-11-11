@@ -50,6 +50,8 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
 
     /**
      * Default {@link ModelTracker} adapter wrapping a concrete BetterModel {@link Tracker}.
+     *
+     * @param tracker the underlying BetterModel tracker instance
      */
     public record BetterModelTrackerHandle(Tracker tracker) implements ModelTracker {
 
@@ -78,6 +80,11 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
         }
     }
 
+    /**
+     * Creates a new {@link BetterModelAetheryteModelService} using the live BetterModel runtime API.
+     *
+     * @param logger the plugin logger for reporting warnings and debug information
+     */
     public BetterModelAetheryteModelService(final Logger logger) {
         this(
                 logger,
@@ -99,6 +106,13 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
         );
     }
 
+    /**
+     * Creates a new {@link BetterModelAetheryteModelService} with injected model supplier and tracker factory for testing.
+     *
+     * @param logger the logger instance
+     * @param modelSupplier function to look up model renderers by ID
+     * @param trackerFactory factory function to spawn model trackers at locations
+     */
     public BetterModelAetheryteModelService(
             final Logger logger,
             final Function<String, Optional<ModelRenderer>> modelSupplier,

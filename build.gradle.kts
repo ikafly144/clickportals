@@ -285,6 +285,7 @@ tasks.named<RunServer>("runServer") {
 
     downloadPlugins {
         modrinth("packetevents", "${libs.versions.packetevents.get()}+spigot")
+        github("toxicity188", "BetterModel", libs.versions.bettermodel.get(), "bettermodel-${libs.versions.bettermodel.get()}-paper.jar")
     }
 }
 
@@ -294,5 +295,6 @@ runPaper.folia.registerTask {
 
     downloadPlugins {
         modrinth("packetevents", "${libs.versions.packetevents.get()}+spigot")
+        github("toxicity188", "BetterModel", libs.versions.bettermodel.get(), "bettermodel-${libs.versions.bettermodel.get()}-paper.jar")
     }
 }

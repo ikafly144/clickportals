@@ -487,7 +487,7 @@ public final class PacketEventsHologramService implements HologramService {
                 new EntityData<>(INTERACTION_RESPONSIVE_INDEX, EntityDataTypes.BOOLEAN, Boolean.TRUE)
         );
 
-        if (!externalModelPredicate.test(aetheryte.id())) {
+        if (shouldSendBodyDisplay(aetheryte.id())) {
             api.getPlayerManager().sendPacket(player, bodySpawn);
             api.getPlayerManager().sendPacket(player, new WrapperPlayServerEntityMetadata(set.bodyDisplayId(), bodyMeta));
         }
@@ -497,5 +497,18 @@ public final class PacketEventsHologramService implements HologramService {
 
         api.getPlayerManager().sendPacket(player, interactionSpawn);
         api.getPlayerManager().sendPacket(player, new WrapperPlayServerEntityMetadata(set.interactionId(), interactionMeta));
+    }
+
+    /**
+     * Determines whether the default {@code BLOCK_DISPLAY} body entity should be spawned for the given Aetheryte (#46).
+     *
+     * <p>When an external model (such as BetterModel) is active, this returns {@code false} to prevent duplicate
+     * rendering and Z-fighting.</p>
+     *
+     * @param aetheryteId the UUID of the Aetheryte
+     * @return {@code true} if {@code BLOCK_DISPLAY} should be sent to clients, {@code false} if suppressed
+     */
+    boolean shouldSendBodyDisplay(final UUID aetheryteId) {
+        return !externalModelPredicate.test(aetheryteId);
     }
 }

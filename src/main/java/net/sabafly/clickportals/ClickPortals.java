@@ -19,6 +19,7 @@ package net.sabafly.clickportals;
 
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import java.util.List;
+import java.util.UUID;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.command.ClickPortalsCommand;
@@ -99,7 +100,12 @@ public final class ClickPortals extends JavaPlugin {
             }
         }
 
-        final HologramService activeHologramService = createHologramService(config, variations, msgService, modelSvc::hasModel);
+        final HologramService activeHologramService = createHologramService(
+                config,
+                variations,
+                msgService,
+                this::hasExternalModel
+        );
         this.hologramService = activeHologramService;
 
         final AetheryteService service = new AetheryteService(
@@ -119,7 +125,7 @@ public final class ClickPortals extends JavaPlugin {
         final AetheryteDialogFactory dialogs = new AetheryteDialogFactory(service, msgService);
         this.dialogFactory = dialogs;
 
-        bindInteractionHandler(activeHologramService, aetheryteRegistry, variations, dialogs, modelSvc);
+        bindInteractionHandler(activeHologramService, aetheryteRegistry, variations, dialogs);
 
         AetheryteItemFactory.registerRecipes(variations, msgService);
 
@@ -230,8 +236,7 @@ public final class ClickPortals extends JavaPlugin {
                     variations,
                     msgService,
                     aetheryteRegistry,
-                    dialogs,
-                    reloadedModelService
+                    dialogs
             );
             service.setHologramService(activeHologramService);
             listener.setHologramService(activeHologramService);
@@ -263,8 +268,7 @@ public final class ClickPortals extends JavaPlugin {
             final VariationRegistry variations,
             final Messages msgService,
             final AetheryteRegistry aetheryteRegistry,
-            final AetheryteDialogFactory dialogs,
-            final AetheryteModelService modelSvc
+            final AetheryteDialogFactory dialogs
     ) {
         final HologramService current = this.hologramService != null
                 ? this.hologramService
@@ -277,8 +281,13 @@ public final class ClickPortals extends JavaPlugin {
             return NoopHologramService.INSTANCE;
         }
         if (current == NoopHologramService.INSTANCE) {
-            final HologramService created = createHologramService(reloadedConfig, variations, msgService, modelSvc::hasModel);
-            bindInteractionHandler(created, aetheryteRegistry, variations, dialogs, modelSvc);
+            final HologramService created = createHologramService(
+                    reloadedConfig,
+                    variations,
+                    msgService,
+                    this::hasExternalModel
+            );
+            bindInteractionHandler(created, aetheryteRegistry, variations, dialogs);
             this.hologramService = created;
             return created;
         }
@@ -293,15 +302,17 @@ public final class ClickPortals extends JavaPlugin {
             final HologramService targetService,
             final AetheryteRegistry aetheryteRegistry,
             final VariationRegistry variations,
-            final AetheryteDialogFactory dialogs,
-            final AetheryteModelService modelSvc
+            final AetheryteDialogFactory dialogs
     ) {
         targetService.setInteractionHandler((player, aetheryteId) ->
                 player.getScheduler().run(this, task ->
                         aetheryteRegistry.getById(aetheryteId)
                                 .filter(aetheryte -> isWithinReach(player, aetheryte, variations))
                                 .ifPresent(aetheryte -> {
-                                    modelSvc.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
+                                    final AetheryteModelService currentModels = this.modelService;
+                                    if (currentModels != null) {
+                                        currentModels.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
+                                    }
                                     dialogs.openWarpDialog(player, aetheryte);
                                 }),
                         null)
@@ -392,5 +403,16 @@ public final class ClickPortals extends JavaPlugin {
             return new BetterModelAetheryteModelService(getSLF4JLogger());
         }
         return NoopAetheryteModelService.INSTANCE;
+    }
+
+    /**
+     * Checks whether an external 3D model (e.g. BetterModel) is currently active for the given Aetheryte (#46).
+     *
+     * @param aetheryteId the Aetheryte UUID to check
+     * @return {@code true} if an external model is currently active, {@code false} otherwise
+     */
+    private boolean hasExternalModel(final UUID aetheryteId) {
+        final AetheryteModelService current = this.modelService;
+        return current != null && current.hasModel(aetheryteId);
     }
 }

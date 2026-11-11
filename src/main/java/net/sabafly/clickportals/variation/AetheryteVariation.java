@@ -478,6 +478,14 @@ public record AetheryteVariation(
             @Comment("Animation played when a player arrives at this Aetheryte")
             String onWarpArrive
     ) {
+        /**
+         * Creates an {@link AnimationSection} with null-safe default values.
+         *
+         * @param idle looping idle animation name
+         * @param onInteract animation played on interaction
+         * @param onWarpDepart animation played on warp departure
+         * @param onWarpArrive animation played on warp arrival
+         */
         public AnimationSection(
                 @Nullable final String idle,
                 @Nullable final String onInteract,
@@ -490,6 +498,11 @@ public record AetheryteVariation(
             this.onWarpArrive = onWarpArrive == null ? "" : onWarpArrive;
         }
 
+        /**
+         * Returns an {@link AnimationSection} populated with default idle animation ("idle").
+         *
+         * @return default animation configuration
+         */
         public static AnimationSection defaults() {
             return new AnimationSection("idle", "", "", "");
         }
@@ -512,6 +525,13 @@ public record AetheryteVariation(
             @Comment("Event-driven animations")
             AnimationSection animations
     ) {
+        /**
+         * Creates a {@link BetterModelSection} with null-safe default values.
+         *
+         * @param enabled whether BetterModel rendering is enabled
+         * @param modelId model identifier registered in BetterModel
+         * @param animations event-driven animation mappings
+         */
         public BetterModelSection(
                 @Nullable final Boolean enabled,
                 @Nullable final String modelId,
@@ -522,10 +542,20 @@ public record AetheryteVariation(
             this.animations = animations == null ? AnimationSection.defaults() : animations;
         }
 
+        /**
+         * Returns a disabled {@link BetterModelSection}.
+         *
+         * @return disabled BetterModel configuration
+         */
         public static BetterModelSection disabled() {
             return new BetterModelSection(false, "", AnimationSection.defaults());
         }
 
+        /**
+         * Returns default {@link BetterModelSection} settings (disabled by default).
+         *
+         * @return default BetterModel configuration
+         */
         public static BetterModelSection defaults() {
             return disabled();
         }
