@@ -206,15 +206,16 @@ public final class LandingResolver {
     ) {
         final BlockKind origin = probe.kind(originX, originY, originZ);
         final BlockKind above1 = probe.kind(originX, originY + 1, originZ);
+        final BlockKind above2 = probe.kind(originX, originY + 2, originZ);
         // Case 1: Origin itself is passable (Marker entity style) and has a safe support block below
-        if (origin == BlockKind.PASSABLE_SAFE && above1 == BlockKind.PASSABLE_SAFE) {
+        if (origin == BlockKind.PASSABLE_SAFE && above1 == BlockKind.PASSABLE_SAFE
+                && above2 == BlockKind.PASSABLE_SAFE) {
             final BlockKind floor = probe.kind(originX, originY - 1, originZ);
             if (floor == BlockKind.SOLID_SAFE) {
                 return Optional.of(new LandingSpot(originX + 0.5, originY + 1.0, originZ + 0.5, yaw, pitch));
             }
         }
         // Case 2: Origin is a solid safe block (standing on top of the display hitbox at originY + 1.0)
-        final BlockKind above2 = probe.kind(originX, originY + 2, originZ);
         if (origin == BlockKind.SOLID_SAFE && above1 == BlockKind.PASSABLE_SAFE && above2 == BlockKind.PASSABLE_SAFE) {
             return Optional.of(new LandingSpot(originX + 0.5, originY + 1.0, originZ + 0.5, yaw, pitch));
         }

@@ -267,11 +267,18 @@ class AetheryteListenerTest {
     }
 
     @Test
-    void playerQuitRemovesPlayerFromHologramService() {
+    void playerQuitRemovesPlayerFromHologramServiceAndAetheryteService() {
         final HologramService mockHologramService = mock(HologramService.class);
-        final AetheryteService service = new AetheryteService(plugin, registry, mockHologramService);
-        final AetheryteDialogFactory dialogFactory = new AetheryteDialogFactory(service);
-        final AetheryteListener customListener = new AetheryteListener(plugin, registry, dialogFactory, mockHologramService);
+        final AetheryteService mockService = mock(AetheryteService.class);
+        final AetheryteDialogFactory dialogFactory = new AetheryteDialogFactory(mockService);
+        final AetheryteListener customListener = new AetheryteListener(
+                plugin,
+                registry,
+                mockService,
+                dialogFactory,
+                mockHologramService,
+                Messages.defaults()
+        );
 
         final UUID playerId = UUID.randomUUID();
         final Player player = mock(Player.class);
@@ -281,6 +288,7 @@ class AetheryteListenerTest {
         customListener.onPlayerQuit(quitEvent);
 
         verify(mockHologramService).removePlayer(playerId);
+        verify(mockService).removePlayer(playerId);
     }
 
     @Test

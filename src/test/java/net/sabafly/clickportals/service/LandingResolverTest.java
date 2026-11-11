@@ -148,6 +148,60 @@ class LandingResolverTest {
     }
 
     @Test
+    void originFallbackCase1RequiresPassableCeilingAbove2() {
+        // Origin column: y=63 is floor (SOLID_SAFE), y=64 (origin) & y=65 (above1) are PASSABLE_SAFE,
+        // but y=66 (above2 - player's head) is OBSTRUCTED (solid ceiling).
+        final BlockProbe obstructedCeilingWorld = (x, y, z) -> {
+            if (x == 0 && z == 0) {
+                if (y == 63) return BlockKind.SOLID_SAFE;
+                if (y == 64 || y == 65) return BlockKind.PASSABLE_SAFE;
+                return BlockKind.OBSTRUCTED_OR_HAZARD;
+            }
+            return BlockKind.UNAVAILABLE;
+        };
+
+        final Optional<LandingSpot> obstructed = LandingResolver.resolve(
+                obstructedCeilingWorld,
+                0,
+                64,
+                0,
+                0,
+                0,
+                0.0,
+                false,
+                0.0f,
+                0.0f,
+                new Random(1L)
+        );
+        assertThat(obstructed).isEmpty();
+
+        // When y=66 is PASSABLE_SAFE, player can safely land without suffocating
+        final BlockProbe clearCeilingWorld = (x, y, z) -> {
+            if (x == 0 && z == 0) {
+                if (y == 63) return BlockKind.SOLID_SAFE;
+                if (y >= 64 && y <= 66) return BlockKind.PASSABLE_SAFE;
+            }
+            return BlockKind.UNAVAILABLE;
+        };
+
+        final Optional<LandingSpot> clear = LandingResolver.resolve(
+                clearCeilingWorld,
+                0,
+                64,
+                0,
+                0,
+                0,
+                0.0,
+                false,
+                0.0f,
+                0.0f,
+                new Random(1L)
+        );
+        assertThat(clear).isPresent();
+        assertThat(clear.get().y()).isEqualTo(65.0);
+    }
+
+    @Test
     void returnsEmptyWhenBothRingAndOriginAreHazardous() {
         final BlockProbe lavaWorld = (x, y, z) -> BlockKind.OBSTRUCTED_OR_HAZARD;
 

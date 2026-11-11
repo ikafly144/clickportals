@@ -344,11 +344,13 @@ public final class AetheryteListener implements Listener {
     }
 
     /**
-     * Cleans up per-player hologram interaction state when a player quits the server.
+     * Cleans up per-player hologram interaction state and transient placement reservations when a player quits.
      */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerQuit(final PlayerQuitEvent event) {
-        hologramService.removePlayer(event.getPlayer().getUniqueId());
+        final java.util.UUID playerId = event.getPlayer().getUniqueId();
+        hologramService.removePlayer(playerId);
+        service.removePlayer(playerId);
     }
 
     /**

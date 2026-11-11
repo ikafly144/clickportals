@@ -74,6 +74,7 @@ class VariationLoaderTest {
         final AetheryteVariation tall = registry.getOrDefault("tall");
         assertThat(tall.displayName()).isEqualTo("<gold>Tall Aetheryte</gold>");
         assertThat(tall.item().bukkitMaterial()).isEqualTo(Material.ECHO_SHARD);
+        assertThat(tall.recipe().enabled()).isFalse();
         assertThat(tall.model().block()).isEqualTo("minecraft:lodestone");
         assertThat(tall.model().nameHeight()).isEqualTo(3.35);
         assertThat(tall.hitbox().width()).isEqualTo(1.5f);
@@ -89,5 +90,40 @@ class VariationLoaderTest {
         final AetheryteVariation fallback = registry.getOrDefault("nonexistent_type");
         assertThat(fallback).isEqualTo(registry.getOrDefault(Aetheryte.DEFAULT_VARIATION));
         assertThat(registry.find("nonexistent_type")).isEmpty();
+    }
+
+    @Test
+    void migratesLegacyRecipeAndDisplayBlockFromConfigYml() throws IOException {
+        final Path configDir = tempDir.resolve("legacy_plugin_dir");
+        Files.createDirectories(configDir);
+        final Path configFile = configDir.resolve("config.yml");
+        Files.writeString(configFile, """
+                recipe:
+                  enabled: true
+                  shape:
+                    - " G "
+                    - "GAG"
+                    - " G "
+                  ingredients:
+                    G: GOLD_INGOT
+                    A: AMETHYST_SHARD
+                hologram:
+                  enabled: true
+                  display-block: "minecraft:gold_block"
+                """, StandardCharsets.UTF_8);
+
+        final net.sabafly.clickportals.config.ConfigManager configManager =
+                new net.sabafly.clickportals.config.ConfigManager(configFile, mock(Logger.class));
+        configManager.load();
+
+        final Path defaultFile = configDir.resolve("aetheryte").resolve("default.yml");
+        assertThat(defaultFile).exists();
+
+        final VariationRegistry registry = VariationRegistry.load(configDir.resolve("aetheryte"), mock(Logger.class));
+        final AetheryteVariation defaultVar = registry.getOrDefault(Aetheryte.DEFAULT_VARIATION);
+        assertThat(defaultVar.model().block()).isEqualTo("minecraft:gold_block");
+        assertThat(defaultVar.recipe().enabled()).isTrue();
+        assertThat(defaultVar.recipe().shape()).containsExactly(" G ", "GAG", " G ");
+        assertThat(defaultVar.recipe().bukkitIngredients()).containsEntry('G', Material.GOLD_INGOT);
     }
 }

@@ -59,8 +59,8 @@ class AetheryteVariationTest {
 
         assertThat(validated.displayName()).isEqualTo("<aqua>Aetheryte</aqua>");
         assertThat(validated.item().bukkitMaterial()).isEqualTo(Material.COMPASS);
-        assertThat(validated.recipe().shape()).isEqualTo(RecipeSection.defaults().shape());
-        assertThat(validated.recipe().bukkitIngredients()).isEqualTo(RecipeSection.defaults().bukkitIngredients());
+        // Custom variation invalid recipe is disabled rather than colliding with default recipe (#38)
+        assertThat(validated.recipe().enabled()).isFalse();
         assertThat(validated.model().block()).isEqualTo("minecraft:lodestone");
         assertThat(validated.model().scale()).containsExactly(1.0, 1.0, 1.0);
         assertThat(validated.model().translation()).containsExactly(0.0, 0.0, 0.0);
@@ -74,6 +74,56 @@ class AetheryteVariationTest {
         assertThat(validated.placement().clearance().height()).isEqualTo(AetheryteVariation.MAX_CLEARANCE_HEIGHT);
         assertThat(validated.limit().maxPerPlayer()).isEqualTo(-1);
         assertThat(validated.limit().cooldownTicks()).isEqualTo(-1);
+    }
+
+    @Test
+    void defaultVariationInvalidRecipeFallsBackToBundledDefaultRecipe() {
+        final AetheryteVariation raw = new AetheryteVariation(
+                "Default",
+                ItemSection.defaults(),
+                new RecipeSection(true, List.of("INVALID"), Map.of()),
+                ModelSection.defaults(),
+                HitboxSection.defaults(),
+                TeleportSection.defaults(),
+                PlacementSection.defaults(),
+                LimitSection.defaults()
+        );
+
+        final AetheryteVariation validated = raw.validated(net.sabafly.clickportals.aetheryte.Aetheryte.DEFAULT_VARIATION, mock(Logger.class));
+
+        assertThat(validated.recipe().enabled()).isTrue();
+        assertThat(validated.recipe().shape()).isEqualTo(RecipeSection.defaults().shape());
+        assertThat(validated.recipe().bukkitIngredients()).isEqualTo(RecipeSection.defaults().bukkitIngredients());
+    }
+
+    @Test
+    void omittedFieldsInSectionsResolveToDefaultsWhilePreservingExplicitZerosAndFalses() {
+        final HitboxSection hitboxNull = new HitboxSection(null, null);
+        assertThat(hitboxNull.width()).isEqualTo(1.0f);
+        assertThat(hitboxNull.height()).isEqualTo(1.0f);
+
+        final TeleportSection teleportNull = new TeleportSection(null, null, null);
+        assertThat(teleportNull.minRadius()).isEqualTo(0);
+        assertThat(teleportNull.maxRadius()).isEqualTo(0);
+        assertThat(teleportNull.faceAetheryte()).isTrue();
+
+        final TeleportSection teleportExplicitZeroFalse = new TeleportSection(0, 0, false);
+        assertThat(teleportExplicitZeroFalse.faceAetheryte()).isFalse();
+
+        final ClearanceSection clearanceNull = new ClearanceSection(null, null);
+        assertThat(clearanceNull.radius()).isEqualTo(0);
+        assertThat(clearanceNull.height()).isEqualTo(2);
+
+        final LimitSection limitNull = new LimitSection(null, null);
+        assertThat(limitNull.maxPerPlayer()).isEqualTo(-1);
+        assertThat(limitNull.cooldownTicks()).isEqualTo(-1);
+
+        final LimitSection limitExplicitZero = new LimitSection(0, 0);
+        assertThat(limitExplicitZero.maxPerPlayer()).isEqualTo(0);
+        assertThat(limitExplicitZero.cooldownTicks()).isEqualTo(0);
+
+        final ModelSection modelNull = new ModelSection(null, null, null, null);
+        assertThat(modelNull.nameHeight()).isEqualTo(1.35);
     }
 
     @Test

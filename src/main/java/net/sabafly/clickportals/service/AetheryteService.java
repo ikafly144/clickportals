@@ -19,8 +19,10 @@ package net.sabafly.clickportals.service;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntSupplier;
 import java.util.function.ToLongFunction;
 import net.kyori.adventure.text.Component;
@@ -131,6 +133,7 @@ public final class AetheryteService {
     private final ToLongFunction<Player> tickSupplier;
     private final CooldownPacketSender cooldownPacketSender;
     private final WarpCostEvaluator costEvaluator;
+    private final Set<UUID> pendingPlacements = ConcurrentHashMap.newKeySet();
 
     /**
      * Creates a new {@link AetheryteService} with default variations, messages, and free cost evaluation.
@@ -270,25 +273,17 @@ public final class AetheryteService {
     }
 
     /**
-     * Resolves the current tick for cooldown calculation, falling back to {@link World#getGameTime()} on Folia or test mocks.
+     * Resolves the current epoch tick for placement cooldown calculation (wall-clock monotonic, 50ms per tick) (#43).
      */
     public static long resolveCurrentTick(final Player player) {
-        try {
-            if (Bukkit.getServer() != null) {
-                return Bukkit.getCurrentTick();
-            }
-        } catch (final Throwable ignored) {
-            // Fall through to world game time
-        }
-        try {
-            final World world = player.getWorld();
-            if (world != null) {
-                return world.getGameTime();
-            }
-        } catch (final Throwable ignored) {
-            // Ignore in minimal mocks
-        }
-        return 0L;
+        return System.currentTimeMillis() / 50L;
+    }
+
+    /**
+     * Cleans up transient in-flight placement reservations for the given player UUID when quitting or reloading (#43).
+     */
+    public void removePlayer(final UUID playerId) {
+        pendingPlacements.remove(playerId);
     }
 
     /**
@@ -420,12 +415,8 @@ public final class AetheryteService {
             return 0;
         }
         final long currentTick = tickSupplier.applyAsLong(player);
-        if (currentTick < lastPlaceTick) {
-            // Server tick reset (e.g. server restart); previous cooldown has expired
-            return 0;
-        }
         final long elapsed = currentTick - lastPlaceTick;
-        if (elapsed >= cooldownTicks) {
+        if (elapsed < 0L || elapsed >= cooldownTicks) {
             return 0;
         }
         return (int) (cooldownTicks - elapsed);
@@ -544,93 +535,114 @@ public final class AetheryteService {
 
         // Step 1: Check cooldown and consume the Aetheryte item of the matching variation on the player's entity thread.
         player.getScheduler().run(plugin, task -> {
+            if (!bypassLimit && !pendingPlacements.add(ownerId)) {
+                final int remaining = Math.max(1, getRemainingCooldownTicks(player, normalizedVar));
+                cooldownPacketSender.sendCooldown(player, remaining);
+                player.sendMessage(messages.errorPlacementCooldown(player, remaining));
+                return;
+            }
+
             final Optional<Component> cooldownError = checkPlacementCooldown(player, normalizedVar);
             if (cooldownError.isPresent()) {
+                pendingPlacements.remove(ownerId);
                 player.sendMessage(cooldownError.get());
                 return;
             }
 
             final boolean creative = player.getGameMode() == GameMode.CREATIVE;
             if (!creative && !consumeOneAetheryteItem(player.getInventory(), normalizedVar)) {
+                pendingPlacements.remove(ownerId);
                 messages.send(player, MessageKey.ERROR_MISSING_ITEM);
                 return;
             }
 
             // Step 2: Validate clearance, check limits atomically, and spawn the Marker entity on the region thread.
             Bukkit.getRegionScheduler().execute(plugin, targetLocation, () -> {
-                if (registry.getByPosition(world, blockX, blockY, blockZ).isPresent()) {
-                    if (!creative) {
-                        refundItemToPlayer(player, targetLocation, normalizedVar);
-                    }
-                    messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
-                    return;
-                }
-
-                if (!ClearanceChecker.hasClearance(world, blockX, blockY, blockZ, variation)) {
-                    if (!creative) {
-                        refundItemToPlayer(player, targetLocation, normalizedVar);
-                    }
-                    sendClearanceError(player, variation);
-                    return;
-                }
-
-                final Aetheryte aetheryte = new Aetheryte(
-                        UUID.randomUUID(),
-                        name,
-                        world.getUID(),
-                        world.getName(),
-                        blockX,
-                        blockY,
-                        blockZ,
-                        ownerId,
-                        System.currentTimeMillis(),
-                        normalizedVar
-                );
-
-                final int effectiveMaxGlobal = bypassLimit ? -1 : globalMaxPerPlayerSupplier.getAsInt();
-                final int effectiveMaxVariation = bypassLimit ? -1 : variation.limit().maxPerPlayer();
-                final RegistrationOutcome outcome = registry.tryRegister(
-                        world,
-                        aetheryte,
-                        effectiveMaxGlobal,
-                        effectiveMaxVariation
-                );
-
-                if (outcome != RegistrationOutcome.REGISTERED) {
-                    if (!creative) {
-                        refundItemToPlayer(player, targetLocation, normalizedVar);
-                    }
-                    switch (outcome) {
-                        case ALREADY_EXISTS -> messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
-                        case GLOBAL_LIMIT_REACHED ->
-                                player.sendMessage(messages.errorLimitReachedGlobal(player, effectiveMaxGlobal));
-                        case VARIATION_LIMIT_REACHED -> player.sendMessage(
-                                messages.errorLimitReachedVariation(player, variation.displayName(), effectiveMaxVariation)
-                        );
-                        default -> {
+                try {
+                    if (registry.getByPosition(world, blockX, blockY, blockZ).isPresent()) {
+                        if (!creative) {
+                            refundItemToPlayer(player, targetLocation, normalizedVar);
                         }
+                        pendingPlacements.remove(ownerId);
+                        messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
+                        return;
                     }
-                    return;
+
+                    if (!ClearanceChecker.hasClearance(world, blockX, blockY, blockZ, variation)) {
+                        if (!creative) {
+                            refundItemToPlayer(player, targetLocation, normalizedVar);
+                        }
+                        pendingPlacements.remove(ownerId);
+                        sendClearanceError(player, variation);
+                        return;
+                    }
+
+                    final Aetheryte aetheryte = new Aetheryte(
+                            UUID.randomUUID(),
+                            name,
+                            world.getUID(),
+                            world.getName(),
+                            blockX,
+                            blockY,
+                            blockZ,
+                            ownerId,
+                            System.currentTimeMillis(),
+                            normalizedVar
+                    );
+
+                    final int effectiveMaxGlobal = bypassLimit ? -1 : globalMaxPerPlayerSupplier.getAsInt();
+                    final int effectiveMaxVariation = bypassLimit ? -1 : variation.limit().maxPerPlayer();
+                    final RegistrationOutcome outcome = registry.tryRegister(
+                            world,
+                            aetheryte,
+                            effectiveMaxGlobal,
+                            effectiveMaxVariation
+                    );
+
+                    if (outcome != RegistrationOutcome.REGISTERED) {
+                        if (!creative) {
+                            refundItemToPlayer(player, targetLocation, normalizedVar);
+                        }
+                        pendingPlacements.remove(ownerId);
+                        switch (outcome) {
+                            case ALREADY_EXISTS -> messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
+                            case GLOBAL_LIMIT_REACHED ->
+                                    player.sendMessage(messages.errorLimitReachedGlobal(player, effectiveMaxGlobal));
+                            case VARIATION_LIMIT_REACHED -> player.sendMessage(
+                                    messages.errorLimitReachedVariation(player, variation.displayName(), effectiveMaxVariation)
+                            );
+                            default -> {
+                            }
+                        }
+                        return;
+                    }
+
+                    final Block originBlock = world.getBlockAt(blockX, blockY, blockZ);
+                    if (!originBlock.getType().isAir()) {
+                        originBlock.setType(Material.AIR, true);
+                    }
+
+                    spawnOrUpdateMarkerEntity(world, aetheryte);
+                    hologramService.showAetheryte(aetheryte);
+
+                    world.playSound(
+                            aetheryte.markerLocation(world),
+                            Sound.BLOCK_LODESTONE_PLACE,
+                            1.0f,
+                            1.0f
+                    );
+                    player.getScheduler().run(plugin, postPlaceTask -> {
+                        try {
+                            recordPlacementCooldown(player, normalizedVar);
+                            player.sendMessage(messages.aetheryteCreated(player, aetheryte));
+                        } finally {
+                            pendingPlacements.remove(ownerId);
+                        }
+                    }, null);
+                } catch (final Throwable t) {
+                    pendingPlacements.remove(ownerId);
+                    throw t;
                 }
-
-                final Block originBlock = world.getBlockAt(blockX, blockY, blockZ);
-                if (!originBlock.getType().isAir()) {
-                    originBlock.setType(Material.AIR, true);
-                }
-
-                spawnOrUpdateMarkerEntity(world, aetheryte);
-                hologramService.showAetheryte(aetheryte);
-
-                world.playSound(
-                        aetheryte.markerLocation(world),
-                        Sound.BLOCK_LODESTONE_PLACE,
-                        1.0f,
-                        1.0f
-                );
-                player.getScheduler().run(plugin, postPlaceTask -> {
-                    recordPlacementCooldown(player, normalizedVar);
-                    player.sendMessage(messages.aetheryteCreated(player, aetheryte));
-                }, null);
             });
         }, null);
     }

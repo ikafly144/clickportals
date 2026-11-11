@@ -101,11 +101,16 @@ public record AetheryteVariation(
             @Comment("RGB integer colors (e.g. 0x55FFFF) for minecraft:custom_model_data")
             List<Integer> colors
     ) {
-        public CustomModelDataSection {
-            floats = floats == null ? List.of() : List.copyOf(floats);
-            flags = flags == null ? List.of() : List.copyOf(flags);
-            strings = strings == null ? List.of() : List.copyOf(strings);
-            colors = colors == null ? List.of() : List.copyOf(colors);
+        public CustomModelDataSection(
+                @Nullable final List<Float> floats,
+                @Nullable final List<Boolean> flags,
+                @Nullable final List<String> strings,
+                @Nullable final List<Integer> colors
+        ) {
+            this.floats = floats == null ? List.of() : List.copyOf(floats);
+            this.flags = flags == null ? List.of() : List.copyOf(flags);
+            this.strings = strings == null ? List.of() : List.copyOf(strings);
+            this.colors = colors == null ? List.of() : List.copyOf(colors);
         }
 
         /**
@@ -163,14 +168,22 @@ public record AetheryteVariation(
 
             @Setting("glint")
             @Comment("Whether to apply enchantment glint to the creation item")
-            boolean glint
+            Boolean glint
     ) {
-        public ItemSection {
-            material = material == null ? Material.COMPASS.name() : material;
-            name = name == null ? "" : name;
-            lore = lore == null ? List.of() : List.copyOf(lore);
-            itemModel = itemModel == null ? "" : itemModel;
-            customModelData = customModelData == null ? CustomModelDataSection.empty() : customModelData;
+        public ItemSection(
+                @Nullable final String material,
+                @Nullable final String name,
+                @Nullable final List<String> lore,
+                @Nullable final String itemModel,
+                @Nullable final CustomModelDataSection customModelData,
+                @Nullable final Boolean glint
+        ) {
+            this.material = material == null ? Material.COMPASS.name() : material;
+            this.name = name == null ? "" : name;
+            this.lore = lore == null ? List.of() : List.copyOf(lore);
+            this.itemModel = itemModel == null ? "" : itemModel;
+            this.customModelData = customModelData == null ? CustomModelDataSection.empty() : customModelData;
+            this.glint = glint == null ? true : glint;
         }
 
         /**
@@ -203,7 +216,7 @@ public record AetheryteVariation(
     public record RecipeSection(
             @Setting("enabled")
             @Comment("Whether this variation can be crafted")
-            boolean enabled,
+            Boolean enabled,
 
             @Setting("shape")
             @Comment("3x3 crafting grid shape (1-3 rows, 1-3 characters per row)")
@@ -213,9 +226,21 @@ public record AetheryteVariation(
             @Comment("Mapping of shape characters to Bukkit Material names")
             Map<String, String> ingredients
     ) {
-        public RecipeSection {
-            shape = shape == null ? List.of() : List.copyOf(shape);
-            ingredients = ingredients == null ? Map.of() : Map.copyOf(ingredients);
+        public RecipeSection(
+                @Nullable final Boolean enabled,
+                @Nullable final List<String> shape,
+                @Nullable final Map<String, String> ingredients
+        ) {
+            this.enabled = enabled == null ? true : enabled;
+            this.shape = shape == null ? List.of() : List.copyOf(shape);
+            this.ingredients = ingredients == null ? Map.of() : Map.copyOf(ingredients);
+        }
+
+        /**
+         * Returns a disabled crafting recipe section with no shape or ingredients.
+         */
+        public static RecipeSection disabled() {
+            return new RecipeSection(false, List.of(), Map.of());
         }
 
         /**
@@ -267,12 +292,18 @@ public record AetheryteVariation(
 
             @Setting("name-height")
             @Comment("Vertical offset in blocks above the Aetheryte origin for the floating name hologram")
-            double nameHeight
+            Double nameHeight
     ) {
-        public ModelSection {
-            block = block == null ? "minecraft:lodestone" : block;
-            scale = scale == null ? List.of(1.0, 1.0, 1.0) : List.copyOf(scale);
-            translation = translation == null ? List.of(0.0, 0.0, 0.0) : List.copyOf(translation);
+        public ModelSection(
+                @Nullable final String block,
+                @Nullable final List<Double> scale,
+                @Nullable final List<Double> translation,
+                @Nullable final Double nameHeight
+        ) {
+            this.block = block == null ? "minecraft:lodestone" : block;
+            this.scale = scale == null ? List.of(1.0, 1.0, 1.0) : List.copyOf(scale);
+            this.translation = translation == null ? List.of(0.0, 0.0, 0.0) : List.copyOf(translation);
+            this.nameHeight = nameHeight == null ? 1.35 : nameHeight;
         }
 
         /**
@@ -295,12 +326,17 @@ public record AetheryteVariation(
     public record HitboxSection(
             @Setting("width")
             @Comment("Width of the interaction hitbox in blocks (must be > 0, default 1.0)")
-            float width,
+            Float width,
 
             @Setting("height")
             @Comment("Height of the interaction hitbox in blocks (must be > 0, default 1.0)")
-            float height
+            Float height
     ) {
+        public HitboxSection(@Nullable final Float width, @Nullable final Float height) {
+            this.width = width == null ? 1.0f : width;
+            this.height = height == null ? 1.0f : height;
+        }
+
         /**
          * Returns the default 1.0x1.0 hitbox section.
          */
@@ -316,16 +352,26 @@ public record AetheryteVariation(
     public record TeleportSection(
             @Setting("min-radius")
             @Comment("Minimum horizontal distance radius in blocks from the Aetheryte to land (inner ring radius, 0..max-radius)")
-            int minRadius,
+            Integer minRadius,
 
             @Setting("max-radius")
             @Comment("Maximum horizontal distance radius in blocks around the Aetheryte to search for a safe landing spot (outer ring radius, 0 = center/top, max 8)")
-            int maxRadius,
+            Integer maxRadius,
 
             @Setting("face-aetheryte")
             @Comment("Whether to orient the arriving player to face toward the Aetheryte when landing in the surrounding ring")
-            boolean faceAetheryte
+            Boolean faceAetheryte
     ) {
+        public TeleportSection(
+                @Nullable final Integer minRadius,
+                @Nullable final Integer maxRadius,
+                @Nullable final Boolean faceAetheryte
+        ) {
+            this.minRadius = minRadius == null ? 0 : minRadius;
+            this.maxRadius = maxRadius == null ? 0 : maxRadius;
+            this.faceAetheryte = faceAetheryte == null ? true : faceAetheryte;
+        }
+
         /**
          * Returns the default teleport section (min-radius 0, max-radius 0, face-aetheryte true).
          */
@@ -341,12 +387,17 @@ public record AetheryteVariation(
     public record ClearanceSection(
             @Setting("radius")
             @Comment("Horizontal radius in blocks around the origin that must be replaceable/empty (0 = origin column only, max 8)")
-            int radius,
+            Integer radius,
 
             @Setting("height")
             @Comment("Vertical height in blocks from the origin upward that must be replaceable/empty (1-16, default 2)")
-            int height
+            Integer height
     ) {
+        public ClearanceSection(@Nullable final Integer radius, @Nullable final Integer height) {
+            this.radius = radius == null ? 0 : radius;
+            this.height = height == null ? 2 : height;
+        }
+
         /**
          * Returns the default clearance section.
          */
@@ -364,8 +415,8 @@ public record AetheryteVariation(
             @Comment("Surrounding space clearance required to place this Aetheryte variation")
             ClearanceSection clearance
     ) {
-        public PlacementSection {
-            clearance = clearance == null ? ClearanceSection.defaults() : clearance;
+        public PlacementSection(@Nullable final ClearanceSection clearance) {
+            this.clearance = clearance == null ? ClearanceSection.defaults() : clearance;
         }
 
         /**
@@ -383,12 +434,17 @@ public record AetheryteVariation(
     public record LimitSection(
             @Setting("max-per-player")
             @Comment("Maximum number of Aetherytes of this variation a single player may own (-1 for unlimited)")
-            int maxPerPlayer,
+            Integer maxPerPlayer,
 
             @Setting("cooldown-ticks")
             @Comment("Cooldown in ticks after placing this variation (-1 to use global limits.placement-cooldown-ticks, 0 to disable)")
-            int cooldownTicks
+            Integer cooldownTicks
     ) {
+        public LimitSection(@Nullable final Integer maxPerPlayer, @Nullable final Integer cooldownTicks) {
+            this.maxPerPlayer = maxPerPlayer == null ? -1 : maxPerPlayer;
+            this.cooldownTicks = cooldownTicks == null ? -1 : cooldownTicks;
+        }
+
         /**
          * Returns the default limit section (-1 = unlimited count, -1 = inherit global cooldown).
          */
@@ -398,33 +454,26 @@ public record AetheryteVariation(
     }
 
     /**
-     * Compact constructor ensuring non-null sections when deserialized by Configurate.
+     * Constructor ensuring non-null sections when deserialized by Configurate.
      */
-    public AetheryteVariation {
-        if (displayName == null || displayName.isBlank()) {
-            displayName = "<aqua>Aetheryte</aqua>";
-        }
-        if (item == null) {
-            item = ItemSection.defaults();
-        }
-        if (recipe == null) {
-            recipe = RecipeSection.defaults();
-        }
-        if (model == null) {
-            model = ModelSection.defaults();
-        }
-        if (hitbox == null) {
-            hitbox = HitboxSection.defaults();
-        }
-        if (teleport == null) {
-            teleport = TeleportSection.defaults();
-        }
-        if (placement == null) {
-            placement = PlacementSection.defaults();
-        }
-        if (limit == null) {
-            limit = LimitSection.defaults();
-        }
+    public AetheryteVariation(
+            @Nullable final String displayName,
+            @Nullable final ItemSection item,
+            @Nullable final RecipeSection recipe,
+            @Nullable final ModelSection model,
+            @Nullable final HitboxSection hitbox,
+            @Nullable final TeleportSection teleport,
+            @Nullable final PlacementSection placement,
+            @Nullable final LimitSection limit
+    ) {
+        this.displayName = (displayName == null || displayName.isBlank()) ? "<aqua>Aetheryte</aqua>" : displayName;
+        this.item = item == null ? ItemSection.defaults() : item;
+        this.recipe = recipe == null ? RecipeSection.disabled() : recipe;
+        this.model = model == null ? ModelSection.defaults() : model;
+        this.hitbox = hitbox == null ? HitboxSection.defaults() : hitbox;
+        this.teleport = teleport == null ? TeleportSection.defaults() : teleport;
+        this.placement = placement == null ? PlacementSection.defaults() : placement;
+        this.limit = limit == null ? LimitSection.defaults() : limit;
     }
 
     /**
@@ -510,18 +559,26 @@ public record AetheryteVariation(
             normalizedIngredientStrings.put(key, material.name());
         }
 
-        if (parsedIngredients.isEmpty() || !isValidRecipeCombination(shape, parsedIngredients)) {
-            if (!recipe.ingredients().isEmpty() || !rawShape.equals(defaultRecipe.shape())) {
-                logger.warn("Invalid recipe shape/ingredients combination in variation '{}'; falling back to default recipe",
-                        cleanId);
+        boolean recipeEnabled = Boolean.TRUE.equals(recipe.enabled());
+        if (recipeEnabled && (parsedIngredients.isEmpty() || !isValidRecipeCombination(shape, parsedIngredients))) {
+            if (!Aetheryte.DEFAULT_VARIATION.equals(cleanId)) {
+                if (!recipe.ingredients().isEmpty() || !rawShape.isEmpty()) {
+                    logger.warn("Invalid recipe shape/ingredients in custom variation '{}'; disabling crafting recipe for this variation",
+                            cleanId);
+                }
+                recipeEnabled = false;
+                shape.clear();
+                normalizedIngredientStrings.clear();
+            } else {
+                logger.warn("Invalid recipe in default variation; falling back to default recipe");
+                shape.clear();
+                shape.addAll(defaultRecipe.shape());
+                normalizedIngredientStrings.clear();
+                normalizedIngredientStrings.putAll(defaultRecipe.ingredients());
             }
-            shape.clear();
-            shape.addAll(defaultRecipe.shape());
-            normalizedIngredientStrings.clear();
-            normalizedIngredientStrings.putAll(defaultRecipe.ingredients());
         }
         final RecipeSection validatedRecipe = new RecipeSection(
-                recipe.enabled(),
+                recipeEnabled,
                 List.copyOf(shape),
                 Map.copyOf(normalizedIngredientStrings)
         );
@@ -533,7 +590,8 @@ public record AetheryteVariation(
                 : model.block().strip();
         final List<Double> validScale = normalizeVector3(model.scale(), 1.0, "model.scale", cleanId, logger);
         final List<Double> validTranslation = normalizeVector3(model.translation(), 0.0, "model.translation", cleanId, logger);
-        final double validNameHeight = Double.isFinite(model.nameHeight()) ? model.nameHeight() : 1.35;
+        final double rawNameHeight = model.nameHeight();
+        final double validNameHeight = Double.isFinite(rawNameHeight) ? rawNameHeight : 1.35;
         final ModelSection validatedModel = new ModelSection(
                 validBlock,
                 validScale,
@@ -542,51 +600,58 @@ public record AetheryteVariation(
         );
 
         // 4. Validate hitbox section (#40)
-        float validWidth = hitbox.width();
+        final float rawWidth = hitbox.width();
+        float validWidth = rawWidth;
         if (!Float.isFinite(validWidth) || validWidth <= 0.0f) {
             logger.warn("Invalid hitbox.width {} in variation '{}' (must be > 0); falling back to 1.0",
-                    hitbox.width(), cleanId);
+                    rawWidth, cleanId);
             validWidth = 1.0f;
         }
-        float validHeight = hitbox.height();
+        final float rawHeight = hitbox.height();
+        float validHeight = rawHeight;
         if (!Float.isFinite(validHeight) || validHeight <= 0.0f) {
             logger.warn("Invalid hitbox.height {} in variation '{}' (must be > 0); falling back to 1.0",
-                    hitbox.height(), cleanId);
+                    rawHeight, cleanId);
             validHeight = 1.0f;
         }
         final HitboxSection validatedHitbox = new HitboxSection(validWidth, validHeight);
 
         // 5. Validate teleport section (#41)
-        int validMaxRadius = teleport.maxRadius();
+        final int rawMaxRadius = teleport.maxRadius();
+        int validMaxRadius = rawMaxRadius;
         if (validMaxRadius < 0 || validMaxRadius > MAX_HORIZONTAL_RADIUS) {
             final int clamped = Math.clamp(validMaxRadius, 0, MAX_HORIZONTAL_RADIUS);
             logger.warn("Clamping teleport.max-radius {} to {} in variation '{}' (allowed range: 0..{})",
                     validMaxRadius, clamped, cleanId, MAX_HORIZONTAL_RADIUS);
             validMaxRadius = clamped;
         }
-        int validMinRadius = teleport.minRadius();
+        final int rawMinRadius = teleport.minRadius();
+        int validMinRadius = rawMinRadius;
         if (validMinRadius < 0 || validMinRadius > validMaxRadius) {
             final int clamped = Math.clamp(validMinRadius, 0, validMaxRadius);
             logger.warn("Clamping teleport.min-radius {} to {} in variation '{}' (allowed range: 0..{})",
                     validMinRadius, clamped, cleanId, validMaxRadius);
             validMinRadius = clamped;
         }
+        final boolean validFace = teleport.faceAetheryte();
         final TeleportSection validatedTeleport = new TeleportSection(
                 validMinRadius,
                 validMaxRadius,
-                teleport.faceAetheryte()
+                validFace
         );
 
         // 6. Validate placement clearance section (#42)
         final ClearanceSection rawClearance = placement.clearance();
-        int validClearanceRadius = rawClearance.radius();
+        final int rawClearanceRadius = rawClearance.radius();
+        int validClearanceRadius = rawClearanceRadius;
         if (validClearanceRadius < 0 || validClearanceRadius > MAX_HORIZONTAL_RADIUS) {
             final int clamped = Math.clamp(validClearanceRadius, 0, MAX_HORIZONTAL_RADIUS);
             logger.warn("Clamping placement.clearance.radius {} to {} in variation '{}' (allowed range: 0..{})",
                     validClearanceRadius, clamped, cleanId, MAX_HORIZONTAL_RADIUS);
             validClearanceRadius = clamped;
         }
-        int validClearanceHeight = rawClearance.height();
+        final int rawClearanceHeight = rawClearance.height();
+        int validClearanceHeight = rawClearanceHeight;
         if (validClearanceHeight < 1 || validClearanceHeight > MAX_CLEARANCE_HEIGHT) {
             final int clamped = Math.clamp(validClearanceHeight, 1, MAX_CLEARANCE_HEIGHT);
             logger.warn("Clamping placement.clearance.height {} to {} in variation '{}' (allowed range: 1..{})",
@@ -598,8 +663,10 @@ public record AetheryteVariation(
         );
 
         // 7. Validate limit section (#43)
-        final int validMaxPerPlayer = limit.maxPerPlayer() < -1 ? -1 : limit.maxPerPlayer();
-        final int validCooldownTicks = limit.cooldownTicks() < -1 ? -1 : limit.cooldownTicks();
+        final int rawMaxPerPlayer = limit.maxPerPlayer();
+        final int validMaxPerPlayer = rawMaxPerPlayer < -1 ? -1 : rawMaxPerPlayer;
+        final int rawCooldownTicks = limit.cooldownTicks();
+        final int validCooldownTicks = rawCooldownTicks < -1 ? -1 : rawCooldownTicks;
         final LimitSection validatedLimit = new LimitSection(validMaxPerPlayer, validCooldownTicks);
 
         return new AetheryteVariation(
