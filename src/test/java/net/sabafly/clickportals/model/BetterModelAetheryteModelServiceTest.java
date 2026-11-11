@@ -1,0 +1,233 @@
+/*
+ * ClickPortals
+ * Copyright (C) 2026 ikafly144
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+package net.sabafly.clickportals.model;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.util.Optional;
+import java.util.UUID;
+import kr.toxicity.model.api.animation.AnimationModifier;
+import kr.toxicity.model.api.data.renderer.ModelRenderer;
+import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.variation.AetheryteVariation;
+import net.sabafly.clickportals.variation.AetheryteVariation.AnimationSection;
+import net.sabafly.clickportals.variation.AetheryteVariation.BetterModelSection;
+import org.bukkit.World;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.slf4j.Logger;
+
+class BetterModelAetheryteModelServiceTest {
+
+    private Logger logger;
+    private World world;
+    private Aetheryte aetheryte;
+
+    @BeforeEach
+    void setUp() {
+        logger = mock(Logger.class);
+        world = mock(World.class);
+        final UUID worldUid = UUID.randomUUID();
+        when(world.getUID()).thenReturn(worldUid);
+        aetheryte = new Aetheryte(
+                UUID.randomUUID(),
+                "Crystal Aetheryte",
+                worldUid,
+                "world",
+                100,
+                64,
+                200,
+                UUID.randomUUID(),
+                System.currentTimeMillis(),
+                "crystal"
+        );
+    }
+
+    @Test
+    void noopServiceReturnsFalseAndPerformsNoOperations() {
+        final AetheryteModelService noop = NoopAetheryteModelService.INSTANCE;
+        noop.registerAetheryte(aetheryte, AetheryteVariation.defaultVariation(), world);
+        assertThat(noop.hasModel(aetheryte.id())).isFalse();
+
+        noop.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
+        noop.unregisterAetheryte(aetheryte.id());
+        noop.destroyAll();
+    }
+
+    @Test
+    void disabledBetterModelVariationDoesNotCreateTracker() {
+        final BetterModelAetheryteModelService service = new BetterModelAetheryteModelService(
+                logger,
+                id -> Optional.empty(),
+                (renderer, loc) -> Optional.empty()
+        );
+
+        final AetheryteVariation variation = new AetheryteVariation(
+                "Default",
+                null, null, null, null, null, null, null,
+                BetterModelSection.disabled()
+        );
+
+        service.registerAetheryte(aetheryte, variation, world);
+        assertThat(service.hasModel(aetheryte.id())).isFalse();
+    }
+
+    @Test
+    void unknownModelIdLogsWarningAndFallsBack() {
+        final BetterModelAetheryteModelService service = new BetterModelAetheryteModelService(
+                logger,
+                id -> Optional.empty(),
+                (renderer, loc) -> Optional.empty()
+        );
+
+        final AetheryteVariation variation = new AetheryteVariation(
+                "Crystal",
+                null, null, null, null, null, null, null,
+                new BetterModelSection(true, "unknown_model", AnimationSection.defaults())
+        );
+
+        service.registerAetheryte(aetheryte, variation, world);
+        assertThat(service.hasModel(aetheryte.id())).isFalse();
+        verify(logger).warn(
+                eq("BetterModel model '{}' not found for Aetheryte variation '{}'; falling back to BLOCK_DISPLAY"),
+                eq("unknown_model"),
+                eq("crystal")
+        );
+    }
+
+    @Test
+    void registeredModelStartsIdleAnimationAndRespondsToEventTriggers() {
+        final ModelRenderer mockRenderer = mock(ModelRenderer.class);
+        final ModelTracker mockTracker = mock(ModelTracker.class);
+        when(mockTracker.isClosed()).thenReturn(false);
+
+        final BetterModelAetheryteModelService service = new BetterModelAetheryteModelService(
+                logger,
+                id -> Optional.of(mockRenderer),
+                (renderer, loc) -> Optional.of(mockTracker)
+        );
+
+        final AetheryteVariation variation = new AetheryteVariation(
+                "Crystal",
+                null, null, null, null, null, null, null,
+                new BetterModelSection(
+                        true,
+                        "crystal_model",
+                        new AnimationSection("custom_idle", "spin", "depart", "arrive")
+                )
+        );
+
+        service.registerAetheryte(aetheryte, variation, world);
+        assertThat(service.hasModel(aetheryte.id())).isTrue();
+        verify(mockTracker).animate("custom_idle");
+
+        // Trigger on-interact
+        final ArgumentCaptor<Runnable> onEndCaptor = ArgumentCaptor.forClass(Runnable.class);
+        service.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
+        verify(mockTracker).animate(eq("spin"), eq(AnimationModifier.DEFAULT_WITH_PLAY_ONCE), onEndCaptor.capture());
+
+        // When one-shot ends, idle resumes
+        onEndCaptor.getValue().run();
+        verify(mockTracker, org.mockito.Mockito.times(2)).animate("custom_idle");
+
+        // Trigger warp departure and arrival
+        service.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_WARP_DEPART);
+        verify(mockTracker).animate(eq("depart"), eq(AnimationModifier.DEFAULT_WITH_PLAY_ONCE), any());
+
+        service.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_WARP_ARRIVE);
+        verify(mockTracker).animate(eq("arrive"), eq(AnimationModifier.DEFAULT_WITH_PLAY_ONCE), any());
+
+        // Unregister closes tracker
+        service.unregisterAetheryte(aetheryte.id());
+        verify(mockTracker).close();
+        when(mockTracker.isClosed()).thenReturn(true);
+        assertThat(service.hasModel(aetheryte.id())).isFalse();
+    }
+
+    @Test
+    void emptyAnimationNameDoesNotTriggerAnimation() {
+        final ModelRenderer mockRenderer = mock(ModelRenderer.class);
+        final ModelTracker mockTracker = mock(ModelTracker.class);
+        when(mockTracker.isClosed()).thenReturn(false);
+
+        final BetterModelAetheryteModelService service = new BetterModelAetheryteModelService(
+                logger,
+                id -> Optional.of(mockRenderer),
+                (renderer, loc) -> Optional.of(mockTracker)
+        );
+
+        final AetheryteVariation variation = new AetheryteVariation(
+                "Crystal",
+                null, null, null, null, null, null, null,
+                new BetterModelSection(
+                        true,
+                        "crystal_model",
+                        new AnimationSection("idle", "", "", "")
+                )
+        );
+
+        service.registerAetheryte(aetheryte, variation, world);
+        service.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
+
+        verify(mockTracker, never()).animate(any(String.class), any(AnimationModifier.class), any());
+    }
+
+    @Test
+    void destroyAllClosesAllActiveTrackers() {
+        final ModelRenderer mockRenderer = mock(ModelRenderer.class);
+        final ModelTracker tracker1 = mock(ModelTracker.class);
+        final ModelTracker tracker2 = mock(ModelTracker.class);
+        when(tracker1.isClosed()).thenReturn(false);
+        when(tracker2.isClosed()).thenReturn(false);
+
+        final BetterModelAetheryteModelService service = new BetterModelAetheryteModelService(
+                logger,
+                id -> Optional.of(mockRenderer),
+                (renderer, loc) -> loc.getBlockX() == 100 ? Optional.of(tracker1) : Optional.of(tracker2)
+        );
+
+        final Aetheryte aetheryte2 = new Aetheryte(
+                UUID.randomUUID(), "Second", aetheryte.worldId(), "world", 200, 64, 300,
+                UUID.randomUUID(), System.currentTimeMillis(), "crystal"
+        );
+
+        final AetheryteVariation variation = new AetheryteVariation(
+                "Crystal",
+                null, null, null, null, null, null, null,
+                new BetterModelSection(true, "model", AnimationSection.defaults())
+        );
+
+        service.registerAetheryte(aetheryte, variation, world);
+        service.registerAetheryte(aetheryte2, variation, world);
+        assertThat(service.hasModel(aetheryte.id())).isTrue();
+        assertThat(service.hasModel(aetheryte2.id())).isTrue();
+
+        service.destroyAll();
+        verify(tracker1).close();
+        verify(tracker2).close();
+        assertThat(service.hasModel(aetheryte.id())).isFalse();
+        assertThat(service.hasModel(aetheryte2.id())).isFalse();
+    }
+}

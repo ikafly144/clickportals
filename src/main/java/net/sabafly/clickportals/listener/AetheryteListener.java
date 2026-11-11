@@ -26,6 +26,7 @@ import net.sabafly.clickportals.dialog.AetheryteDialogFactory;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
+import net.sabafly.clickportals.model.ModelAnimationTrigger;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.ClearanceChecker;
 import net.sabafly.clickportals.variation.AetheryteVariation;
@@ -133,18 +134,25 @@ public final class AetheryteListener implements Listener {
     }
 
     /**
-     * Loads Aetherytes from the world's PDC when a world is loaded.
+     * Loads Aetherytes from the world's PDC and registers external models when a world is loaded (#46).
      */
     @EventHandler(priority = EventPriority.NORMAL)
     public void onWorldLoad(final WorldLoadEvent event) {
-        registry.loadWorld(event.getWorld());
+        final List<Aetheryte> loaded = registry.loadWorld(event.getWorld());
+        for (final Aetheryte aetheryte : loaded) {
+            final AetheryteVariation var = service.variationRegistry().getOrDefault(aetheryte.variation());
+            service.modelService().registerAetheryte(aetheryte, var, event.getWorld());
+        }
     }
 
     /**
-     * Unloads Aetherytes from the in-memory index when a world is unloaded.
+     * Unloads Aetherytes and cleans up model trackers when a world is unloaded (#46).
      */
     @EventHandler(priority = EventPriority.NORMAL)
     public void onWorldUnload(final WorldUnloadEvent event) {
+        for (final Aetheryte aetheryte : registry.getByWorld(event.getWorld().getUID())) {
+            service.modelService().unregisterAetheryte(aetheryte.id());
+        }
         registry.unloadWorld(event.getWorld().getUID());
     }
 
@@ -169,7 +177,9 @@ public final class AetheryteListener implements Listener {
         if (existingDirect.isPresent()) {
             event.setCancelled(true);
             if (event.getHand() == EquipmentSlot.HAND) {
-                dialogFactory.openWarpDialog(player, existingDirect.get());
+                final Aetheryte aetheryte = existingDirect.get();
+                service.modelService().triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
+                dialogFactory.openWarpDialog(player, aetheryte);
             }
             return;
         }
@@ -187,7 +197,9 @@ public final class AetheryteListener implements Listener {
                 && itemVariationOpt.isEmpty()) {
             event.setCancelled(true);
             if (event.getHand() == EquipmentSlot.HAND) {
-                dialogFactory.openWarpDialog(player, existingRelative.get());
+                final Aetheryte aetheryte = existingRelative.get();
+                service.modelService().triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
+                dialogFactory.openWarpDialog(player, aetheryte);
             }
             return;
         }

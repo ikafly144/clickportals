@@ -82,3 +82,20 @@ limit:
   max-per-player: -1
   # Cooldown in ticks after placing this variation (-1 to use global limits.placement-cooldown-ticks, 0 to disable)
   cooldown-ticks: -1
+
+# BetterModel animated 3D model engine settings (#46)
+bettermodel:
+  # Whether to render this variation using BetterModel (falls back to model.block if false or plugin is absent)
+  enabled: false
+  # Model identifier registered in BetterModel (e.g. aetheryte_crystal)
+  model-id: ""
+  # Event-driven animations
+  animations:
+    # Looping idle animation name
+    idle: "idle"
+    # Animation played when a player interacts with the Aetheryte (leave empty to disable)
+    on-interact: ""
+    # Animation played when a player warps away from this Aetheryte (leave empty to disable)
+    on-warp-depart: ""
+    # Animation played when a player arrives at this Aetheryte (leave empty to disable)
+    on-warp-arrive: ""
