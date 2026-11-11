@@ -211,4 +211,43 @@ class AetheryteRegistryTest {
         assertThat(registry.getById(netherAetheryte.id())).contains(netherAetheryte);
         assertThat(registry.getAll()).containsExactly(netherAetheryte);
     }
+
+    @Test
+    void tryRegisterEnforcesGlobalAndVariationLimitsAndOwnerCounts() {
+        final UUID owner = UUID.randomUUID();
+        final Aetheryte a1 = new Aetheryte(
+                UUID.randomUUID(), "One", WORLD_ID, WORLD_NAME, 0, 64, 0, owner, 100L, "small"
+        );
+        final Aetheryte a2 = new Aetheryte(
+                UUID.randomUUID(), "Two", WORLD_ID, WORLD_NAME, 10, 64, 0, owner, 200L, "small"
+        );
+        final Aetheryte a3 = new Aetheryte(
+                UUID.randomUUID(), "Three", WORLD_ID, WORLD_NAME, 20, 64, 0, owner, 300L, "large"
+        );
+        final Aetheryte duplicatePos = new Aetheryte(
+                UUID.randomUUID(), "Dup", WORLD_ID, WORLD_NAME, 0, 64, 0, owner, 400L, "large"
+        );
+
+        assertThat(registry.tryRegister(world, a1, 2, 1))
+                .isEqualTo(AetheryteRegistry.RegistrationOutcome.REGISTERED);
+        assertThat(registry.countByOwner(owner)).isEqualTo(1);
+        assertThat(registry.countByOwnerAndVariation(owner, "small")).isEqualTo(1);
+
+        // Same position rejected
+        assertThat(registry.tryRegister(world, duplicatePos, -1, -1))
+                .isEqualTo(AetheryteRegistry.RegistrationOutcome.ALREADY_EXISTS);
+
+        // Variation limit (1 for "small") reached
+        assertThat(registry.tryRegister(world, a2, 5, 1))
+                .isEqualTo(AetheryteRegistry.RegistrationOutcome.VARIATION_LIMIT_REACHED);
+
+        // Different variation ("large") succeeds under global limit 2
+        assertThat(registry.tryRegister(world, a3, 2, 1))
+                .isEqualTo(AetheryteRegistry.RegistrationOutcome.REGISTERED);
+        assertThat(registry.countByOwner(owner)).isEqualTo(2);
+
+        // Now global limit 2 is reached
+        assertThat(registry.tryRegister(world, a2, 2, -1))
+                .isEqualTo(AetheryteRegistry.RegistrationOutcome.GLOBAL_LIMIT_REACHED);
+    }
 }

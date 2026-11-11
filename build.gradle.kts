@@ -167,7 +167,7 @@ paperPluginYaml {
             default = Permission.Default.OP
         }
         register("clickportals.bypass.limit") {
-            description = "Bypass per-player Aetheryte placement limits (reserved; currently inactive)"
+            description = "Bypass per-player Aetheryte placement limits and placement cooldowns"
             default = Permission.Default.OP
         }
         register("clickportals.bypass.cost.warp") {

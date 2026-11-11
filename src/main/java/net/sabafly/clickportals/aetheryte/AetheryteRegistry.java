@@ -32,7 +32,7 @@ import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 
 /**
- * Thread-safe in-memory index and World/Marker PDC persistence manager for {@link Aetheryte} instances (#6, #20, #21).
+ * Thread-safe in-memory index and World/Marker PDC persistence manager for {@link Aetheryte} instances (#6, #20, #21, #37, #43).
  */
 public final class AetheryteRegistry {
 
@@ -44,6 +44,16 @@ public final class AetheryteRegistry {
             .comparingLong(Aetheryte::createdAt)
             .thenComparing(Aetheryte::name)
             .thenComparing(Aetheryte::id);
+
+    /**
+     * Result of attempting to register a new Aetheryte while enforcing per-player limits (#43).
+     */
+    public enum RegistrationOutcome {
+        REGISTERED,
+        ALREADY_EXISTS,
+        GLOBAL_LIMIT_REACHED,
+        VARIATION_LIMIT_REACHED
+    }
 
     private final Map<UUID, Aetheryte> byId = new ConcurrentHashMap<>();
     private final Map<BlockPosKey, Aetheryte> byPos = new ConcurrentHashMap<>();
@@ -68,7 +78,8 @@ public final class AetheryteRegistry {
                     entry.blockY(),
                     entry.blockZ(),
                     entry.ownerId(),
-                    entry.createdAt()
+                    entry.createdAt(),
+                    entry.variation()
             );
             byId.put(normalized.id(), normalized);
             byPos.put(normalized.posKey(), normalized);
@@ -123,6 +134,35 @@ public final class AetheryteRegistry {
     }
 
     /**
+     * Atomically verifies position uniqueness and per-player placement limits before registering and persisting
+     * a new Aetheryte (#43).
+     *
+     * @param maxGlobal    maximum total Aetherytes per player ({@code < 0} for unlimited)
+     * @param maxVariation maximum Aetherytes of this variation per player ({@code < 0} for unlimited)
+     */
+    public synchronized RegistrationOutcome tryRegister(
+            final World world,
+            final Aetheryte aetheryte,
+            final int maxGlobal,
+            final int maxVariation
+    ) {
+        final BlockPosKey posKey = aetheryte.posKey();
+        if (byPos.containsKey(posKey)) {
+            return RegistrationOutcome.ALREADY_EXISTS;
+        }
+        if (maxGlobal >= 0 && countByOwner(aetheryte.ownerId()) >= maxGlobal) {
+            return RegistrationOutcome.GLOBAL_LIMIT_REACHED;
+        }
+        if (maxVariation >= 0 && countByOwnerAndVariation(aetheryte.ownerId(), aetheryte.variation()) >= maxVariation) {
+            return RegistrationOutcome.VARIATION_LIMIT_REACHED;
+        }
+        byId.put(aetheryte.id(), aetheryte);
+        byPos.put(posKey, aetheryte);
+        saveWorld(world);
+        return RegistrationOutcome.REGISTERED;
+    }
+
+    /**
      * Unregisters an Aetheryte from memory and updates the world's PDC.
      */
     public synchronized Optional<Aetheryte> unregister(final World world, final UUID id) {
@@ -150,6 +190,33 @@ public final class AetheryteRegistry {
         } else {
             pdc.set(WORLD_AETHERYTES_KEY, LIST_TYPE, worldEntries);
         }
+    }
+
+    /**
+     * Counts the total number of loaded Aetherytes owned by the specified player (#43).
+     */
+    public int countByOwner(final UUID ownerId) {
+        int count = 0;
+        for (final Aetheryte aetheryte : byId.values()) {
+            if (aetheryte.ownerId().equals(ownerId)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Counts the number of loaded Aetherytes of a specific variation owned by the specified player (#43).
+     */
+    public int countByOwnerAndVariation(final UUID ownerId, final String variation) {
+        final String normalized = Aetheryte.normalizeVariation(variation);
+        int count = 0;
+        for (final Aetheryte aetheryte : byId.values()) {
+            if (aetheryte.ownerId().equals(ownerId) && aetheryte.variation().equals(normalized)) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /**

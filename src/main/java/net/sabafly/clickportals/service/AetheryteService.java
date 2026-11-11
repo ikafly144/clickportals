@@ -19,21 +19,31 @@ package net.sabafly.clickportals.service;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.IntSupplier;
+import java.util.function.ToLongFunction;
 import net.kyori.adventure.text.Component;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
+import net.sabafly.clickportals.aetheryte.AetheryteRegistry.RegistrationOutcome;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.permission.Permissions;
+import net.sabafly.clickportals.variation.AetheryteVariation;
+import net.sabafly.clickportals.variation.AetheryteVariation.ClearanceSection;
+import net.sabafly.clickportals.variation.VariationRegistry;
 import net.sabafly.clickportals.visual.HologramService;
+import net.sabafly.clickportals.visual.PacketEventsHologramService;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.block.Block;
@@ -42,15 +52,34 @@ import org.bukkit.entity.Marker;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.persistence.PersistentDataContainer;
+import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.Plugin;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Folia-safe application service for placing, removing, evaluating, and warping between Aetherytes (#6, #11, #12, #17, #19).
+ * Folia-safe application service for placing, removing, evaluating, and warping between Aetherytes
+ * (#6, #11, #12, #17, #19, #36, #37, #38, #41, #42, #43).
  */
 public final class AetheryteService {
 
     private static final int MAX_NAME_LENGTH = 32;
+
+    /**
+     * Player {@link PersistentDataContainer} key storing the server/world tick when the player last placed an Aetheryte (#43).
+     */
+    public static final NamespacedKey LAST_PLACE_TICK_KEY = new NamespacedKey("clickportals", "last_place_tick");
+
+    /**
+     * Callback for sending client-side item cooldown packets when an Aetheryte placement cooldown is applied (#43).
+     */
+    @FunctionalInterface
+    public interface CooldownPacketSender {
+        /**
+         * Sends a visual cooldown overlay packet of {@code cooldownTicks} duration to {@code player}.
+         */
+        void sendCooldown(Player player, int cooldownTicks);
+    }
 
     /**
      * Result of evaluating whether a player can warp to a specific Aetheryte and at what cost (#12, #13).
@@ -96,37 +125,25 @@ public final class AetheryteService {
 
     private final Plugin plugin;
     private final AetheryteRegistry registry;
+    private final VariationRegistry variationRegistry;
     private volatile HologramService hologramService;
     private final Messages messages;
+    private final IntSupplier globalMaxPerPlayerSupplier;
+    private final IntSupplier globalCooldownTicksSupplier;
+    private final ToLongFunction<Player> tickSupplier;
+    private final CooldownPacketSender cooldownPacketSender;
     private final WarpCostEvaluator costEvaluator;
+    private final Set<UUID> pendingPlacements = ConcurrentHashMap.newKeySet();
 
     /**
-     * Creates a new {@link AetheryteService} with default messages and free cost evaluation.
+     * Creates a new {@link AetheryteService} with default variations, messages, and free cost evaluation.
      */
     public AetheryteService(
             final Plugin plugin,
             final AetheryteRegistry registry,
             final HologramService hologramService
     ) {
-        this(plugin, registry, hologramService, Messages.defaults());
-    }
-
-    /**
-     * Creates a new {@link AetheryteService} with the given {@link Messages} and default free cost evaluation.
-     */
-    public AetheryteService(
-            final Plugin plugin,
-            final AetheryteRegistry registry,
-            final HologramService hologramService,
-            final Messages messages
-    ) {
-        this(
-                plugin,
-                registry,
-                hologramService,
-                messages,
-                (player, source, destination) -> WarpEvaluation.permitted(messages.freeCostLabel(player))
-        );
+        this(plugin, registry, VariationRegistry.defaults(), hologramService, Messages.defaults(), () -> -1, () -> 0);
     }
 
     /**
@@ -138,24 +155,135 @@ public final class AetheryteService {
             final HologramService hologramService,
             final WarpCostEvaluator costEvaluator
     ) {
-        this(plugin, registry, hologramService, Messages.defaults(), costEvaluator);
+        this(
+                plugin,
+                registry,
+                VariationRegistry.defaults(),
+                hologramService,
+                Messages.defaults(),
+                () -> -1,
+                () -> 0,
+                AetheryteService::resolveCurrentTick,
+                PacketEventsHologramService::sendPlacementCooldown,
+                costEvaluator
+        );
     }
 
     /**
-     * Creates a new {@link AetheryteService} with the given {@link Messages} and custom {@link WarpCostEvaluator}.
+     * Creates a new {@link AetheryteService} with the given {@link VariationRegistry}, {@link Messages},
+     * and global limit supplier.
      */
     public AetheryteService(
             final Plugin plugin,
             final AetheryteRegistry registry,
+            final VariationRegistry variationRegistry,
             final HologramService hologramService,
             final Messages messages,
+            final IntSupplier globalMaxPerPlayerSupplier
+    ) {
+        this(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                messages,
+                globalMaxPerPlayerSupplier,
+                () -> 0
+        );
+    }
+
+    /**
+     * Creates a new {@link AetheryteService} with the given {@link VariationRegistry}, {@link Messages},
+     * global limit supplier, and global placement cooldown supplier (#43).
+     */
+    public AetheryteService(
+            final Plugin plugin,
+            final AetheryteRegistry registry,
+            final VariationRegistry variationRegistry,
+            final HologramService hologramService,
+            final Messages messages,
+            final IntSupplier globalMaxPerPlayerSupplier,
+            final IntSupplier globalCooldownTicksSupplier
+    ) {
+        this(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                messages,
+                globalMaxPerPlayerSupplier,
+                globalCooldownTicksSupplier,
+                AetheryteService::resolveCurrentTick,
+                PacketEventsHologramService::sendPlacementCooldown,
+                (player, source, destination) -> WarpEvaluation.permitted(messages.freeCostLabel(player))
+        );
+    }
+
+    /**
+     * Creates a new {@link AetheryteService} with full dependencies and custom {@link WarpCostEvaluator}.
+     */
+    public AetheryteService(
+            final Plugin plugin,
+            final AetheryteRegistry registry,
+            final VariationRegistry variationRegistry,
+            final HologramService hologramService,
+            final Messages messages,
+            final IntSupplier globalMaxPerPlayerSupplier,
+            final WarpCostEvaluator costEvaluator
+    ) {
+        this(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                messages,
+                globalMaxPerPlayerSupplier,
+                () -> 0,
+                AetheryteService::resolveCurrentTick,
+                PacketEventsHologramService::sendPlacementCooldown,
+                costEvaluator
+        );
+    }
+
+    /**
+     * Creates a new {@link AetheryteService} with full dependencies including custom tick and cooldown packet suppliers.
+     */
+    public AetheryteService(
+            final Plugin plugin,
+            final AetheryteRegistry registry,
+            final VariationRegistry variationRegistry,
+            final HologramService hologramService,
+            final Messages messages,
+            final IntSupplier globalMaxPerPlayerSupplier,
+            final IntSupplier globalCooldownTicksSupplier,
+            final ToLongFunction<Player> tickSupplier,
+            final CooldownPacketSender cooldownPacketSender,
             final WarpCostEvaluator costEvaluator
     ) {
         this.plugin = plugin;
         this.registry = registry;
+        this.variationRegistry = variationRegistry;
         this.hologramService = hologramService;
         this.messages = messages;
+        this.globalMaxPerPlayerSupplier = globalMaxPerPlayerSupplier;
+        this.globalCooldownTicksSupplier = globalCooldownTicksSupplier;
+        this.tickSupplier = tickSupplier;
+        this.cooldownPacketSender = cooldownPacketSender;
         this.costEvaluator = costEvaluator;
+    }
+
+    /**
+     * Resolves the current epoch tick for placement cooldown calculation (wall-clock monotonic, 50ms per tick) (#43).
+     */
+    public static long resolveCurrentTick(final Player player) {
+        return System.currentTimeMillis() / 50L;
+    }
+
+    /**
+     * Cleans up transient in-flight placement reservations for the given player UUID when quitting or reloading (#43).
+     */
+    public void removePlayer(final UUID playerId) {
+        pendingPlacements.remove(playerId);
     }
 
     /**
@@ -163,6 +291,13 @@ public final class AetheryteService {
      */
     public AetheryteRegistry registry() {
         return registry;
+    }
+
+    /**
+     * Returns the backing {@link VariationRegistry}.
+     */
+    public VariationRegistry variationRegistry() {
+        return variationRegistry;
     }
 
     /**
@@ -219,6 +354,110 @@ public final class AetheryteService {
     }
 
     /**
+     * Checks whether the player has already reached the global or variation-specific placement limit (#43).
+     *
+     * @return an error {@link Component} if a limit is reached, or {@link Optional#empty()} if allowed
+     */
+    public Optional<Component> checkPlacementLimit(final Player player, final String variationId) {
+        if (Permissions.canBypassLimit(player)) {
+            return Optional.empty();
+        }
+        final UUID ownerId = player.getUniqueId();
+        final String normalizedVar = Aetheryte.normalizeVariation(variationId);
+        final AetheryteVariation variation = variationRegistry.getOrDefault(normalizedVar);
+
+        final int maxGlobal = globalMaxPerPlayerSupplier.getAsInt();
+        if (maxGlobal >= 0 && registry.countByOwner(ownerId) >= maxGlobal) {
+            return Optional.of(messages.errorLimitReachedGlobal(player, maxGlobal));
+        }
+
+        final int maxVariation = variation.limit().maxPerPlayer();
+        if (maxVariation >= 0 && registry.countByOwnerAndVariation(ownerId, normalizedVar) >= maxVariation) {
+            return Optional.of(messages.errorLimitReachedVariation(player, variation.displayName(), maxVariation));
+        }
+
+        return Optional.empty();
+    }
+
+    /**
+     * Returns the effective placement cooldown in ticks for the given variation, using the variation override
+     * when {@code >= 0} or falling back to the global {@code limits.placement-cooldown-ticks} (#43).
+     */
+    public int effectiveCooldownTicks(final String variationId) {
+        final AetheryteVariation variation = variationRegistry.getOrDefault(Aetheryte.normalizeVariation(variationId));
+        final int variationCooldown = variation.limit().cooldownTicks();
+        if (variationCooldown >= 0) {
+            return variationCooldown;
+        }
+        return Math.max(0, globalCooldownTicksSupplier.getAsInt());
+    }
+
+    /**
+     * Calculates the remaining placement cooldown in ticks for {@code player} based on the last placement tick
+     * stored in the player's {@link PersistentDataContainer} (#43).
+     *
+     * @return remaining cooldown ticks ({@code > 0} if still on cooldown, {@code 0} if ready or bypassed)
+     */
+    public int getRemainingCooldownTicks(final Player player, final String variationId) {
+        if (Permissions.canBypassLimit(player)) {
+            return 0;
+        }
+        final int cooldownTicks = effectiveCooldownTicks(variationId);
+        if (cooldownTicks <= 0) {
+            return 0;
+        }
+        final PersistentDataContainer pdc = player.getPersistentDataContainer();
+        if (pdc == null) {
+            return 0;
+        }
+        final Long lastPlaceTick = pdc.get(LAST_PLACE_TICK_KEY, PersistentDataType.LONG);
+        if (lastPlaceTick == null) {
+            return 0;
+        }
+        final long currentTick = tickSupplier.applyAsLong(player);
+        final long elapsed = currentTick - lastPlaceTick;
+        if (elapsed < 0L || elapsed >= cooldownTicks) {
+            return 0;
+        }
+        return (int) (cooldownTicks - elapsed);
+    }
+
+    /**
+     * Checks whether the player is currently on placement cooldown, re-syncing the client-side item cooldown
+     * overlay packet if still on cooldown (#43).
+     *
+     * @return a localized error {@link Component} if on cooldown, or {@link Optional#empty()} if allowed
+     */
+    public Optional<Component> checkPlacementCooldown(final Player player, final String variationId) {
+        final int remainingTicks = getRemainingCooldownTicks(player, variationId);
+        if (remainingTicks <= 0) {
+            return Optional.empty();
+        }
+        cooldownPacketSender.sendCooldown(player, remainingTicks);
+        return Optional.of(messages.errorPlacementCooldown(player, remainingTicks));
+    }
+
+    /**
+     * Records the current tick in the player's {@link PersistentDataContainer} and sends the client-side
+     * cooldown packet via PacketEvents when an Aetheryte is placed (#43).
+     */
+    public void recordPlacementCooldown(final Player player, final String variationId) {
+        if (Permissions.canBypassLimit(player)) {
+            return;
+        }
+        final int cooldownTicks = effectiveCooldownTicks(variationId);
+        if (cooldownTicks <= 0) {
+            return;
+        }
+        final long currentTick = tickSupplier.applyAsLong(player);
+        final PersistentDataContainer pdc = player.getPersistentDataContainer();
+        if (pdc != null) {
+            pdc.set(LAST_PLACE_TICK_KEY, PersistentDataType.LONG, currentTick);
+        }
+        cooldownPacketSender.sendCooldown(player, cooldownTicks);
+    }
+
+    /**
      * Evaluates whether a player can warp from {@code source} to {@code destination}, checking both permissions
      * and the configured {@link WarpCostEvaluator} (#12, #13, #17).
      */
@@ -240,8 +479,7 @@ public final class AetheryteService {
     }
 
     /**
-     * Places a new Aetheryte backed by a non-ticking {@link Marker} entity at the target block coordinates
-     * using Folia's EntityScheduler and RegionScheduler (#6, #11, #12).
+     * Places a new Aetheryte of the {@code default} variation (#6, #11, #12).
      */
     public void placeAetheryte(
             final Player player,
@@ -250,6 +488,22 @@ public final class AetheryteService {
             final int blockY,
             final int blockZ,
             final String rawName
+    ) {
+        placeAetheryte(player, world, blockX, blockY, blockZ, rawName, Aetheryte.DEFAULT_VARIATION);
+    }
+
+    /**
+     * Places a new Aetheryte of the specified variation backed by a non-ticking {@link Marker} entity
+     * at the target block coordinates using Folia's EntityScheduler and RegionScheduler (#6, #11, #12, #37, #42, #43).
+     */
+    public void placeAetheryte(
+            final Player player,
+            final World world,
+            final int blockX,
+            final int blockY,
+            final int blockZ,
+            final String rawName,
+            final String variationId
     ) {
         if (!canPlace(player)) {
             messages.send(player, MessageKey.ERROR_NO_PERMISSION);
@@ -261,71 +515,149 @@ public final class AetheryteService {
             return;
         }
         final String name = validName.get();
+        final String normalizedVar = Aetheryte.normalizeVariation(variationId);
+        final AetheryteVariation variation = variationRegistry.getOrDefault(normalizedVar);
 
         if (registry.getByPosition(world, blockX, blockY, blockZ).isPresent()) {
             messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
             return;
         }
 
+        final Optional<Component> preLimitError = checkPlacementLimit(player, normalizedVar);
+        if (preLimitError.isPresent()) {
+            player.sendMessage(preLimitError.get());
+            return;
+        }
+
         final UUID ownerId = player.getUniqueId();
+        final boolean bypassLimit = Permissions.canBypassLimit(player);
         final Location targetLocation = new Location(world, blockX, blockY, blockZ);
 
-        // Step 1: Consume the Aetheryte item on the player's entity thread (unless in Creative mode).
+        // Step 1: Check cooldown and consume the Aetheryte item of the matching variation on the player's entity thread.
         player.getScheduler().run(plugin, task -> {
+            if (!bypassLimit && !pendingPlacements.add(ownerId)) {
+                final int remaining = Math.max(1, getRemainingCooldownTicks(player, normalizedVar));
+                cooldownPacketSender.sendCooldown(player, remaining);
+                player.sendMessage(messages.errorPlacementCooldown(player, remaining));
+                return;
+            }
+
+            final Optional<Component> cooldownError = checkPlacementCooldown(player, normalizedVar);
+            if (cooldownError.isPresent()) {
+                pendingPlacements.remove(ownerId);
+                player.sendMessage(cooldownError.get());
+                return;
+            }
+
             final boolean creative = player.getGameMode() == GameMode.CREATIVE;
-            if (!creative && !consumeOneAetheryteItem(player.getInventory())) {
+            if (!creative && !consumeOneAetheryteItem(player.getInventory(), normalizedVar)) {
+                pendingPlacements.remove(ownerId);
                 messages.send(player, MessageKey.ERROR_MISSING_ITEM);
                 return;
             }
 
-            // Step 2: Spawn the backing Marker entity and persist to World PDC on the target region thread (#6, #11).
+            // Step 2: Validate clearance, check limits atomically, and spawn the Marker entity on the region thread.
             Bukkit.getRegionScheduler().execute(plugin, targetLocation, () -> {
-                if (registry.getByPosition(world, blockX, blockY, blockZ).isPresent()) {
-                    if (!creative) {
-                        refundItemToPlayer(player, targetLocation);
+                try {
+                    if (registry.getByPosition(world, blockX, blockY, blockZ).isPresent()) {
+                        if (!creative) {
+                            refundItemToPlayer(player, targetLocation, normalizedVar);
+                        }
+                        pendingPlacements.remove(ownerId);
+                        messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
+                        return;
                     }
-                    messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
-                    return;
-                }
 
-                final Block block = world.getBlockAt(blockX, blockY, blockZ);
-                if (!isReplaceableBlock(block)) {
-                    if (!creative) {
-                        refundItemToPlayer(player, targetLocation);
+                    if (!ClearanceChecker.hasClearance(world, blockX, blockY, blockZ, variation)) {
+                        if (!creative) {
+                            refundItemToPlayer(player, targetLocation, normalizedVar);
+                        }
+                        pendingPlacements.remove(ownerId);
+                        sendClearanceError(player, variation);
+                        return;
                     }
-                    messages.send(player, MessageKey.ERROR_SPACE_NOT_EMPTY);
-                    return;
+
+                    final Aetheryte aetheryte = new Aetheryte(
+                            UUID.randomUUID(),
+                            name,
+                            world.getUID(),
+                            world.getName(),
+                            blockX,
+                            blockY,
+                            blockZ,
+                            ownerId,
+                            System.currentTimeMillis(),
+                            normalizedVar
+                    );
+
+                    final int effectiveMaxGlobal = bypassLimit ? -1 : globalMaxPerPlayerSupplier.getAsInt();
+                    final int effectiveMaxVariation = bypassLimit ? -1 : variation.limit().maxPerPlayer();
+                    final RegistrationOutcome outcome = registry.tryRegister(
+                            world,
+                            aetheryte,
+                            effectiveMaxGlobal,
+                            effectiveMaxVariation
+                    );
+
+                    if (outcome != RegistrationOutcome.REGISTERED) {
+                        if (!creative) {
+                            refundItemToPlayer(player, targetLocation, normalizedVar);
+                        }
+                        pendingPlacements.remove(ownerId);
+                        switch (outcome) {
+                            case ALREADY_EXISTS -> messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
+                            case GLOBAL_LIMIT_REACHED ->
+                                    player.sendMessage(messages.errorLimitReachedGlobal(player, effectiveMaxGlobal));
+                            case VARIATION_LIMIT_REACHED -> player.sendMessage(
+                                    messages.errorLimitReachedVariation(player, variation.displayName(), effectiveMaxVariation)
+                            );
+                            default -> {
+                            }
+                        }
+                        return;
+                    }
+
+                    final Block originBlock = world.getBlockAt(blockX, blockY, blockZ);
+                    if (!originBlock.getType().isAir()) {
+                        originBlock.setType(Material.AIR, true);
+                    }
+
+                    spawnOrUpdateMarkerEntity(world, aetheryte);
+                    hologramService.showAetheryte(aetheryte);
+
+                    world.playSound(
+                            aetheryte.markerLocation(world),
+                            Sound.BLOCK_LODESTONE_PLACE,
+                            1.0f,
+                            1.0f
+                    );
+                    player.getScheduler().run(plugin, postPlaceTask -> {
+                        try {
+                            recordPlacementCooldown(player, normalizedVar);
+                            player.sendMessage(messages.aetheryteCreated(player, aetheryte));
+                        } finally {
+                            pendingPlacements.remove(ownerId);
+                        }
+                    }, null);
+                } catch (final Throwable t) {
+                    pendingPlacements.remove(ownerId);
+                    throw t;
                 }
-
-                if (!isAir(block.getType())) {
-                    block.setType(Material.AIR, true);
-                }
-
-                final Aetheryte aetheryte = new Aetheryte(
-                        UUID.randomUUID(),
-                        name,
-                        world.getUID(),
-                        world.getName(),
-                        blockX,
-                        blockY,
-                        blockZ,
-                        ownerId,
-                        System.currentTimeMillis()
-                );
-
-                spawnOrUpdateMarkerEntity(world, aetheryte);
-                registry.register(world, aetheryte);
-                hologramService.showAetheryte(aetheryte);
-
-                world.playSound(
-                        aetheryte.markerLocation(world),
-                        Sound.BLOCK_LODESTONE_PLACE,
-                        1.0f,
-                        1.0f
-                );
-                player.sendMessage(messages.aetheryteCreated(player, aetheryte));
             });
         }, null);
+    }
+
+    /**
+     * Sends the appropriate space or surrounding clearance error message to the player (#42).
+     */
+    public void sendClearanceError(final Player player, final AetheryteVariation variation) {
+        final ClearanceSection clearance = variation.placement().clearance();
+        if (clearance.radius() <= 0 && clearance.height() <= 1) {
+            messages.send(player, MessageKey.ERROR_SPACE_NOT_EMPTY);
+        } else {
+            final int horizontalSpan = clearance.radius() * 2 + 1;
+            player.sendMessage(messages.errorClearanceInsufficient(player, horizontalSpan, clearance.height()));
+        }
     }
 
     /**
@@ -341,7 +673,7 @@ public final class AetheryteService {
 
     /**
      * Removes an existing Aetheryte, despawns its backing {@link Marker} entity, and returns the creation item
-     * to the player if permitted.
+     * of the matching variation to the player if permitted (#38).
      */
     public void removeAetheryte(final Player player, final UUID aetheryteId) {
         final Optional<Aetheryte> opt = registry.getById(aetheryteId);
@@ -380,7 +712,7 @@ public final class AetheryteService {
             world.playSound(blockLoc, Sound.BLOCK_LODESTONE_BREAK, 1.0f, 1.0f);
 
             if (player.getGameMode() != GameMode.CREATIVE) {
-                refundItemToPlayer(player, blockLoc);
+                refundItemToPlayer(player, blockLoc, aetheryte.variation());
             }
             player.sendMessage(messages.aetheryteRemoved(player, aetheryte.name()));
         });
@@ -403,7 +735,7 @@ public final class AetheryteService {
 
     /**
      * Warps a player to the specified Aetheryte using Folia-compatible region checks and {@code teleportAsync}
-     * invoked from the player's entity scheduler (#11, #12).
+     * invoked from the player's entity scheduler (#11, #12, #41).
      */
     public void warpToAetheryte(final Player player, final UUID destinationId) {
         warpToAetheryte(player, null, destinationId);
@@ -411,7 +743,7 @@ public final class AetheryteService {
 
     /**
      * Warps a player from {@code source} (optional) to the specified destination Aetheryte after verifying
-     * permissions, costs, and landing safety (#11, #12).
+     * permissions, costs, and landing safety (#11, #12, #41).
      */
     public void warpToAetheryte(
             final Player player,
@@ -443,15 +775,17 @@ public final class AetheryteService {
         final Location checkLoc = destination.blockLocation(targetWorld);
         final float yaw = player.getYaw();
         final float pitch = player.getPitch();
+        final AetheryteVariation destVariation = variationRegistry.getOrDefault(destination.variation());
 
         Bukkit.getRegionScheduler().execute(plugin, checkLoc, () -> {
-            final Optional<Location> safeLanding = resolveSafeLanding(
+            final Optional<Location> safeLanding = LandingResolver.resolveForVariation(
                     targetWorld,
                     destination.blockX(),
                     destination.blockY(),
                     destination.blockZ(),
                     yaw,
-                    pitch
+                    pitch,
+                    destVariation
             );
             if (safeLanding.isEmpty()) {
                 messages.send(player, MessageKey.ERROR_DESTINATION_UNSAFE);
@@ -505,23 +839,14 @@ public final class AetheryteService {
     }
 
     /**
-     * Checks whether the given block is air or replaceable (e.g. tall grass, snow layer).
+     * Checks whether the given block is air or replaceable (excluding liquid blocks).
      */
     public static boolean isReplaceableBlock(final Block block) {
-        final Material type = block.getType();
-        return isAir(type) || block.isReplaceable();
+        return ClearanceChecker.isReplaceableBlock(block);
     }
 
     /**
-     * Checks whether the given material is an air variant without accessing RegistryAccess.
-     */
-    private static boolean isAir(final Material type) {
-        return type == Material.AIR || type == Material.CAVE_AIR || type == Material.VOID_AIR;
-    }
-
-    /**
-     * Resolves a safe landing location for the given Aetheryte coordinates, supporting both Marker-based
-     * (passable origin with solid floor below) and block-based Aetherytes.
+     * Resolves a safe landing location for the given Aetheryte coordinates at radius 0.
      */
     public static Optional<Location> resolveSafeLanding(
             final World world,
@@ -531,21 +856,15 @@ public final class AetheryteService {
             final float yaw,
             final float pitch
     ) {
-        final Block origin = world.getBlockAt(blockX, blockY, blockZ);
-        final Block above1 = world.getBlockAt(blockX, blockY + 1, blockZ);
-        // Case 1: Origin itself is passable (Marker entity style) and has a safe support block below
-        if (isPassableAndSafe(origin) && isPassableAndSafe(above1)) {
-            final Block floor = world.getBlockAt(blockX, blockY - 1, blockZ);
-            if (isSafeFloor(floor)) {
-                return Optional.of(new Location(world, blockX + 0.5, blockY + 1.0, blockZ + 0.5, yaw, pitch));
-            }
-        }
-        // Case 2: Origin is a solid safe block (e.g. standing on top of the display hitbox at blockY + 1.0)
-        final Block above2 = world.getBlockAt(blockX, blockY + 2, blockZ);
-        if (isSafeFloor(origin) && isPassableAndSafe(above1) && isPassableAndSafe(above2)) {
-            return Optional.of(new Location(world, blockX + 0.5, blockY + 1.0, blockZ + 0.5, yaw, pitch));
-        }
-        return Optional.empty();
+        return LandingResolver.resolveForVariation(
+                world,
+                blockX,
+                blockY,
+                blockZ,
+                yaw,
+                pitch,
+                AetheryteVariation.defaultVariation()
+        );
     }
 
     /**
@@ -556,40 +875,16 @@ public final class AetheryteService {
     }
 
     /**
-     * Checks whether the given block is a solid, non-hazardous floor suitable for standing on.
+     * Consumes a single Aetheryte creation item of the specified variation from the player's hands or storage contents.
      */
-    private static boolean isSafeFloor(final Block block) {
-        final Material type = block.getType();
-        if (isAir(type) || type == Material.LAVA || type == Material.FIRE
-                || type == Material.SOUL_FIRE || type == Material.MAGMA_BLOCK
-                || type == Material.CACTUS) {
-            return false;
-        }
-        return block.isSolid();
-    }
-
-    /**
-     * Checks that a single block is passable and not lava or fire.
-     */
-    private static boolean isPassableAndSafe(final Block block) {
-        final Material type = block.getType();
-        if (type == Material.LAVA || type == Material.FIRE || type == Material.SOUL_FIRE) {
-            return false;
-        }
-        return block.isPassable() || !type.isSolid();
-    }
-
-    /**
-     * Consumes a single Aetheryte creation item from the player's hands or storage contents.
-     */
-    private static boolean consumeOneAetheryteItem(final PlayerInventory inventory) {
+    private static boolean consumeOneAetheryteItem(final PlayerInventory inventory, final String variationId) {
         final ItemStack mainHand = inventory.getItemInMainHand();
-        if (AetheryteItemFactory.isAetheryteItem(mainHand)) {
+        if (AetheryteItemFactory.isAetheryteItemOfVariation(mainHand, variationId)) {
             mainHand.setAmount(mainHand.getAmount() - 1);
             return true;
         }
         final ItemStack offHand = inventory.getItemInOffHand();
-        if (AetheryteItemFactory.isAetheryteItem(offHand)) {
+        if (AetheryteItemFactory.isAetheryteItemOfVariation(offHand, variationId)) {
             offHand.setAmount(offHand.getAmount() - 1);
             return true;
         }
@@ -599,7 +894,7 @@ public final class AetheryteService {
         }
         for (int i = 0; i < contents.length; i++) {
             final @Nullable ItemStack slot = contents[i];
-            if (slot != null && AetheryteItemFactory.isAetheryteItem(slot)) {
+            if (slot != null && AetheryteItemFactory.isAetheryteItemOfVariation(slot, variationId)) {
                 slot.setAmount(slot.getAmount() - 1);
                 inventory.setItem(i, slot.getAmount() > 0 ? slot : null);
                 return true;
@@ -609,10 +904,16 @@ public final class AetheryteService {
     }
 
     /**
-     * Returns one Aetheryte creation item to the player's inventory, or drops it at the fallback location.
+     * Returns one Aetheryte creation item of the specified variation to the player's inventory,
+     * or drops it at the fallback location.
      */
-    private void refundItemToPlayer(final Player player, final Location fallbackDropLocation) {
-        final ItemStack item = AetheryteItemFactory.createItem(1);
+    private void refundItemToPlayer(
+            final Player player,
+            final Location fallbackDropLocation,
+            final String variationId
+    ) {
+        final AetheryteVariation variation = variationRegistry.getOrDefault(variationId);
+        final ItemStack item = AetheryteItemFactory.createItem(variationId, variation, 1, messages);
         final boolean scheduled = player.getScheduler().run(plugin, task -> {
             final Map<Integer, ItemStack> leftover = player.getInventory().addItem(item);
             if (!leftover.isEmpty()) {

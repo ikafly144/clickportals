@@ -30,6 +30,8 @@ import net.sabafly.clickportals.listener.AetheryteListener;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.service.AetheryteService;
+import net.sabafly.clickportals.variation.AetheryteVariation;
+import net.sabafly.clickportals.variation.VariationRegistry;
 import net.sabafly.clickportals.visual.HologramService;
 import net.sabafly.clickportals.visual.NoopHologramService;
 import net.sabafly.clickportals.visual.PacketEventsHologramService;
@@ -47,9 +49,10 @@ import org.jspecify.annotations.Nullable;
 @SuppressWarnings("UnstableApiUsage")
 public final class ClickPortals extends JavaPlugin {
 
-    private static final double MAX_INTERACT_DISTANCE_SQUARED = 36.0;
+    private static final double BASE_INTERACT_REACH = 6.0;
 
     private @Nullable ConfigManager configManager;
+    private @Nullable VariationRegistry variationRegistry;
     private @Nullable Messages messages;
     private @Nullable AetheryteRegistry registry;
     private @Nullable HologramService hologramService;
@@ -71,6 +74,12 @@ public final class ClickPortals extends JavaPlugin {
         );
         this.messages = msgService;
 
+        final VariationRegistry variations = VariationRegistry.load(
+                getDataPath().resolve("aetheryte"),
+                getSLF4JLogger()
+        );
+        this.variationRegistry = variations;
+
         final AetheryteRegistry aetheryteRegistry = new AetheryteRegistry();
         this.registry = aetheryteRegistry;
 
@@ -78,21 +87,30 @@ public final class ClickPortals extends JavaPlugin {
             aetheryteRegistry.loadWorld(world);
         }
 
-        final HologramService activeHologramService = createHologramService(config, msgService);
+        final HologramService activeHologramService = createHologramService(config, variations, msgService);
         this.hologramService = activeHologramService;
 
-        final AetheryteService service = new AetheryteService(this, aetheryteRegistry, activeHologramService, msgService);
+        final AetheryteService service = new AetheryteService(
+                this,
+                aetheryteRegistry,
+                variations,
+                activeHologramService,
+                msgService,
+                () -> cfgManager.config().maxAetherytesPerPlayer(),
+                () -> cfgManager.config().placementCooldownTicks()
+        );
         this.aetheryteService = service;
         final AetheryteDialogFactory dialogs = new AetheryteDialogFactory(service, msgService);
         this.dialogFactory = dialogs;
 
-        bindInteractionHandler(activeHologramService, aetheryteRegistry, dialogs);
+        bindInteractionHandler(activeHologramService, aetheryteRegistry, variations, dialogs);
 
-        AetheryteItemFactory.registerRecipe(config, msgService);
+        AetheryteItemFactory.registerRecipes(variations, msgService);
 
         final AetheryteListener listener = new AetheryteListener(
                 this,
                 aetheryteRegistry,
+                service,
                 dialogs,
                 activeHologramService,
                 msgService
@@ -102,7 +120,7 @@ public final class ClickPortals extends JavaPlugin {
 
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event -> {
             event.registrar().register(
-                    ClickPortalsCommand.createCommand(this, msgService),
+                    ClickPortalsCommand.createCommand(this, variations, msgService),
                     "ClickPortals management command",
                     List.of("cp")
             );
@@ -112,12 +130,16 @@ public final class ClickPortals extends JavaPlugin {
             activeHologramService.refreshPlayer(player, aetheryteRegistry.getByWorld(player.getWorld().getUID()));
         }
 
-        getComponentLogger().info("ClickPortals enabled ({} aetherytes loaded).", aetheryteRegistry.getAll().size());
+        getComponentLogger().info(
+                "ClickPortals enabled ({} aetherytes, {} variations loaded).",
+                aetheryteRegistry.getAll().size(),
+                variations.ids().size()
+        );
     }
 
     @Override
     public void onDisable() {
-        AetheryteItemFactory.unregisterRecipe();
+        AetheryteItemFactory.unregisterRecipes();
         if (hologramService != null) {
             hologramService.destroyAll();
             hologramService = null;
@@ -129,16 +151,19 @@ public final class ClickPortals extends JavaPlugin {
         aetheryteListener = null;
         dialogFactory = null;
         aetheryteService = null;
+        variationRegistry = null;
         messages = null;
         configManager = null;
         getComponentLogger().info("ClickPortals disabled.");
     }
 
     /**
-     * Reloads configuration, language files, recipes, and client-side holograms on the global region scheduler (#19).
+     * Reloads configuration, language files, variation files, crafting recipes, and client-side holograms
+     * on the global region scheduler (#19, #37, #38).
      */
     public void reloadPlugin(final CommandSender sender) {
         final ConfigManager cfgManager = this.configManager;
+        final VariationRegistry variations = this.variationRegistry;
         final Messages msgService = this.messages;
         final AetheryteRegistry aetheryteRegistry = this.registry;
         final HologramService currentHologramService = this.hologramService;
@@ -146,6 +171,7 @@ public final class ClickPortals extends JavaPlugin {
         final AetheryteDialogFactory dialogs = this.dialogFactory;
         final AetheryteListener listener = this.aetheryteListener;
         if (cfgManager == null
+                || variations == null
                 || msgService == null
                 || aetheryteRegistry == null
                 || currentHologramService == null
@@ -163,10 +189,12 @@ public final class ClickPortals extends JavaPlugin {
                     reloadedConfig.useClientLocale(),
                     getSLF4JLogger()
             );
-            AetheryteItemFactory.registerRecipe(reloadedConfig, msgService);
+            variations.reload(getDataPath().resolve("aetheryte"), getSLF4JLogger());
+            AetheryteItemFactory.registerRecipes(variations, msgService);
 
             final HologramService activeHologramService = resolveReloadedHologramService(
                     reloadedConfig,
+                    variations,
                     msgService,
                     aetheryteRegistry,
                     dialogs
@@ -185,7 +213,10 @@ public final class ClickPortals extends JavaPlugin {
                 }, null);
             }
             msgService.send(sender, MessageKey.COMMAND_RELOADED);
-            getComponentLogger().info("ClickPortals configuration and translations reloaded.");
+            getComponentLogger().info(
+                    "ClickPortals configuration, translations, and {} variations reloaded.",
+                    variations.ids().size()
+            );
         });
     }
 
@@ -195,6 +226,7 @@ public final class ClickPortals extends JavaPlugin {
      */
     private HologramService resolveReloadedHologramService(
             final PluginConfig reloadedConfig,
+            final VariationRegistry variations,
             final Messages msgService,
             final AetheryteRegistry aetheryteRegistry,
             final AetheryteDialogFactory dialogs
@@ -210,8 +242,8 @@ public final class ClickPortals extends JavaPlugin {
             return NoopHologramService.INSTANCE;
         }
         if (current == NoopHologramService.INSTANCE) {
-            final HologramService created = createHologramService(reloadedConfig, msgService);
-            bindInteractionHandler(created, aetheryteRegistry, dialogs);
+            final HologramService created = createHologramService(reloadedConfig, variations, msgService);
+            bindInteractionHandler(created, aetheryteRegistry, variations, dialogs);
             this.hologramService = created;
             return created;
         }
@@ -225,12 +257,13 @@ public final class ClickPortals extends JavaPlugin {
     private void bindInteractionHandler(
             final HologramService targetService,
             final AetheryteRegistry aetheryteRegistry,
+            final VariationRegistry variations,
             final AetheryteDialogFactory dialogs
     ) {
         targetService.setInteractionHandler((player, aetheryteId) ->
                 player.getScheduler().run(this, task ->
                         aetheryteRegistry.getById(aetheryteId)
-                                .filter(aetheryte -> isWithinReach(player, aetheryte))
+                                .filter(aetheryte -> isWithinReach(player, aetheryte, variations))
                                 .ifPresent(aetheryte -> dialogs.openWarpDialog(player, aetheryte)),
                         null)
         );
@@ -244,6 +277,13 @@ public final class ClickPortals extends JavaPlugin {
     }
 
     /**
+     * Returns the active {@link VariationRegistry}, if the plugin is enabled.
+     */
+    public @Nullable VariationRegistry variationRegistry() {
+        return variationRegistry;
+    }
+
+    /**
      * Returns the active {@link Messages} service, if the plugin is enabled.
      */
     public @Nullable Messages messages() {
@@ -251,23 +291,36 @@ public final class ClickPortals extends JavaPlugin {
     }
 
     /**
-     * Checks that the player is in the same world and within interaction reach of the target Aetheryte.
+     * Checks that the player is in the same world and within interaction reach of the target Aetheryte,
+     * scaling the reach allowance by the variation's hitbox size (#40).
      */
-    private static boolean isWithinReach(final Player player, final Aetheryte aetheryte) {
+    private static boolean isWithinReach(
+            final Player player,
+            final Aetheryte aetheryte,
+            final VariationRegistry variations
+    ) {
         final Location loc = player.getLocation();
         if (loc == null) {
             return false;
         }
         final World world = loc.getWorld();
-        return world != null
-                && world.getUID().equals(aetheryte.worldId())
-                && loc.distanceSquared(aetheryte.markerLocation(world)) <= MAX_INTERACT_DISTANCE_SQUARED;
+        if (world == null || !world.getUID().equals(aetheryte.worldId())) {
+            return false;
+        }
+        final AetheryteVariation variation = variations.getOrDefault(aetheryte.variation());
+        final double hitboxAllowance = Math.max(variation.hitbox().width(), variation.hitbox().height());
+        final double maxReach = BASE_INTERACT_REACH + hitboxAllowance;
+        return loc.distanceSquared(aetheryte.markerLocation(world)) <= maxReach * maxReach;
     }
 
     /**
      * Creates the appropriate {@link HologramService} based on configuration and PacketEvents availability.
      */
-    private HologramService createHologramService(final PluginConfig config, final Messages msgService) {
+    private HologramService createHologramService(
+            final PluginConfig config,
+            final VariationRegistry variations,
+            final Messages msgService
+    ) {
         if (!config.hologramEnabled()) {
             return NoopHologramService.INSTANCE;
         }
@@ -275,7 +328,7 @@ public final class ClickPortals extends JavaPlugin {
             getComponentLogger().info("PacketEvents detected; enabling client-side Aetheryte visuals and interaction.");
             return new PacketEventsHologramService(
                     config.hologramViewDistance(),
-                    config.displayBlock(),
+                    variations,
                     msgService
             );
         }

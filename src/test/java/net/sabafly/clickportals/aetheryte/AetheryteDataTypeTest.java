@@ -35,7 +35,7 @@ import org.junit.jupiter.api.Test;
 class AetheryteDataTypeTest {
 
     @Test
-    void roundTripSerializationPreservesAllFields() {
+    void roundTripSerializationPreservesAllFieldsIncludingVariation() {
         final Map<NamespacedKey, Object> backingStore = new HashMap<>();
         final PersistentDataContainer mockContainer = createInMemoryContainer(backingStore);
         final PersistentDataAdapterContext context = mock(PersistentDataAdapterContext.class);
@@ -50,13 +50,41 @@ class AetheryteDataTypeTest {
                 64,
                 -256,
                 UUID.fromString("99999999-8888-7777-6666-555555555555"),
-                1_700_000_000_000L
+                1_700_000_000_000L,
+                "grand_crystal"
         );
 
         final PersistentDataContainer serialized = AetheryteDataType.INSTANCE.toPrimitive(original, context);
         final Aetheryte restored = AetheryteDataType.INSTANCE.fromPrimitive(serialized, context);
 
         assertThat(restored).isEqualTo(original);
+        assertThat(restored.variation()).isEqualTo("grand_crystal");
+    }
+
+    @Test
+    void legacyV02PdcWithoutVariationKeyFallsBackToDefault() {
+        final Map<NamespacedKey, Object> backingStore = new HashMap<>();
+        final PersistentDataContainer mockContainer = createInMemoryContainer(backingStore);
+        final PersistentDataAdapterContext context = mock(PersistentDataAdapterContext.class);
+        when(context.newPersistentDataContainer()).thenReturn(mockContainer);
+
+        final Aetheryte original = new Aetheryte(
+                UUID.fromString("11111111-2222-3333-4444-555555555555"),
+                "旧データ",
+                UUID.fromString("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+                "world",
+                10,
+                64,
+                20,
+                UUID.fromString("99999999-8888-7777-6666-555555555555"),
+                1_700_000_000_000L
+        );
+
+        final PersistentDataContainer serialized = AetheryteDataType.INSTANCE.toPrimitive(original, context);
+        backingStore.remove(new NamespacedKey("clickportals", "variation"));
+
+        final Aetheryte restored = AetheryteDataType.INSTANCE.fromPrimitive(serialized, context);
+        assertThat(restored.variation()).isEqualTo(Aetheryte.DEFAULT_VARIATION);
     }
 
     @SuppressWarnings("unchecked")

@@ -19,12 +19,27 @@ package net.sabafly.clickportals.item;
 
 import io.papermc.paper.datacomponent.DataComponentType;
 import io.papermc.paper.datacomponent.DataComponentTypes;
+import io.papermc.paper.datacomponent.item.CustomModelData;
 import io.papermc.paper.datacomponent.item.ItemAttributeModifiers;
 import io.papermc.paper.datacomponent.item.ItemLore;
+import io.papermc.paper.datacomponent.item.UseCooldown;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import net.sabafly.clickportals.config.PluginConfig;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import net.kyori.adventure.key.InvalidKeyException;
+import net.kyori.adventure.key.Key;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.message.Messages;
+import net.sabafly.clickportals.variation.AetheryteVariation;
+import net.sabafly.clickportals.variation.AetheryteVariation.CustomModelDataSection;
+import net.sabafly.clickportals.variation.AetheryteVariation.ItemSection;
+import net.sabafly.clickportals.variation.VariationRegistry;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -35,13 +50,19 @@ import org.bukkit.persistence.PersistentDataType;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Factory and recipe registrar for the Aetheryte creation item with masked item components (#6, #12, #19).
+ * Factory and recipe registrar for variation-aware Aetheryte creation items (#6, #12, #38).
  */
 @SuppressWarnings("UnstableApiUsage")
 public final class AetheryteItemFactory {
 
     public static final NamespacedKey ITEM_MARKER_KEY = new NamespacedKey("clickportals", "aetheryte_item");
-    public static final NamespacedKey RECIPE_KEY = new NamespacedKey("clickportals", "aetheryte_recipe");
+    public static final NamespacedKey VARIATION_KEY = new NamespacedKey("clickportals", "variation");
+    /**
+     * Cooldown group resource location key shared by all Aetheryte creation items for client-side visual cooldowns (#43).
+     */
+    public static final Key COOLDOWN_GROUP_KEY = Key.key("clickportals", "aetheryte_place");
+    private static final float VISUAL_COOLDOWN_PLACEHOLDER_SECONDS = 1.0f;
+    private static final MiniMessage MINI_MESSAGE = MiniMessage.miniMessage();
 
     private static final class MaskedComponentHolder {
         private static final List<DataComponentType> MASKED_COMPONENTS = List.of(
@@ -54,7 +75,6 @@ public final class AetheryteItemFactory {
                 DataComponentTypes.DEATH_PROTECTION,
                 DataComponentTypes.GLIDER,
                 DataComponentTypes.USE_REMAINDER,
-                DataComponentTypes.USE_COOLDOWN,
                 DataComponentTypes.DAMAGE,
                 DataComponentTypes.MAX_DAMAGE,
                 DataComponentTypes.ENCHANTABLE,
@@ -62,41 +82,117 @@ public final class AetheryteItemFactory {
         );
     }
 
-    private static volatile Material configuredMaterial = Material.COMPASS;
+    private static final Set<NamespacedKey> REGISTERED_RECIPE_KEYS = ConcurrentHashMap.newKeySet();
+    private static volatile VariationRegistry configuredVariations = VariationRegistry.defaults();
     private static volatile Messages configuredMessages = Messages.defaults();
 
     private AetheryteItemFactory() {
     }
 
     /**
-     * Creates a new Aetheryte item stack with the given amount using the configured base material
-     * and masks native item components so the base item's vanilla behavior is disabled (#6).
+     * Creates a new Aetheryte item stack for the {@code default} variation with the given amount.
      */
     public static ItemStack createItem(final int amount) {
-        return createItem(configuredMaterial, amount, configuredMessages);
+        return createItem(Aetheryte.DEFAULT_VARIATION, amount);
     }
 
     /**
-     * Creates a new Aetheryte item stack with the specified base material and amount, masking its vanilla components.
+     * Creates a new Aetheryte item stack for the specified variation ID and amount using the active
+     * {@link VariationRegistry} and {@link Messages}.
      */
-    public static ItemStack createItem(final Material baseMaterial, final int amount) {
-        return createItem(baseMaterial, amount, configuredMessages);
+    public static ItemStack createItem(final String variationId, final int amount) {
+        final String normalizedId = Aetheryte.normalizeVariation(variationId);
+        final AetheryteVariation variation = configuredVariations.getOrDefault(normalizedId);
+        return createItem(normalizedId, variation, amount, configuredMessages);
     }
 
     /**
-     * Creates a new Aetheryte item stack with the specified base material, amount, and {@link Messages} service.
+     * Creates a new Aetheryte creation item stack for the specified variation definition and amount (#6, #38).
      */
-    public static ItemStack createItem(final Material baseMaterial, final int amount, final Messages messages) {
+    public static ItemStack createItem(
+            final String variationId,
+            final AetheryteVariation variation,
+            final int amount,
+            final Messages messages
+    ) {
+        final String normalizedId = Aetheryte.normalizeVariation(variationId);
+        final ItemSection itemCfg = variation.item();
+        final Material baseMaterial = itemCfg.bukkitMaterial();
+
         final ItemStack stack = ItemStack.of(baseMaterial, Math.max(1, amount));
         for (final DataComponentType componentType : MaskedComponentHolder.MASKED_COMPONENTS) {
             stack.unsetData(componentType);
         }
         stack.setData(DataComponentTypes.ATTRIBUTE_MODIFIERS, ItemAttributeModifiers.itemAttributes().build());
-        stack.setData(DataComponentTypes.ITEM_NAME, messages.aetheryteItemName());
-        stack.setData(DataComponentTypes.LORE, ItemLore.lore(messages.aetheryteItemLore()));
-        stack.setData(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE, Boolean.TRUE);
-        stack.editPersistentDataContainer(pdc -> pdc.set(ITEM_MARKER_KEY, PersistentDataType.BYTE, (byte) 1));
+
+        final Component itemName = itemCfg.name().isBlank()
+                ? messages.aetheryteItemName()
+                : MINI_MESSAGE.deserialize(itemCfg.name()).decorationIfAbsent(TextDecoration.ITALIC, TextDecoration.State.FALSE);
+        stack.setData(DataComponentTypes.ITEM_NAME, itemName);
+
+        final List<Component> loreLines;
+        if (itemCfg.lore().isEmpty()) {
+            loreLines = messages.aetheryteItemLore();
+        } else {
+            final List<Component> parsedLore = new ArrayList<>(itemCfg.lore().size());
+            for (final String line : itemCfg.lore()) {
+                parsedLore.add(
+                        MINI_MESSAGE.deserialize(line)
+                                .decorationIfAbsent(TextDecoration.ITALIC, TextDecoration.State.FALSE)
+                );
+            }
+            loreLines = List.copyOf(parsedLore);
+        }
+        stack.setData(DataComponentTypes.LORE, ItemLore.lore(loreLines));
+        stack.setData(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE, itemCfg.glint());
+        stack.setData(
+                DataComponentTypes.USE_COOLDOWN,
+                UseCooldown.useCooldown(VISUAL_COOLDOWN_PLACEHOLDER_SECONDS)
+                        .cooldownGroup(COOLDOWN_GROUP_KEY)
+                        .build()
+        );
+
+        applyModelComponents(stack, itemCfg.itemModel(), itemCfg.customModelData());
+
+        stack.editPersistentDataContainer(pdc -> {
+            pdc.set(ITEM_MARKER_KEY, PersistentDataType.BYTE, (byte) 1);
+            pdc.set(VARIATION_KEY, PersistentDataType.STRING, normalizedId);
+        });
         return stack;
+    }
+
+    /**
+     * Applies optional {@code minecraft:item_model} and {@code minecraft:custom_model_data} components to {@code stack}.
+     */
+    @SuppressWarnings("PatternValidation")
+    private static void applyModelComponents(
+            final ItemStack stack,
+            final String itemModel,
+            final CustomModelDataSection cmdSection
+    ) {
+        if (!itemModel.isBlank()) {
+            try {
+                stack.setData(DataComponentTypes.ITEM_MODEL, Key.key(itemModel.strip()));
+            } catch (final InvalidKeyException ignored) {
+                // Ignore invalid resource location syntax
+            }
+        }
+        if (!cmdSection.isEmpty()) {
+            final CustomModelData.Builder builder = CustomModelData.customModelData();
+            if (!cmdSection.floats().isEmpty()) {
+                builder.addFloats(cmdSection.floats());
+            }
+            if (!cmdSection.flags().isEmpty()) {
+                builder.addFlags(cmdSection.flags());
+            }
+            if (!cmdSection.strings().isEmpty()) {
+                builder.addStrings(cmdSection.strings());
+            }
+            if (!cmdSection.colors().isEmpty()) {
+                builder.addColors(cmdSection.bukkitColors());
+            }
+            stack.setData(DataComponentTypes.CUSTOM_MODEL_DATA, builder.build());
+        }
     }
 
     /**
@@ -111,35 +207,60 @@ public final class AetheryteItemFactory {
     }
 
     /**
-     * Registers (or re-registers) the crafting recipe configured in {@link PluginConfig}.
+     * Extracts the variation identifier from an Aetheryte creation item stack, returning
+     * {@link Aetheryte#DEFAULT_VARIATION} for legacy items without a variation tag, or {@link Optional#empty()}
+     * if the stack is not an Aetheryte item (#38).
      */
-    public static void registerRecipe(final PluginConfig config) {
-        registerRecipe(config, configuredMessages);
+    public static Optional<String> variationIdOf(@Nullable final ItemStack stack) {
+        if (!isAetheryteItem(stack) || stack == null) {
+            return Optional.empty();
+        }
+        final String stored = stack.getPersistentDataContainer().get(VARIATION_KEY, PersistentDataType.STRING);
+        return Optional.of(Aetheryte.normalizeVariation(stored));
     }
 
     /**
-     * Registers (or re-registers) the crafting recipe configured in {@link PluginConfig} using the given {@link Messages}.
+     * Checks whether the given item stack is an Aetheryte creation item matching the specified variation ID (#38).
      */
-    public static void registerRecipe(final PluginConfig config, final Messages messages) {
-        configuredMaterial = config.itemMaterial();
+    public static boolean isAetheryteItemOfVariation(@Nullable final ItemStack stack, final String expectedVariationId) {
+        final Optional<String> actual = variationIdOf(stack);
+        return actual.isPresent() && actual.get().equals(Aetheryte.normalizeVariation(expectedVariationId));
+    }
+
+    /**
+     * Registers (or re-registers) crafting recipes for all enabled variations in {@link VariationRegistry} (#38).
+     */
+    public static void registerRecipes(final VariationRegistry variationRegistry, final Messages messages) {
+        configuredVariations = variationRegistry;
         configuredMessages = messages;
-        Bukkit.removeRecipe(RECIPE_KEY);
-        if (!config.recipeEnabled()) {
-            return;
+        unregisterRecipes();
+
+        for (final Map.Entry<String, AetheryteVariation> entry : variationRegistry.all().entrySet()) {
+            final String id = entry.getKey();
+            final AetheryteVariation variation = entry.getValue();
+            if (!variation.recipe().enabled()) {
+                continue;
+            }
+            final NamespacedKey recipeKey = new NamespacedKey("clickportals", "aetheryte_" + id);
+            final ItemStack result = createItem(id, variation, 1, messages);
+            final ShapedRecipe recipe = new ShapedRecipe(recipeKey, result);
+            recipe.setCategory(CraftingBookCategory.MISC);
+            recipe.shape(variation.recipe().shape().toArray(new String[0]));
+            for (final Map.Entry<Character, Material> ing : variation.recipe().bukkitIngredients().entrySet()) {
+                recipe.setIngredient(ing.getKey(), ing.getValue());
+            }
+            Bukkit.addRecipe(recipe);
+            REGISTERED_RECIPE_KEYS.add(recipeKey);
         }
-        final ShapedRecipe recipe = new ShapedRecipe(RECIPE_KEY, createItem(configuredMaterial, 1, messages));
-        recipe.setCategory(CraftingBookCategory.MISC);
-        recipe.shape(config.recipeShape().toArray(new String[0]));
-        for (final Map.Entry<Character, Material> entry : config.recipeIngredients().entrySet()) {
-            recipe.setIngredient(entry.getKey(), entry.getValue());
-        }
-        Bukkit.addRecipe(recipe);
     }
 
     /**
-     * Unregisters the Aetheryte crafting recipe.
+     * Unregisters all currently registered Aetheryte crafting recipes.
      */
-    public static void unregisterRecipe() {
-        Bukkit.removeRecipe(RECIPE_KEY);
+    public static void unregisterRecipes() {
+        for (final NamespacedKey key : REGISTERED_RECIPE_KEYS) {
+            Bukkit.removeRecipe(key);
+        }
+        REGISTERED_RECIPE_KEYS.clear();
     }
 }

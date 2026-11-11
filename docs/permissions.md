@@ -11,7 +11,7 @@ ClickPortals registers all permission nodes in `paper-plugin.yml` with sensible 
 | `clickportals.remove.any` | `op` | Allows removing Aetherytes placed by other players (owners can always remove their own). |
 | `clickportals.command.give` | `op` | Allows executing `/clickportals give` (`/cp give`) to distribute Aetheryte creation items. |
 | `clickportals.command.reload` | `op` | Allows executing `/clickportals reload` (`/cp reload`) to reload configuration and translations. |
-| `clickportals.bypass.limit` | `op` | Bypasses per-player Aetheryte placement limits (reserved for #43; currently inactive). |
+| `clickportals.bypass.limit` | `op` | Bypasses per-player Aetheryte placement limits and placement cooldowns. |
 | `clickportals.bypass.cost.warp` | `op` | Bypasses warp costs when teleporting between Aetherytes. |
 | `clickportals.bypass.cost.place` | `op` | Bypasses placement costs when creating a new Aetheryte (reserved for #15; currently inactive and does not prevent creation item consumption). |
 | `clickportals.admin` | `op` | Grants all ClickPortals permissions listed above via child permission inheritance. |
@@ -20,5 +20,5 @@ ClickPortals registers all permission nodes in `paper-plugin.yml` with sensible 
 
 | Command | Alias | Permission | Description |
 |---|---|---|---|
-| `/clickportals give [targets] [amount]` | `/cp give` | `clickportals.command.give` | Gives Aetheryte creation item(s) to the executing player or specified targets. |
-| `/clickportals reload` | `/cp reload` | `clickportals.command.reload` | Reloads `config.yml`, `lang/*.yml` translations, crafting recipes, and client-side holograms. |
+| `/clickportals give [targets] [amount] [variation]` | `/cp give` | `clickportals.command.give` | Gives Aetheryte creation item(s) of the specified variation (defaults to `default`) to the executing player or specified targets. |
+| `/clickportals reload` | `/cp reload` | `clickportals.command.reload` | Reloads `config.yml`, `lang/*.yml` translations, `aetheryte/*.yml` variations, crafting recipes, and client-side holograms. |

@@ -36,6 +36,7 @@ public enum MessageKey {
 
     DIALOG_CREATE_TITLE("dialog.create.title"),
     DIALOG_CREATE_DESCRIPTION("dialog.create.description"),
+    DIALOG_CREATE_VARIATION("dialog.create.variation"),
     DIALOG_CREATE_NAME_INPUT_LABEL("dialog.create.name-input-label"),
     DIALOG_CREATE_DEFAULT_NAME("dialog.create.default-name"),
 
@@ -66,7 +67,11 @@ public enum MessageKey {
 
     ERROR_INVALID_NAME("error.invalid-name"),
     ERROR_SPACE_NOT_EMPTY("error.space-not-empty"),
+    ERROR_CLEARANCE_INSUFFICIENT("error.clearance-insufficient"),
     ERROR_ALREADY_EXISTS("error.already-exists"),
+    ERROR_LIMIT_REACHED_GLOBAL("error.limit-reached-global"),
+    ERROR_LIMIT_REACHED_VARIATION("error.limit-reached-variation"),
+    ERROR_PLACEMENT_COOLDOWN("error.placement-cooldown"),
     ERROR_MISSING_ITEM("error.missing-item"),
     ERROR_NOT_FOUND("error.not-found"),
     ERROR_NOT_OWNER("error.not-owner"),
@@ -80,6 +85,7 @@ public enum MessageKey {
 
     COMMAND_GIVEN_ITEM("command.given-item"),
     COMMAND_CONSOLE_SPECIFY_PLAYER("command.console-specify-player"),
+    COMMAND_UNKNOWN_VARIATION("command.unknown-variation"),
     COMMAND_RELOADED("command.reloaded");
 
     private final String path;

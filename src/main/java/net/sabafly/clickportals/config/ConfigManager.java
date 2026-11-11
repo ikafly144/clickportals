@@ -76,6 +76,17 @@ public final class ConfigManager {
             }
 
             final CommentedConfigurationNode root = loader.load();
+            if (root.hasChild("recipe") || root.node("hologram").hasChild("display-block")) {
+                logger.info("Notice: Legacy 'recipe' and/or 'hologram.display-block' settings in config.yml "
+                        + "have moved to plugins/ClickPortals/aetheryte/default.yml in v0.3.");
+                if (parent != null) {
+                    net.sabafly.clickportals.variation.VariationLoader.migrateLegacyConfig(
+                            root,
+                            parent.resolve("aetheryte"),
+                            logger
+                    );
+                }
+            }
             final PluginConfig parsed = root.get(PluginConfig.class);
             final PluginConfig validated = (parsed == null ? PluginConfig.defaultConfig() : parsed).validated(logger);
             currentConfig = validated;

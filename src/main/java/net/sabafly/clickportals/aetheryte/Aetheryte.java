@@ -17,13 +17,15 @@
  */
 package net.sabafly.clickportals.aetheryte;
 
+import java.util.Locale;
 import java.util.OptionalDouble;
 import java.util.UUID;
 import org.bukkit.Location;
 import org.bukkit.World;
+import org.jspecify.annotations.Nullable;
 
 /**
- * Immutable domain model representing a placed Aetheryte warp point (#6, #12).
+ * Immutable domain model representing a placed Aetheryte warp point (#6, #12, #37).
  */
 public record Aetheryte(
         UUID id,
@@ -34,8 +36,48 @@ public record Aetheryte(
         int blockY,
         int blockZ,
         UUID ownerId,
-        long createdAt
+        long createdAt,
+        String variation
 ) {
+
+    /**
+     * Identifier of the default Aetheryte variation (#37).
+     */
+    public static final String DEFAULT_VARIATION = "default";
+
+    /**
+     * Compact constructor normalizing null or blank variation identifiers to {@link #DEFAULT_VARIATION}.
+     */
+    public Aetheryte {
+        variation = normalizeVariation(variation);
+    }
+
+    /**
+     * Convenience constructor using {@link #DEFAULT_VARIATION}.
+     */
+    public Aetheryte(
+            final UUID id,
+            final String name,
+            final UUID worldId,
+            final String worldName,
+            final int blockX,
+            final int blockY,
+            final int blockZ,
+            final UUID ownerId,
+            final long createdAt
+    ) {
+        this(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt, DEFAULT_VARIATION);
+    }
+
+    /**
+     * Normalizes a variation identifier to lowercase or returns {@link #DEFAULT_VARIATION} if null/blank.
+     */
+    public static String normalizeVariation(@Nullable final String raw) {
+        if (raw == null || raw.isBlank()) {
+            return DEFAULT_VARIATION;
+        }
+        return raw.strip().toLowerCase(Locale.ROOT);
+    }
 
     /**
      * Returns the {@link BlockPosKey} corresponding to this Aetheryte's block coordinates.
