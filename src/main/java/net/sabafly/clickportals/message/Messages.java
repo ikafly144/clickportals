@@ -566,6 +566,66 @@ public final class Messages {
     }
 
     /**
+     * Returns the variation line for the Aetheryte creation dialog (#37).
+     */
+    public Component createDialogVariation(final CommandSender viewer, final String variationDisplayNameMiniMessage) {
+        final Component variationComponent = MINI_MESSAGE.deserialize(variationDisplayNameMiniMessage);
+        return get(viewer, MessageKey.DIALOG_CREATE_VARIATION, Placeholder.component("variation", variationComponent));
+    }
+
+    /**
+     * Returns the error message when the surrounding clearance volume is obstructed (#42).
+     */
+    public Component errorClearanceInsufficient(final CommandSender viewer, final int horizontalSpan, final int height) {
+        return get(
+                viewer,
+                MessageKey.ERROR_CLEARANCE_INSUFFICIENT,
+                Placeholder.unparsed("width", Integer.toString(horizontalSpan)),
+                Placeholder.unparsed("height", Integer.toString(height))
+        );
+    }
+
+    /**
+     * Returns the error message when the global per-player Aetheryte limit is reached (#43).
+     */
+    public Component errorLimitReachedGlobal(final CommandSender viewer, final int max) {
+        return get(viewer, MessageKey.ERROR_LIMIT_REACHED_GLOBAL, Placeholder.unparsed("max", Integer.toString(max)));
+    }
+
+    /**
+     * Returns the error message when the per-variation placement limit is reached (#43).
+     */
+    public Component errorLimitReachedVariation(
+            final CommandSender viewer,
+            final String variationDisplayNameMiniMessage,
+            final int max
+    ) {
+        final Component variationComponent = MINI_MESSAGE.deserialize(variationDisplayNameMiniMessage);
+        return get(
+                viewer,
+                MessageKey.ERROR_LIMIT_REACHED_VARIATION,
+                Placeholder.component("variation", variationComponent),
+                Placeholder.unparsed("max", Integer.toString(max))
+        );
+    }
+
+    /**
+     * Returns the error message when the player is on placement cooldown (#43).
+     */
+    public Component errorPlacementCooldown(final CommandSender viewer, final int remainingTicks) {
+        final double secondsValue = Math.max(0.1, remainingTicks / 20.0);
+        final String formattedSeconds = String.format(Locale.ROOT, "%.1f", secondsValue);
+        return get(viewer, MessageKey.ERROR_PLACEMENT_COOLDOWN, Placeholder.unparsed("seconds", formattedSeconds));
+    }
+
+    /**
+     * Returns the error message when an unknown variation identifier is given to a command (#37).
+     */
+    public Component commandUnknownVariation(final CommandSender viewer, final String variationId) {
+        return get(viewer, MessageKey.COMMAND_UNKNOWN_VARIATION, Placeholder.unparsed("variation", variationId));
+    }
+
+    /**
      * Returns the confirmation message when giving Aetheryte items via command.
      */
     public Component commandGivenItem(final CommandSender viewer, final String playerName, final int amount) {

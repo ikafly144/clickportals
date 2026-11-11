@@ -52,7 +52,7 @@ public final class Permissions {
     public static final String COMMAND_RELOAD = "clickportals.command.reload";
 
     /**
-     * Allows bypassing per-player Aetheryte placement limits (default: {@code op}; reserved for #43, currently inactive).
+     * Allows bypassing per-player Aetheryte placement limits and placement cooldowns (default: {@code op}).
      */
     public static final String BYPASS_LIMIT = "clickportals.bypass.limit";
 

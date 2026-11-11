@@ -31,14 +31,19 @@ import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.dialog.AetheryteDialogFactory;
+import net.sabafly.clickportals.message.Messages;
+import net.sabafly.clickportals.permission.Permissions;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation;
+import net.sabafly.clickportals.variation.VariationRegistry;
 import net.sabafly.clickportals.visual.HologramService;
 import net.sabafly.clickportals.visual.NoopHologramService;
 import org.bukkit.Bukkit;
@@ -60,6 +65,7 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataContainer;
+import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.Plugin;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -275,5 +281,52 @@ class AetheryteListenerTest {
         customListener.onPlayerQuit(quitEvent);
 
         verify(mockHologramService).removePlayer(playerId);
+    }
+
+    @Test
+    void placementCooldownIsComputedFromPlayerPdcAndSendsClientPacketUnlessBypassed() {
+        final AtomicLong currentTick = new AtomicLong(1000L);
+        final AtomicInteger sentPacketTicks = new AtomicInteger(0);
+        final AetheryteService service = new AetheryteService(
+                plugin,
+                registry,
+                VariationRegistry.defaults(),
+                NoopHologramService.INSTANCE,
+                Messages.defaults(),
+                () -> -1,
+                () -> 100,
+                p -> currentTick.get(),
+                (p, ticks) -> sentPacketTicks.set(ticks),
+                (p, src, dst) -> WarpEvaluation.permitted(Component.empty())
+        );
+
+        final Player player = mock(Player.class);
+        final PersistentDataContainer pdc = mock(PersistentDataContainer.class);
+        when(player.getPersistentDataContainer()).thenReturn(pdc);
+
+        // No prior placement recorded -> remaining cooldown is 0
+        assertThat(service.checkPlacementCooldown(player, Aetheryte.DEFAULT_VARIATION)).isEmpty();
+
+        // Record placement at tick 1000 (default cooldown = 100 ticks)
+        service.recordPlacementCooldown(player, Aetheryte.DEFAULT_VARIATION);
+        verify(pdc).set(AetheryteService.LAST_PLACE_TICK_KEY, PersistentDataType.LONG, 1000L);
+        assertThat(sentPacketTicks.get()).isEqualTo(100);
+
+        // At tick 1040, 60 ticks remain -> placement is rejected with error component and re-syncs 60 tick packet
+        when(pdc.get(AetheryteService.LAST_PLACE_TICK_KEY, PersistentDataType.LONG)).thenReturn(1000L);
+        currentTick.set(1040L);
+        assertThat(service.getRemainingCooldownTicks(player, Aetheryte.DEFAULT_VARIATION)).isEqualTo(60);
+        assertThat(service.checkPlacementCooldown(player, Aetheryte.DEFAULT_VARIATION)).isPresent();
+        assertThat(sentPacketTicks.get()).isEqualTo(60);
+
+        // Bypass permission skips cooldown check
+        when(player.hasPermission(Permissions.BYPASS_LIMIT)).thenReturn(true);
+        assertThat(service.checkPlacementCooldown(player, Aetheryte.DEFAULT_VARIATION)).isEmpty();
+
+        // At tick 1100, cooldown has expired -> allowed even without bypass
+        when(player.hasPermission(Permissions.BYPASS_LIMIT)).thenReturn(false);
+        currentTick.set(1100L);
+        assertThat(service.getRemainingCooldownTicks(player, Aetheryte.DEFAULT_VARIATION)).isZero();
+        assertThat(service.checkPlacementCooldown(player, Aetheryte.DEFAULT_VARIATION)).isEmpty();
     }
 }

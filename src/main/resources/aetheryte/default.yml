@@ -1,0 +1,84 @@
+# ClickPortals Aetheryte Variation (default)
+# Place additional <type>.yml files in this directory to create custom Aetheryte variations.
+
+# Display name of this Aetheryte variation in MiniMessage format
+display-name: "<aqua>Aetheryte</aqua>"
+
+# Creation item settings for this variation
+item:
+  # Base Bukkit Material for the creation item (vanilla item components are masked)
+  material: COMPASS
+  # Custom item display name in MiniMessage format (leave empty to use localized default from lang/*.yml)
+  name: ""
+  # Custom item lore lines in MiniMessage format (leave empty to use localized default from lang/*.yml)
+  lore: []
+  # Optional resource pack item_model key (e.g. myserver:aetheryte)
+  item-model: ""
+  # Optional minecraft:custom_model_data component values
+  custom-model-data:
+    floats: []
+    flags: []
+    strings: []
+    colors: []
+  # Whether to apply enchantment glint to the creation item
+  glint: true
+
+# Crafting recipe settings for this variation
+recipe:
+  # Whether this variation can be crafted
+  enabled: true
+  # 3x3 crafting grid shape (1-3 rows, 1-3 characters per row)
+  shape:
+    - SSS
+    - SAS
+    - SSS
+  # Mapping of shape characters to Bukkit Material names
+  ingredients:
+    S: CHISELED_STONE_BRICKS
+    A: AMETHYST_SHARD
+
+# Client-side visual model settings (BLOCK_DISPLAY)
+model:
+  # Block state string displayed via BLOCK_DISPLAY (e.g. minecraft:lodestone)
+  block: minecraft:lodestone
+  # 3D scale vector [x, y, z] applied to the display entity
+  scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  # 3D translation offset [x, y, z] applied to the display entity
+  translation:
+    - 0.0
+    - 0.0
+    - 0.0
+  # Vertical offset in blocks above the Aetheryte origin for the floating name hologram
+  name-height: 1.35
+
+# Client-side INTERACTION entity hitbox dimensions in blocks
+hitbox:
+  width: 1.0
+  height: 1.0
+
+# Teleport destination spread and orientation settings
+teleport:
+  # Minimum horizontal distance radius in blocks from the Aetheryte to land (inner ring radius, 0..max-radius)
+  min-radius: 0
+  # Maximum horizontal distance radius in blocks around the Aetheryte to search for a safe landing spot (outer ring radius, 0 = center/top, max 8)
+  max-radius: 0
+  # Whether to orient the arriving player to face toward the Aetheryte when landing in the surrounding ring
+  face-aetheryte: true
+
+# Placement validation and surrounding clearance requirements
+placement:
+  clearance:
+    # Horizontal radius in blocks around the origin that must be replaceable/empty (0 = origin column only, max 8)
+    radius: 0
+    # Vertical height in blocks from the origin upward that must be replaceable/empty (1-16, default 2)
+    height: 2
+
+# Per-player placement limit and cooldown for this variation
+limit:
+  # Maximum number of Aetherytes of this variation a single player may own (-1 for unlimited)
+  max-per-player: -1
+  # Cooldown in ticks after placing this variation (-1 to use global limits.placement-cooldown-ticks, 0 to disable)
+  cooldown-ticks: -1

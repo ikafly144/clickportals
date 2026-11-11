@@ -24,10 +24,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import org.bukkit.Material;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.Logger;
@@ -48,17 +45,19 @@ class PluginConfigTest {
         assertThat(loaded).isEqualTo(PluginConfig.defaultConfig());
         assertThat(loaded.defaultLocale()).isEqualTo(Locale.US);
         assertThat(loaded.useClientLocale()).isTrue();
-        assertThat(loaded.itemMaterial()).isEqualTo(Material.COMPASS);
-        assertThat(loaded.displayBlock()).isEqualTo("minecraft:lodestone");
+        assertThat(loaded.hologramEnabled()).isTrue();
+        assertThat(loaded.hologramViewDistance()).isEqualTo(32.0);
+        assertThat(loaded.maxAetherytesPerPlayer()).isEqualTo(-1);
+        assertThat(loaded.placementCooldownTicks()).isEqualTo(100);
 
         final String rawYaml = Files.readString(configFile, StandardCharsets.UTF_8);
         assertThat(rawYaml)
                 .contains("ClickPortals Configuration")
                 .contains("Language and localization settings")
                 .contains("default-locale: en_US")
-                .contains("Crafting recipe settings for the Aetheryte creation item")
-                .contains("item-material: COMPASS")
-                .contains("display-block: minecraft:lodestone");
+                .contains("Global per-player Aetheryte placement limit and cooldown settings")
+                .contains("max-aetherytes-per-player: -1")
+                .contains("placement-cooldown-ticks: 100");
     }
 
     @Test
@@ -68,20 +67,12 @@ class PluginConfigTest {
                 language:
                   default-locale: ja_JP
                   use-client-locale: false
-                recipe:
-                  enabled: true
-                  item-material: ECHO_SHARD
-                  shape:
-                    - " G "
-                    - "GAG"
-                    - " G "
-                  ingredients:
-                    G: GOLD_INGOT
-                    A: AMETHYST_SHARD
                 hologram:
                   enabled: true
                   view-distance: 48.0
-                  display-block: minecraft:Lodestone
+                limits:
+                  max-aetherytes-per-player: 5
+                  placement-cooldown-ticks: 200
                 """, StandardCharsets.UTF_8);
 
         final ConfigManager manager = new ConfigManager(configFile, mock(Logger.class));
@@ -89,63 +80,34 @@ class PluginConfigTest {
 
         assertThat(config.defaultLocale()).isEqualTo(Locale.JAPAN);
         assertThat(config.useClientLocale()).isFalse();
-        assertThat(config.itemMaterial()).isEqualTo(Material.ECHO_SHARD);
-        assertThat(config.recipeShape()).containsExactly(" G ", "GAG", " G ");
-        assertThat(config.recipeIngredients()).containsExactlyEntriesOf(Map.of(
-                'G', Material.GOLD_INGOT,
-                'A', Material.AMETHYST_SHARD
-        ));
         assertThat(config.hologramViewDistance()).isEqualTo(48.0);
+        assertThat(config.maxAetherytesPerPlayer()).isEqualTo(5);
+        assertThat(config.placementCooldownTicks()).isEqualTo(200);
 
         final String savedYaml = Files.readString(configFile, StandardCharsets.UTF_8);
-        assertThat(savedYaml).contains("# Whether the crafting recipe is enabled");
+        assertThat(savedYaml).contains("# Maximum total Aetherytes a single player may own across all variations");
     }
 
     @Test
-    void mismatchedShapeAndIngredientsFallsBackToDefaults() throws IOException {
+    void invalidValuesFallBackToSafeDefaults() throws IOException {
         final Path configFile = tempDir.resolve("config.yml");
         Files.writeString(configFile, """
                 language:
                   default-locale: ""
-                recipe:
-                  enabled: true
-                  item-material: INVALID_MATERIAL_NAME
-                  shape:
-                    - "XXX"
-                    - "XXX"
-                    - "XXX"
-                  ingredients:
-                    X: NOT_A_VALID_MATERIAL
                 hologram:
                   enabled: true
                   view-distance: 1.0
+                limits:
+                  max-aetherytes-per-player: -99
+                  placement-cooldown-ticks: -50
                 """, StandardCharsets.UTF_8);
 
         final ConfigManager manager = new ConfigManager(configFile, mock(Logger.class));
         final PluginConfig config = manager.load();
 
         assertThat(config.defaultLocale()).isEqualTo(Locale.US);
-        assertThat(config.itemMaterial()).isEqualTo(Material.COMPASS);
-        assertThat(config.recipeShape()).isEqualTo(PluginConfig.defaultConfig().recipeShape());
-        assertThat(config.recipeIngredients()).isEqualTo(PluginConfig.defaultConfig().recipeIngredients());
         assertThat(config.hologramViewDistance()).isEqualTo(4.0);
-    }
-
-    @Test
-    void nonRectangularShapeFallsBackToDefaults() {
-        final PluginConfig raw = new PluginConfig(
-                new PluginConfig.RecipeSection(
-                        true,
-                        "COMPASS",
-                        List.of("SS", "SAS", "S"),
-                        Map.of("S", "CHISELED_STONE_BRICKS", "A", "AMETHYST_SHARD")
-                ),
-                PluginConfig.HologramSection.defaults()
-        );
-
-        final PluginConfig validated = raw.validated(mock(Logger.class));
-
-        assertThat(validated.recipeShape()).isEqualTo(PluginConfig.defaultConfig().recipeShape());
-        assertThat(validated.recipeIngredients()).isEqualTo(PluginConfig.defaultConfig().recipeIngredients());
+        assertThat(config.maxAetherytesPerPlayer()).isEqualTo(-1);
+        assertThat(config.placementCooldownTicks()).isEqualTo(0);
     }
 }

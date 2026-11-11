@@ -31,10 +31,13 @@ import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.protocol.player.InteractionHand;
 import com.github.retrooper.packetevents.protocol.world.states.WrappedBlockState;
 import com.github.retrooper.packetevents.protocol.world.states.type.StateTypes;
+import com.github.retrooper.packetevents.resources.ResourceLocation;
 import com.github.retrooper.packetevents.util.Vector3d;
+import com.github.retrooper.packetevents.util.Vector3f;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientInteractEntity;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerDestroyEntities;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSetCooldown;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnEntity;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
@@ -47,17 +50,25 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import net.kyori.adventure.text.Component;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.config.PluginConfig;
 import net.sabafly.clickportals.message.Messages;
+import net.sabafly.clickportals.variation.AetheryteVariation;
+import net.sabafly.clickportals.variation.AetheryteVariation.HitboxSection;
+import net.sabafly.clickportals.variation.AetheryteVariation.ModelSection;
+import net.sabafly.clickportals.variation.VariationRegistry;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.jspecify.annotations.Nullable;
 
 /**
  * PacketEvents-backed implementation of {@link HologramService} that spawns client-only
- * {@code BLOCK_DISPLAY}, {@code TEXT_DISPLAY}, and {@code INTERACTION} entities for placed Aetherytes (#6).
+ * {@code BLOCK_DISPLAY}, {@code TEXT_DISPLAY}, and {@code INTERACTION} entities
+ * for placed Aetherytes (#6, #40).
  */
 public final class PacketEventsHologramService implements HologramService {
 
+    private static final int DISPLAY_TRANSLATION_INDEX = 11;
+    private static final int DISPLAY_SCALE_INDEX = 12;
     private static final int DISPLAY_BILLBOARD_INDEX = 15;
     private static final byte BILLBOARD_CENTER = 3;
     private static final int DISPLAY_VIEW_RANGE_INDEX = 17;
@@ -70,18 +81,19 @@ public final class PacketEventsHologramService implements HologramService {
     private static final int INTERACTION_WIDTH_INDEX = 8;
     private static final int INTERACTION_HEIGHT_INDEX = 9;
     private static final int INTERACTION_RESPONSIVE_INDEX = 10;
-    private static final float INTERACTION_BOX_SIZE = 1.0f;
     private static final long INTERACT_DEBOUNCE_MS = 150L;
+    private static final ResourceLocation COOLDOWN_GROUP_RESOURCE =
+            new ResourceLocation("clickportals", "aetheryte_place");
 
     /**
      * Bundle of client-side entity IDs allocated for a single Aetheryte.
      */
-    record ClientEntitySet(int blockDisplayId, int textDisplayId, int interactionId) {
+    record ClientEntitySet(int bodyDisplayId, int textDisplayId, int interactionId) {
         /**
          * Returns the three allocated entity IDs as an int array.
          */
         int[] toArray() {
-            return new int[]{blockDisplayId, textDisplayId, interactionId};
+            return new int[]{bodyDisplayId, textDisplayId, interactionId};
         }
     }
 
@@ -89,45 +101,39 @@ public final class PacketEventsHologramService implements HologramService {
     private final Map<UUID, ClientEntitySet> entitiesByAetheryte = new ConcurrentHashMap<>();
     private final Map<Integer, UUID> aetheryteByEntityId = new ConcurrentHashMap<>();
     private final Map<UUID, Long> lastInteractMillisByPlayer = new ConcurrentHashMap<>();
+    private final Map<String, Integer> blockStateIdCache = new ConcurrentHashMap<>();
+    private final VariationRegistry variationRegistry;
     private final Messages messages;
     private volatile float viewRangeMultiplier;
-    private volatile int resolvedBlockStateId;
     private volatile @Nullable BiConsumer<Player, UUID> interactionHandler;
     private @Nullable PacketListenerCommon registeredListener;
 
     /**
-     * Creates a new {@link PacketEventsHologramService} with the default Lodestone display block.
+     * Creates a new {@link PacketEventsHologramService} with default variations and messages.
      */
     public PacketEventsHologramService(final double viewDistanceBlocks) {
-        this(viewDistanceBlocks, "minecraft:lodestone", Messages.defaults());
+        this(viewDistanceBlocks, VariationRegistry.defaults(), Messages.defaults());
     }
 
     /**
-     * Creates a new {@link PacketEventsHologramService} with the given view distance and display block state string.
-     */
-    public PacketEventsHologramService(final double viewDistanceBlocks, final String displayBlockStateString) {
-        this(viewDistanceBlocks, displayBlockStateString, Messages.defaults());
-    }
-
-    /**
-     * Creates a new {@link PacketEventsHologramService} with the given view distance, display block state string,
+     * Creates a new {@link PacketEventsHologramService} with the given view distance, {@link VariationRegistry},
      * and {@link Messages} service.
      */
     public PacketEventsHologramService(
             final double viewDistanceBlocks,
-            final String displayBlockStateString,
+            final VariationRegistry variationRegistry,
             final Messages messages
     ) {
+        this.variationRegistry = variationRegistry;
         this.messages = messages;
         this.viewRangeMultiplier = (float) Math.max(0.05, viewDistanceBlocks / BASE_VIEW_RANGE_BLOCKS);
-        this.resolvedBlockStateId = resolveBlockStateGlobalId(displayBlockStateString);
         registerPacketListenerIfReady();
     }
 
     @Override
-    public void updateSettings(final net.sabafly.clickportals.config.PluginConfig config) {
+    public void updateSettings(final PluginConfig config) {
         this.viewRangeMultiplier = (float) Math.max(0.05, config.hologramViewDistance() / BASE_VIEW_RANGE_BLOCKS);
-        this.resolvedBlockStateId = resolveBlockStateGlobalId(config.displayBlock());
+        this.blockStateIdCache.clear();
     }
 
     /**
@@ -212,13 +218,13 @@ public final class PacketEventsHologramService implements HologramService {
      */
     private ClientEntitySet getOrCreateEntitySet(final UUID aetheryteId) {
         return entitiesByAetheryte.computeIfAbsent(aetheryteId, id -> {
-            final int blockId = entityIdGenerator.getAndIncrement();
+            final int bodyId = entityIdGenerator.getAndIncrement();
             final int textId = entityIdGenerator.getAndIncrement();
             final int interactionId = entityIdGenerator.getAndIncrement();
-            aetheryteByEntityId.put(blockId, id);
+            aetheryteByEntityId.put(bodyId, id);
             aetheryteByEntityId.put(textId, id);
             aetheryteByEntityId.put(interactionId, id);
-            return new ClientEntitySet(blockId, textId, interactionId);
+            return new ClientEntitySet(bodyId, textId, interactionId);
         });
     }
 
@@ -256,7 +262,7 @@ public final class PacketEventsHologramService implements HologramService {
         if (set == null) {
             return;
         }
-        aetheryteByEntityId.remove(set.blockDisplayId());
+        aetheryteByEntityId.remove(set.bodyDisplayId());
         aetheryteByEntityId.remove(set.textDisplayId());
         aetheryteByEntityId.remove(set.interactionId());
 
@@ -293,6 +299,7 @@ public final class PacketEventsHologramService implements HologramService {
             registeredListener = null;
         }
         lastInteractMillisByPlayer.clear();
+        blockStateIdCache.clear();
         if (entitiesByAetheryte.isEmpty()) {
             return;
         }
@@ -321,17 +328,42 @@ public final class PacketEventsHologramService implements HologramService {
      * Parses a block state string once into its PacketEvents global block state ID, warning and falling back
      * to Lodestone if invalid.
      */
-    private static int resolveBlockStateGlobalId(final String stateString) {
-        try {
-            final WrappedBlockState parsed = WrappedBlockState.getByString(stateString);
-            if (parsed != null) {
-                return parsed.getGlobalId();
+    private int resolveBlockStateGlobalId(final String stateString) {
+        return blockStateIdCache.computeIfAbsent(stateString, raw -> {
+            try {
+                final WrappedBlockState parsed = WrappedBlockState.getByString(raw);
+                if (parsed != null) {
+                    return parsed.getGlobalId();
+                }
+            } catch (final Exception ignored) {
+                // Fall through to default Lodestone state
             }
-        } catch (final Exception ignored) {
-            // Fall through to default Lodestone state
+            Bukkit.getLogger().warning("Invalid model.block '" + raw + "'; falling back to minecraft:lodestone");
+            return WrappedBlockState.getDefaultState(StateTypes.LODESTONE).getGlobalId();
+        });
+    }
+
+    /**
+     * Sends a client-side {@code SET_COOLDOWN} packet via PacketEvents for the Aetheryte creation item cooldown
+     * group (`clickportals:aetheryte_place`) (#43).
+     */
+    public static void sendPlacementCooldown(final Player player, final int cooldownTicks) {
+        if (cooldownTicks < 0) {
+            return;
         }
-        Bukkit.getLogger().warning("Invalid hologram.display-block '" + stateString + "'; falling back to minecraft:lodestone");
-        return WrappedBlockState.getDefaultState(StateTypes.LODESTONE).getGlobalId();
+        try {
+            final PacketEventsAPI<?> api = PacketEvents.getAPI();
+            if (api == null || !api.isInitialized()) {
+                return;
+            }
+            final WrapperPlayServerSetCooldown packet = new WrapperPlayServerSetCooldown(
+                    COOLDOWN_GROUP_RESOURCE,
+                    cooldownTicks
+            );
+            api.getPlayerManager().sendPacket(player, packet);
+        } catch (final Throwable ignored) {
+            // PacketEvents is not initialized in unit test environments
+        }
     }
 
     /**
@@ -342,34 +374,58 @@ public final class PacketEventsHologramService implements HologramService {
     }
 
     /**
+     * Converts a 3-element double list into a PacketEvents {@link Vector3f}.
+     */
+    private static Vector3f toVector3f(final List<Double> values, final float fallback) {
+        if (values.size() != 3) {
+            return new Vector3f(fallback, fallback, fallback);
+        }
+        return new Vector3f(
+                values.get(0).floatValue(),
+                values.get(1).floatValue(),
+                values.get(2).floatValue()
+        );
+    }
+
+    /**
      * Sends the spawn and metadata packets for `BLOCK_DISPLAY`, `TEXT_DISPLAY`, and `INTERACTION`
-     * to the given player.
+     * to the given player (#40).
      */
     private void sendSpawnPackets(final PacketEventsAPI<?> api, final Player player, final Aetheryte aetheryte) {
         final ClientEntitySet set = getOrCreateEntitySet(aetheryte.id());
+        final AetheryteVariation variation = variationRegistry.getOrDefault(aetheryte.variation());
+        final ModelSection model = variation.model();
+        final HitboxSection hitbox = variation.hitbox();
 
-        // 1. BLOCK_DISPLAY (visual Aetheryte body aligned to block origin)
-        final Vector3d blockOrigin = new Vector3d(aetheryte.blockX(), aetheryte.blockY(), aetheryte.blockZ());
-        final WrapperPlayServerSpawnEntity blockSpawn = new WrapperPlayServerSpawnEntity(
-                set.blockDisplayId(),
-                Optional.of(deriveChildUuid(aetheryte.id(), "block")),
+        final Vector3f translation = toVector3f(model.translation(), 0.0f);
+        final Vector3f scale = toVector3f(model.scale(), 1.0f);
+
+        // 1. Visual Aetheryte body: BLOCK_DISPLAY
+        final Vector3d bodyPosition = new Vector3d(aetheryte.blockX(), aetheryte.blockY(), aetheryte.blockZ());
+        final int blockStateId = resolveBlockStateGlobalId(model.block());
+        final List<EntityData<?>> bodyMeta = List.of(
+                new EntityData<>(DISPLAY_TRANSLATION_INDEX, EntityDataTypes.VECTOR3F, translation),
+                new EntityData<>(DISPLAY_SCALE_INDEX, EntityDataTypes.VECTOR3F, scale),
+                new EntityData<>(DISPLAY_VIEW_RANGE_INDEX, EntityDataTypes.FLOAT, viewRangeMultiplier),
+                new EntityData<>(BLOCK_DISPLAY_STATE_INDEX, EntityDataTypes.BLOCK_STATE, blockStateId)
+        );
+
+        final WrapperPlayServerSpawnEntity bodySpawn = new WrapperPlayServerSpawnEntity(
+                set.bodyDisplayId(),
+                Optional.of(deriveChildUuid(aetheryte.id(), "body")),
                 EntityTypes.BLOCK_DISPLAY,
-                blockOrigin,
+                bodyPosition,
                 0.0f,
                 0.0f,
                 0.0f,
                 0,
                 Optional.empty()
         );
-        final List<EntityData<?>> blockMeta = List.of(
-                new EntityData<>(DISPLAY_VIEW_RANGE_INDEX, EntityDataTypes.FLOAT, viewRangeMultiplier),
-                new EntityData<>(BLOCK_DISPLAY_STATE_INDEX, EntityDataTypes.BLOCK_STATE, resolvedBlockStateId)
-        );
 
         // 2. TEXT_DISPLAY (floating name hologram above the Aetheryte)
         final Vector3d textPosition = new Vector3d(
                 aetheryte.blockX() + 0.5,
-                aetheryte.blockY() + 1.35,
+                aetheryte.blockY() + model.nameHeight(),
                 aetheryte.blockZ() + 0.5
         );
         final WrapperPlayServerSpawnEntity textSpawn = new WrapperPlayServerSpawnEntity(
@@ -391,7 +447,7 @@ public final class PacketEventsHologramService implements HologramService {
                 new EntityData<>(TEXT_DISPLAY_STYLE_FLAGS_INDEX, EntityDataTypes.BYTE, STYLE_FLAG_SHADOW)
         );
 
-        // 3. INTERACTION (client-side 1x1x1 hitbox for right-click detection)
+        // 3. INTERACTION (client-side hitbox with variation-configured width and height) (#40)
         final Vector3d interactionPosition = new Vector3d(
                 aetheryte.blockX() + 0.5,
                 aetheryte.blockY(),
@@ -408,14 +464,16 @@ public final class PacketEventsHologramService implements HologramService {
                 0,
                 Optional.empty()
         );
+        final float validWidth = hitbox.width() > 0.0f ? hitbox.width() : 1.0f;
+        final float validHeight = hitbox.height() > 0.0f ? hitbox.height() : 1.0f;
         final List<EntityData<?>> interactionMeta = List.of(
-                new EntityData<>(INTERACTION_WIDTH_INDEX, EntityDataTypes.FLOAT, INTERACTION_BOX_SIZE),
-                new EntityData<>(INTERACTION_HEIGHT_INDEX, EntityDataTypes.FLOAT, INTERACTION_BOX_SIZE),
+                new EntityData<>(INTERACTION_WIDTH_INDEX, EntityDataTypes.FLOAT, validWidth),
+                new EntityData<>(INTERACTION_HEIGHT_INDEX, EntityDataTypes.FLOAT, validHeight),
                 new EntityData<>(INTERACTION_RESPONSIVE_INDEX, EntityDataTypes.BOOLEAN, Boolean.TRUE)
         );
 
-        api.getPlayerManager().sendPacket(player, blockSpawn);
-        api.getPlayerManager().sendPacket(player, new WrapperPlayServerEntityMetadata(set.blockDisplayId(), blockMeta));
+        api.getPlayerManager().sendPacket(player, bodySpawn);
+        api.getPlayerManager().sendPacket(player, new WrapperPlayServerEntityMetadata(set.bodyDisplayId(), bodyMeta));
 
         api.getPlayerManager().sendPacket(player, textSpawn);
         api.getPlayerManager().sendPacket(player, new WrapperPlayServerEntityMetadata(set.textDisplayId(), textMeta));

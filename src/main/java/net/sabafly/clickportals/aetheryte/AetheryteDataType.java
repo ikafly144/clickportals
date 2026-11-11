@@ -25,7 +25,7 @@ import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 
 /**
- * {@link PersistentDataType} for serializing an {@link Aetheryte} into a {@link PersistentDataContainer}.
+ * {@link PersistentDataType} for serializing an {@link Aetheryte} into a {@link PersistentDataContainer} (#6, #21, #37).
  */
 public final class AetheryteDataType implements PersistentDataType<PersistentDataContainer, Aetheryte> {
 
@@ -39,6 +39,7 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
     private static final NamespacedKey KEY_Z = new NamespacedKey(NAMESPACE, "z");
     private static final NamespacedKey KEY_OWNER_ID = new NamespacedKey(NAMESPACE, "owner_id");
     private static final NamespacedKey KEY_CREATED_AT = new NamespacedKey(NAMESPACE, "created_at");
+    private static final NamespacedKey KEY_VARIATION = new NamespacedKey(NAMESPACE, "variation");
 
     public static final AetheryteDataType INSTANCE = new AetheryteDataType();
 
@@ -67,6 +68,7 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
         container.set(KEY_Z, PersistentDataType.INTEGER, complex.blockZ());
         container.set(KEY_OWNER_ID, PersistentDataType.STRING, complex.ownerId().toString());
         container.set(KEY_CREATED_AT, PersistentDataType.LONG, complex.createdAt());
+        container.set(KEY_VARIATION, PersistentDataType.STRING, complex.variation());
         return container;
     }
 
@@ -81,6 +83,7 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
         final Integer z = Objects.requireNonNull(primitive.get(KEY_Z, PersistentDataType.INTEGER), "Missing z");
         final String ownerIdStr = Objects.requireNonNull(primitive.get(KEY_OWNER_ID, PersistentDataType.STRING), "Missing owner_id");
         final Long createdAt = Objects.requireNonNull(primitive.get(KEY_CREATED_AT, PersistentDataType.LONG), "Missing created_at");
+        final String variation = primitive.get(KEY_VARIATION, PersistentDataType.STRING);
 
         return new Aetheryte(
                 UUID.fromString(idStr),
@@ -91,7 +94,8 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
                 y,
                 z,
                 UUID.fromString(ownerIdStr),
-                createdAt
+                createdAt,
+                Aetheryte.normalizeVariation(variation)
         );
     }
 }

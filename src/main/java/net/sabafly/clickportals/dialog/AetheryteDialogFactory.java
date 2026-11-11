@@ -34,11 +34,12 @@ import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation;
+import net.sabafly.clickportals.variation.AetheryteVariation;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 
 /**
- * Paper Dialog API factory for Aetheryte creation, warp destination selection, and removal (#13, #18, #19).
+ * Paper Dialog API factory for Aetheryte creation, warp destination selection, and removal (#13, #18, #19, #37).
  */
 @SuppressWarnings("UnstableApiUsage")
 public final class AetheryteDialogFactory {
@@ -68,7 +69,7 @@ public final class AetheryteDialogFactory {
     }
 
     /**
-     * Opens the Aetheryte creation dialog asking the player to input a name.
+     * Opens the Aetheryte creation dialog for the {@code default} variation.
      */
     public void openCreateDialog(
             final Player player,
@@ -77,6 +78,22 @@ public final class AetheryteDialogFactory {
             final int blockY,
             final int blockZ
     ) {
+        openCreateDialog(player, world, blockX, blockY, blockZ, Aetheryte.DEFAULT_VARIATION);
+    }
+
+    /**
+     * Opens the Aetheryte creation dialog asking the player to input a name for the specified variation (#37).
+     */
+    public void openCreateDialog(
+            final Player player,
+            final World world,
+            final int blockX,
+            final int blockY,
+            final int blockZ,
+            final String variationId
+    ) {
+        final String normalizedVar = Aetheryte.normalizeVariation(variationId);
+        final AetheryteVariation variation = service.variationRegistry().getOrDefault(normalizedVar);
         final String defaultName = messages.createDialogDefaultName(player);
 
         final ActionButton confirmButton = ActionButton.builder(messages.buttonConfirmCreate(player))
@@ -90,7 +107,7 @@ public final class AetheryteDialogFactory {
                         messages.send(clicker, MessageKey.ERROR_INVALID_NAME);
                         return;
                     }
-                    service.placeAetheryte(clicker, world, blockX, blockY, blockZ, enteredName);
+                    service.placeAetheryte(clicker, world, blockX, blockY, blockZ, enteredName, normalizedVar);
                 }, SINGLE_USE_CALLBACK))
                 .build();
 
@@ -98,13 +115,17 @@ public final class AetheryteDialogFactory {
                 .width(150)
                 .build();
 
+        final Component bodyComponent = messages.createDialogDescription(player, world.getName(), blockX, blockY, blockZ)
+                .append(Component.newline())
+                .append(messages.createDialogVariation(player, variation.displayName()));
+
         final Dialog dialog = Dialog.create(factory -> factory.empty()
                 .base(DialogBase.builder(messages.createDialogTitle(player))
                         .canCloseWithEscape(true)
                         .pause(false)
                         .afterAction(DialogBase.DialogAfterAction.CLOSE)
                         .body(List.of(
-                                DialogBody.plainMessage(messages.createDialogDescription(player, world.getName(), blockX, blockY, blockZ))
+                                DialogBody.plainMessage(bodyComponent)
                         ))
                         .inputs(List.of(
                                 DialogInput.text(INPUT_KEY_NAME, messages.createDialogNameInputLabel(player))

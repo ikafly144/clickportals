@@ -19,6 +19,7 @@ dialog:
   create:
     title: "<aqua><bold>エーテライトの設置</bold></aqua>"
     description: "<gray>設置座標: </gray><white><world> (<x>, <y>, <z>)</white>"
+    variation: "<gray>種類: </gray><variation>"
     name-input-label: "<aqua>エーテライト名</aqua>"
     default-name: "<player>のエーテライト"
   button:
@@ -52,7 +53,11 @@ warp:
 error:
   invalid-name: "<prefix><red>有効なエーテライト名を入力してください（1〜32文字）。</red>"
   space-not-empty: "<prefix><red>設置予定位置にブロックが存在するため設置できません。</red>"
+  clearance-insufficient: "<prefix><red>設置予定位置の周囲に十分な空間がありません（<width>x<height>x<width> ブロックの空間が必要です）。</red>"
   already-exists: "<prefix><red>その場所には既にエーテライトが存在します。</red>"
+  limit-reached-global: "<prefix><red>設置可能なエーテライトの総数上限（<max> 基）に達しています。</red>"
+  limit-reached-variation: "<prefix><red><variation> の設置数上限（<max> 基）に達しています。</red>"
+  placement-cooldown: "<prefix><red>次のエーテライトを設置するまであと <white><seconds>秒</white> 待ってください。</red>"
   missing-item: "<prefix><red>エーテライトアイテムを所持していません。</red>"
   not-found: "<prefix><red>対象のエーテライトが見つかりません。</red>"
   not-owner: "<prefix><red>このエーテライトを撤去する権限がありません（設置者のみ撤去可能）。</red>"
@@ -67,4 +72,5 @@ error:
 command:
   given-item: "<prefix><white><player></white><green> にエーテライトを <amount> 個付与しました。</green>"
   console-specify-player: "<prefix><red>コンソールから実行する場合は対象プレイヤーを指定してください。</red>"
+  unknown-variation: "<prefix><red>不明なエーテライト種類です: <variation></red>"
   reloaded: "<prefix><green>ClickPortals の設定と翻訳ファイルを再読み込みしました。</green>"

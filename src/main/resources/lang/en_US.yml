@@ -19,6 +19,7 @@ dialog:
   create:
     title: "<aqua><bold>Place Aetheryte</bold></aqua>"
     description: "<gray>Target coordinates: </gray><white><world> (<x>, <y>, <z>)</white>"
+    variation: "<gray>Variation: </gray><variation>"
     name-input-label: "<aqua>Aetheryte Name</aqua>"
     default-name: "<player>'s Aetheryte"
   button:
@@ -52,7 +53,11 @@ warp:
 error:
   invalid-name: "<prefix><red>Please enter a valid Aetheryte name (1-32 characters).</red>"
   space-not-empty: "<prefix><red>Cannot place here because the target space is obstructed.</red>"
+  clearance-insufficient: "<prefix><red>Not enough open space around the target location (requires <width>x<height>x<width> clear blocks).</red>"
   already-exists: "<prefix><red>An Aetheryte already exists at that location.</red>"
+  limit-reached-global: "<prefix><red>You have reached the maximum number of Aetherytes you can place (<max>).</red>"
+  limit-reached-variation: "<prefix><red>You have reached the placement limit for <variation> (<max>).</red>"
+  placement-cooldown: "<prefix><red>You must wait <white><seconds>s</white> before placing another Aetheryte.</red>"
   missing-item: "<prefix><red>You do not have an Aetheryte item.</red>"
   not-found: "<prefix><red>Target Aetheryte was not found.</red>"
   not-owner: "<prefix><red>You do not have permission to remove this Aetheryte (only the owner can remove it).</red>"
@@ -67,4 +72,5 @@ error:
 command:
   given-item: "<prefix><green>Gave <amount> Aetheryte(s) to </green><white><player></white><green>.</green>"
   console-specify-player: "<prefix><red>Please specify a target player when executing from the console.</red>"
+  unknown-variation: "<prefix><red>Unknown Aetheryte variation: <variation></red>"
   reloaded: "<prefix><green>Reloaded ClickPortals configuration and translations.</green>"

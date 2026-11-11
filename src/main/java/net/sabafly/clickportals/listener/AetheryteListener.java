@@ -19,6 +19,7 @@ package net.sabafly.clickportals.listener;
 
 import java.util.List;
 import java.util.Optional;
+import net.kyori.adventure.text.Component;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.dialog.AetheryteDialogFactory;
@@ -26,6 +27,8 @@ import net.sabafly.clickportals.item.AetheryteItemFactory;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.service.AetheryteService;
+import net.sabafly.clickportals.service.ClearanceChecker;
+import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.visual.HologramService;
 import org.bukkit.World;
 import org.bukkit.block.Block;
@@ -52,12 +55,14 @@ import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.plugin.Plugin;
 
 /**
- * Bukkit event listener handling Aetheryte placement, interaction, protection, and world lifecycle (#6, #12, #19).
+ * Bukkit event listener handling Aetheryte placement, interaction, protection, and world lifecycle
+ * (#6, #12, #19, #37, #38, #42, #43).
  */
 public final class AetheryteListener implements Listener {
 
     private final Plugin plugin;
     private final AetheryteRegistry registry;
+    private final AetheryteService service;
     private final AetheryteDialogFactory dialogFactory;
     private volatile HologramService hologramService;
     private final Messages messages;
@@ -71,11 +76,18 @@ public final class AetheryteListener implements Listener {
             final AetheryteDialogFactory dialogFactory,
             final HologramService hologramService
     ) {
-        this(plugin, registry, dialogFactory, hologramService, Messages.defaults());
+        this(
+                plugin,
+                registry,
+                new AetheryteService(plugin, registry, hologramService),
+                dialogFactory,
+                hologramService,
+                Messages.defaults()
+        );
     }
 
     /**
-     * Creates a new {@link AetheryteListener}.
+     * Creates a new {@link AetheryteListener} with explicit {@link Messages}.
      */
     public AetheryteListener(
             final Plugin plugin,
@@ -84,8 +96,30 @@ public final class AetheryteListener implements Listener {
             final HologramService hologramService,
             final Messages messages
     ) {
+        this(
+                plugin,
+                registry,
+                new AetheryteService(plugin, registry, hologramService),
+                dialogFactory,
+                hologramService,
+                messages
+        );
+    }
+
+    /**
+     * Creates a new {@link AetheryteListener} with full service dependencies.
+     */
+    public AetheryteListener(
+            final Plugin plugin,
+            final AetheryteRegistry registry,
+            final AetheryteService service,
+            final AetheryteDialogFactory dialogFactory,
+            final HologramService hologramService,
+            final Messages messages
+    ) {
         this.plugin = plugin;
         this.registry = registry;
+        this.service = service;
         this.dialogFactory = dialogFactory;
         this.hologramService = hologramService;
         this.messages = messages;
@@ -115,7 +149,7 @@ public final class AetheryteListener implements Listener {
     }
 
     /**
-     * Handles right-click interactions on placed Aetherytes and with the Aetheryte creation item.
+     * Handles right-click interactions on placed Aetherytes and with Aetheryte creation items (#37, #38, #42, #43).
      */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onPlayerInteract(final PlayerInteractEvent event) {
@@ -147,9 +181,10 @@ public final class AetheryteListener implements Listener {
                 relativeBlock.getY(),
                 relativeBlock.getZ()
         );
+        final Optional<String> itemVariationOpt = AetheryteItemFactory.variationIdOf(event.getItem());
         if (existingRelative.isPresent()
                 && !isInteractableBlock(clicked)
-                && !AetheryteItemFactory.isAetheryteItem(event.getItem())) {
+                && itemVariationOpt.isEmpty()) {
             event.setCancelled(true);
             if (event.getHand() == EquipmentSlot.HAND) {
                 dialogFactory.openWarpDialog(player, existingRelative.get());
@@ -157,10 +192,11 @@ public final class AetheryteListener implements Listener {
             return;
         }
 
-        // 2. Check if using the Aetheryte creation item
-        if (!AetheryteItemFactory.isAetheryteItem(event.getItem())) {
+        // 2. Check if using an Aetheryte creation item
+        if (itemVariationOpt.isEmpty()) {
             return;
         }
+        final String variationId = itemVariationOpt.get();
 
         event.setCancelled(true);
         if (!AetheryteService.canPlace(player)) {
@@ -176,8 +212,28 @@ public final class AetheryteListener implements Listener {
             messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
             return;
         }
-        if (!AetheryteService.isReplaceableBlock(targetBlock)) {
-            messages.send(player, MessageKey.ERROR_SPACE_NOT_EMPTY);
+
+        final Optional<Component> limitError = service.checkPlacementLimit(player, variationId);
+        if (limitError.isPresent()) {
+            player.sendMessage(limitError.get());
+            return;
+        }
+
+        final Optional<Component> cooldownError = service.checkPlacementCooldown(player, variationId);
+        if (cooldownError.isPresent()) {
+            player.sendMessage(cooldownError.get());
+            return;
+        }
+
+        final AetheryteVariation variation = service.variationRegistry().getOrDefault(variationId);
+        if (!ClearanceChecker.hasClearance(
+                world,
+                targetBlock.getX(),
+                targetBlock.getY(),
+                targetBlock.getZ(),
+                variation
+        )) {
+            service.sendClearanceError(player, variation);
             return;
         }
 
@@ -186,7 +242,8 @@ public final class AetheryteListener implements Listener {
                 world,
                 targetBlock.getX(),
                 targetBlock.getY(),
-                targetBlock.getZ()
+                targetBlock.getZ(),
+                variationId
         );
     }
 
