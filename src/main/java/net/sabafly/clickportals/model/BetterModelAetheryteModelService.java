@@ -17,8 +17,11 @@
  */
 package net.sabafly.clickportals.model;
 
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
@@ -27,6 +30,7 @@ import kr.toxicity.model.api.BetterModel;
 import kr.toxicity.model.api.animation.AnimationModifier;
 import kr.toxicity.model.api.bukkit.platform.BukkitAdapter;
 import kr.toxicity.model.api.data.renderer.ModelRenderer;
+import kr.toxicity.model.api.tracker.DummyTracker;
 import kr.toxicity.model.api.tracker.Tracker;
 import kr.toxicity.model.api.tracker.TrackerModifier;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
@@ -34,6 +38,7 @@ import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.AetheryteVariation.BetterModelSection;
 import org.bukkit.Location;
 import org.bukkit.World;
+import org.bukkit.entity.Player;
 import org.slf4j.Logger;
 
 /**
@@ -46,7 +51,7 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
     private final BiFunction<ModelRenderer, Location, Optional<ModelTracker>> trackerFactory;
     private final Map<UUID, ActiveModel> activeModels = new ConcurrentHashMap<>();
 
-    private record ActiveModel(ModelTracker tracker, BetterModelSection section) {}
+    private record ActiveModel(ModelTracker tracker, BetterModelSection section, UUID worldId) {}
 
     /**
      * Default {@link ModelTracker} adapter wrapping a concrete BetterModel {@link Tracker}.
@@ -72,6 +77,25 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
         @Override
         public boolean isClosed() {
             return tracker.isClosed();
+        }
+
+        @Override
+        public boolean spawn(final Player player) {
+            if (tracker instanceof DummyTracker dummy && !dummy.isClosed()) {
+                dummy.spawn(BukkitAdapter.adapt(player));
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public boolean remove(final Player player) {
+            return tracker.remove(BukkitAdapter.adapt(player));
+        }
+
+        @Override
+        public boolean isSpawned(final Player player) {
+            return tracker.isSpawned(player.getUniqueId());
         }
 
         @Override
@@ -177,7 +201,65 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
             }
         }
 
-        activeModels.put(aetheryte.id(), new ActiveModel(tracker, section));
+        activeModels.put(aetheryte.id(), new ActiveModel(tracker, section, world.getUID()));
+
+        // DummyTracker is not auto-tracked by BetterModel; spawn explicitly for players already in the world.
+        for (final Player player : world.getPlayers()) {
+            spawnSafely(tracker, player, aetheryte.id());
+        }
+    }
+
+    @Override
+    public void refreshPlayer(final Player player, final Collection<Aetheryte> worldAetherytes) {
+        final UUID worldId = player.getWorld().getUID();
+        final Set<UUID> inWorld = new HashSet<>();
+        for (final Aetheryte aetheryte : worldAetherytes) {
+            inWorld.add(aetheryte.id());
+        }
+        for (final Map.Entry<UUID, ActiveModel> entry : activeModels.entrySet()) {
+            final ActiveModel active = entry.getValue();
+            if (active.tracker.isClosed()) {
+                continue;
+            }
+            final boolean visible = active.worldId.equals(worldId) && inWorld.contains(entry.getKey());
+            try {
+                if (visible) {
+                    if (active.tracker.isSpawned(player)) {
+                        active.tracker.remove(player);
+                    }
+                    spawnSafely(active.tracker, player, entry.getKey());
+                } else if (active.tracker.isSpawned(player)) {
+                    active.tracker.remove(player);
+                }
+            } catch (final Throwable t) {
+                logger.debug("Failed to refresh BetterModel visibility for Aetheryte {}", entry.getKey(), t);
+            }
+        }
+    }
+
+    @Override
+    public void removePlayer(final Player player) {
+        for (final Map.Entry<UUID, ActiveModel> entry : activeModels.entrySet()) {
+            final ModelTracker tracker = entry.getValue().tracker;
+            try {
+                if (!tracker.isClosed() && tracker.isSpawned(player)) {
+                    tracker.remove(player);
+                }
+            } catch (final Throwable t) {
+                logger.debug("Failed to remove player from BetterModel tracker for Aetheryte {}", entry.getKey(), t);
+            }
+        }
+    }
+
+    /**
+     * Spawns the model for a player, logging instead of propagating failures.
+     */
+    private void spawnSafely(final ModelTracker tracker, final Player player, final UUID aetheryteId) {
+        try {
+            tracker.spawn(player);
+        } catch (final Throwable t) {
+            logger.debug("Failed to spawn BetterModel model of Aetheryte {} for {}", aetheryteId, player.getName(), t);
+        }
     }
 
     @Override

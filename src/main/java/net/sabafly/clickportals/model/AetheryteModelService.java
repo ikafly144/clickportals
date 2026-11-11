@@ -17,10 +17,12 @@
  */
 package net.sabafly.clickportals.model;
 
+import java.util.Collection;
 import java.util.UUID;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import org.bukkit.World;
+import org.bukkit.entity.Player;
 
 /**
  * Service managing external 3D animated models (e.g. BetterModel) attached to Aetherytes (#46).
@@ -46,6 +48,24 @@ public interface AetheryteModelService {
      * Returns whether an external 3D model is active for the given Aetheryte ID.
      */
     boolean hasModel(UUID aetheryteId);
+
+    /**
+     * Synchronizes model visibility for a single player: spawns models of Aetherytes in the player's current
+     * world and removes models from other worlds.
+     *
+     * @param player the target player
+     * @param worldAetherytes the Aetherytes registered in the player's current world
+     */
+    default void refreshPlayer(final Player player, final Collection<Aetheryte> worldAetherytes) {
+    }
+
+    /**
+     * Removes the given player from all active model trackers (e.g. on quit).
+     *
+     * @param player the player to remove
+     */
+    default void removePlayer(final Player player) {
+    }
 
     /**
      * Destroys and cleans up all active model trackers across all worlds.

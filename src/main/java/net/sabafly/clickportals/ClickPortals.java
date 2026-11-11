@@ -252,6 +252,10 @@ public final class ClickPortals extends JavaPlugin {
                                 player,
                                 aetheryteRegistry.getByWorld(player.getWorld().getUID())
                         );
+                        reloadedModelService.refreshPlayer(
+                                player,
+                                aetheryteRegistry.getByWorld(player.getWorld().getUID())
+                        );
                     }
                 }, null);
             }

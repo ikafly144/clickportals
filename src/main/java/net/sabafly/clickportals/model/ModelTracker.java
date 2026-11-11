@@ -18,6 +18,7 @@
 package net.sabafly.clickportals.model;
 
 import kr.toxicity.model.api.animation.AnimationModifier;
+import org.bukkit.entity.Player;
 
 /**
  * Handle wrapping an underlying 3D model tracker (e.g. BetterModel {@code Tracker}) (#46).
@@ -38,6 +39,36 @@ public interface ModelTracker extends AutoCloseable {
      * Returns whether this tracker has been closed or despawned.
      */
     boolean isClosed();
+
+    /**
+     * Sends the model spawn packets to the given player.
+     *
+     * @param player the target player
+     * @return {@code true} if the model was spawned for the player
+     */
+    default boolean spawn(final Player player) {
+        return false;
+    }
+
+    /**
+     * Sends the model despawn packets to the given player.
+     *
+     * @param player the target player
+     * @return {@code true} if the model was removed for the player
+     */
+    default boolean remove(final Player player) {
+        return false;
+    }
+
+    /**
+     * Returns whether the model is currently spawned for the given player.
+     *
+     * @param player the target player
+     * @return {@code true} if spawned for the player
+     */
+    default boolean isSpawned(final Player player) {
+        return false;
+    }
 
     /**
      * Closes and despawns the model tracker.

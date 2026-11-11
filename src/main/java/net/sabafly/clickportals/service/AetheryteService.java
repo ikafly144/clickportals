@@ -876,6 +876,7 @@ public final class AetheryteService {
                         player.getScheduler().run(plugin, postTask -> {
                             player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
                             hologramService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
+                            modelService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
                         }, null);
                     }
                 }).exceptionally(ex -> {

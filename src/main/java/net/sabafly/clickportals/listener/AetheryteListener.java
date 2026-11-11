@@ -26,6 +26,7 @@ import net.sabafly.clickportals.dialog.AetheryteDialogFactory;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
+import net.sabafly.clickportals.model.AetheryteModelService;
 import net.sabafly.clickportals.model.ModelAnimationTrigger;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.ClearanceChecker;
@@ -363,15 +364,25 @@ public final class AetheryteListener implements Listener {
         final java.util.UUID playerId = event.getPlayer().getUniqueId();
         hologramService.removePlayer(playerId);
         service.removePlayer(playerId);
+        final AetheryteModelService models = service.modelService();
+        if (models != null) {
+            models.removePlayer(event.getPlayer());
+        }
     }
 
     /**
-     * Schedules a delayed hologram refresh on the player's entity scheduler.
+     * Schedules a delayed hologram and external model refresh on the player's entity scheduler.
      */
     private void scheduleHologramRefresh(final Player player) {
         player.getScheduler().runDelayed(plugin, task -> {
             if (player.isOnline()) {
-                hologramService.refreshPlayer(player, registry.getByWorld(player.getWorld().getUID()));
+                final java.util.Collection<Aetheryte> worldAetherytes =
+                        registry.getByWorld(player.getWorld().getUID());
+                hologramService.refreshPlayer(player, worldAetherytes);
+                final AetheryteModelService models = service.modelService();
+                if (models != null) {
+                    models.refreshPlayer(player, worldAetherytes);
+                }
             }
         }, null, 5L);
     }

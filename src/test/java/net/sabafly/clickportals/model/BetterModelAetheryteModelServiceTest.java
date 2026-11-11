@@ -25,6 +25,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import kr.toxicity.model.api.animation.AnimationModifier;
@@ -34,6 +35,7 @@ import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.AetheryteVariation.AnimationSection;
 import net.sabafly.clickportals.variation.AetheryteVariation.BetterModelSection;
 import org.bukkit.World;
+import org.bukkit.entity.Player;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -229,5 +231,47 @@ class BetterModelAetheryteModelServiceTest {
         verify(tracker2).close();
         assertThat(service.hasModel(aetheryte.id())).isFalse();
         assertThat(service.hasModel(aetheryte2.id())).isFalse();
+    }
+
+    @Test
+    void trackerIsSpawnedForWorldPlayersAndSyncedOnRefreshAndQuit() {
+        final ModelRenderer mockRenderer = mock(ModelRenderer.class);
+        final ModelTracker mockTracker = mock(ModelTracker.class);
+        final Player inWorld = mock(Player.class);
+        when(inWorld.getWorld()).thenReturn(world);
+        when(world.getPlayers()).thenReturn(List.of(inWorld));
+
+        final BetterModelAetheryteModelService service = new BetterModelAetheryteModelService(
+                logger,
+                id -> Optional.of(mockRenderer),
+                (renderer, loc) -> Optional.of(mockTracker)
+        );
+        final AetheryteVariation variation = new AetheryteVariation(
+                "Crystal",
+                null, null, null, null, null, null, null,
+                new BetterModelSection(true, "crystal_model", AnimationSection.defaults())
+        );
+
+        service.registerAetheryte(aetheryte, variation, world);
+        verify(mockTracker).spawn(inWorld);
+
+        // Player moved to another world: model must be removed
+        final World other = mock(World.class);
+        when(other.getUID()).thenReturn(UUID.randomUUID());
+        final Player traveler = mock(Player.class);
+        when(traveler.getWorld()).thenReturn(other);
+        when(mockTracker.isSpawned(traveler)).thenReturn(true);
+        service.refreshPlayer(traveler, List.of());
+        verify(mockTracker).remove(traveler);
+        verify(mockTracker, never()).spawn(traveler);
+
+        // Player in the same world gets (re)spawned on refresh
+        service.refreshPlayer(inWorld, List.of(aetheryte));
+        verify(mockTracker, org.mockito.Mockito.times(2)).spawn(inWorld);
+
+        // Quit removes the player from spawned trackers
+        when(mockTracker.isSpawned(inWorld)).thenReturn(true);
+        service.removePlayer(inWorld);
+        verify(mockTracker).remove(inWorld);
     }
 }
