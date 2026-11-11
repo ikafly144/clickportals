@@ -22,11 +22,12 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
+import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
+import net.sabafly.clickportals.permission.Permissions;
 import net.sabafly.clickportals.visual.HologramService;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
@@ -45,7 +46,7 @@ import org.bukkit.plugin.Plugin;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Folia-safe application service for placing, removing, evaluating, and warping between Aetherytes (#6, #11, #12).
+ * Folia-safe application service for placing, removing, evaluating, and warping between Aetherytes (#6, #11, #12, #17, #19).
  */
 public final class AetheryteService {
 
@@ -93,23 +94,39 @@ public final class AetheryteService {
         }
     }
 
-    private static final WarpCostEvaluator FREE_COST_EVALUATOR =
-            (player, source, destination) -> WarpEvaluation.permitted(Messages.freeCostLabel());
-
     private final Plugin plugin;
     private final AetheryteRegistry registry;
-    private final HologramService hologramService;
+    private volatile HologramService hologramService;
+    private final Messages messages;
     private final WarpCostEvaluator costEvaluator;
 
     /**
-     * Creates a new {@link AetheryteService} with default free cost evaluation.
+     * Creates a new {@link AetheryteService} with default messages and free cost evaluation.
      */
     public AetheryteService(
             final Plugin plugin,
             final AetheryteRegistry registry,
             final HologramService hologramService
     ) {
-        this(plugin, registry, hologramService, FREE_COST_EVALUATOR);
+        this(plugin, registry, hologramService, Messages.defaults());
+    }
+
+    /**
+     * Creates a new {@link AetheryteService} with the given {@link Messages} and default free cost evaluation.
+     */
+    public AetheryteService(
+            final Plugin plugin,
+            final AetheryteRegistry registry,
+            final HologramService hologramService,
+            final Messages messages
+    ) {
+        this(
+                plugin,
+                registry,
+                hologramService,
+                messages,
+                (player, source, destination) -> WarpEvaluation.permitted(messages.freeCostLabel(player))
+        );
     }
 
     /**
@@ -121,9 +138,23 @@ public final class AetheryteService {
             final HologramService hologramService,
             final WarpCostEvaluator costEvaluator
     ) {
+        this(plugin, registry, hologramService, Messages.defaults(), costEvaluator);
+    }
+
+    /**
+     * Creates a new {@link AetheryteService} with the given {@link Messages} and custom {@link WarpCostEvaluator}.
+     */
+    public AetheryteService(
+            final Plugin plugin,
+            final AetheryteRegistry registry,
+            final HologramService hologramService,
+            final Messages messages,
+            final WarpCostEvaluator costEvaluator
+    ) {
         this.plugin = plugin;
         this.registry = registry;
         this.hologramService = hologramService;
+        this.messages = messages;
         this.costEvaluator = costEvaluator;
     }
 
@@ -142,6 +173,20 @@ public final class AetheryteService {
     }
 
     /**
+     * Updates the active {@link HologramService} reference when {@code hologram.enabled} changes on reload.
+     */
+    public void setHologramService(final HologramService hologramService) {
+        this.hologramService = hologramService;
+    }
+
+    /**
+     * Returns the active {@link Messages} service.
+     */
+    public Messages messages() {
+        return messages;
+    }
+
+    /**
      * Validates and sanitizes an Aetheryte name.
      */
     public static Optional<String> sanitizeName(final String rawName) {
@@ -153,48 +198,42 @@ public final class AetheryteService {
     }
 
     /**
-     * Checks whether the given player is permitted to place a new Aetheryte.
+     * Checks whether the given player is permitted to place a new Aetheryte (#17).
      */
     public static boolean canPlace(final Player player) {
-        if (player.isOp() || player.hasPermission("clickportals.admin")) {
-            return true;
-        }
-        return !player.isPermissionSet("clickportals.place") || player.hasPermission("clickportals.place");
+        return Permissions.canPlace(player);
     }
 
     /**
-     * Checks whether the given player is permitted to use Aetheryte warps.
+     * Checks whether the given player is permitted to use Aetheryte warps (#17).
      */
     public static boolean canUse(final Player player) {
-        if (player.isOp() || player.hasPermission("clickportals.admin")) {
-            return true;
-        }
-        return !player.isPermissionSet("clickportals.use") || player.hasPermission("clickportals.use");
+        return Permissions.canUse(player);
     }
 
     /**
-     * Checks whether the given player is allowed to remove the specified Aetheryte.
+     * Checks whether the given player is allowed to remove the specified Aetheryte (#17).
      */
     public static boolean canRemove(final Player player, final Aetheryte aetheryte) {
-        return aetheryte.ownerId().equals(player.getUniqueId())
-                || player.hasPermission("clickportals.admin")
-                || player.isOp();
+        return Permissions.canRemove(player, player.getUniqueId(), aetheryte);
     }
 
     /**
      * Evaluates whether a player can warp from {@code source} to {@code destination}, checking both permissions
-     * and the configured {@link WarpCostEvaluator} (#12, #13).
+     * and the configured {@link WarpCostEvaluator} (#12, #13, #17).
      */
     public WarpEvaluation evaluateWarp(
             final Player player,
             final @Nullable Aetheryte source,
             final Aetheryte destination
     ) {
-        final WarpEvaluation costResult = costEvaluator.evaluate(player, source, destination);
+        final WarpEvaluation costResult = Permissions.canBypassWarpCost(player)
+                ? WarpEvaluation.permitted(messages.freeCostLabel(player))
+                : costEvaluator.evaluate(player, source, destination);
         if (!canUse(player)) {
             return WarpEvaluation.denied(
                     costResult.costDisplay(),
-                    Component.text("ワープ権限がありません", NamedTextColor.RED)
+                    messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION)
             );
         }
         return costResult;
@@ -213,18 +252,18 @@ public final class AetheryteService {
             final String rawName
     ) {
         if (!canPlace(player)) {
-            player.sendMessage(Messages.errorNoPermission());
+            messages.send(player, MessageKey.ERROR_NO_PERMISSION);
             return;
         }
         final Optional<String> validName = sanitizeName(rawName);
         if (validName.isEmpty()) {
-            player.sendMessage(Messages.errorInvalidName());
+            messages.send(player, MessageKey.ERROR_INVALID_NAME);
             return;
         }
         final String name = validName.get();
 
         if (registry.getByPosition(world, blockX, blockY, blockZ).isPresent()) {
-            player.sendMessage(Messages.errorAlreadyExists());
+            messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
             return;
         }
 
@@ -235,7 +274,7 @@ public final class AetheryteService {
         player.getScheduler().run(plugin, task -> {
             final boolean creative = player.getGameMode() == GameMode.CREATIVE;
             if (!creative && !consumeOneAetheryteItem(player.getInventory())) {
-                player.sendMessage(Messages.errorMissingItem());
+                messages.send(player, MessageKey.ERROR_MISSING_ITEM);
                 return;
             }
 
@@ -245,7 +284,7 @@ public final class AetheryteService {
                     if (!creative) {
                         refundItemToPlayer(player, targetLocation);
                     }
-                    player.sendMessage(Messages.errorAlreadyExists());
+                    messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
                     return;
                 }
 
@@ -254,11 +293,11 @@ public final class AetheryteService {
                     if (!creative) {
                         refundItemToPlayer(player, targetLocation);
                     }
-                    player.sendMessage(Messages.errorSpaceNotEmpty());
+                    messages.send(player, MessageKey.ERROR_SPACE_NOT_EMPTY);
                     return;
                 }
 
-                if (!block.getType().isAir()) {
+                if (!isAir(block.getType())) {
                     block.setType(Material.AIR, true);
                 }
 
@@ -284,7 +323,7 @@ public final class AetheryteService {
                         1.0f,
                         1.0f
                 );
-                player.sendMessage(Messages.aetheryteCreated(aetheryte));
+                player.sendMessage(messages.aetheryteCreated(player, aetheryte));
             });
         }, null);
     }
@@ -307,17 +346,17 @@ public final class AetheryteService {
     public void removeAetheryte(final Player player, final UUID aetheryteId) {
         final Optional<Aetheryte> opt = registry.getById(aetheryteId);
         if (opt.isEmpty()) {
-            player.sendMessage(Messages.errorNotFound());
+            messages.send(player, MessageKey.ERROR_NOT_FOUND);
             return;
         }
         final Aetheryte aetheryte = opt.get();
         if (!canRemove(player, aetheryte)) {
-            player.sendMessage(Messages.errorNotOwner());
+            messages.send(player, MessageKey.ERROR_NOT_OWNER);
             return;
         }
         final World world = Bukkit.getWorld(aetheryte.worldId());
         if (world == null) {
-            player.sendMessage(Messages.errorNotFound());
+            messages.send(player, MessageKey.ERROR_NOT_FOUND);
             return;
         }
 
@@ -325,7 +364,7 @@ public final class AetheryteService {
         Bukkit.getRegionScheduler().execute(plugin, blockLoc, () -> {
             final Optional<Aetheryte> removed = registry.unregister(world, aetheryte.id());
             if (removed.isEmpty()) {
-                player.sendMessage(Messages.errorNotFound());
+                messages.send(player, MessageKey.ERROR_NOT_FOUND);
                 return;
             }
 
@@ -343,7 +382,7 @@ public final class AetheryteService {
             if (player.getGameMode() != GameMode.CREATIVE) {
                 refundItemToPlayer(player, blockLoc);
             }
-            player.sendMessage(Messages.aetheryteRemoved(aetheryte.name()));
+            player.sendMessage(messages.aetheryteRemoved(player, aetheryte.name()));
         });
     }
 
@@ -381,24 +420,23 @@ public final class AetheryteService {
     ) {
         final Optional<Aetheryte> opt = registry.getById(destinationId);
         if (opt.isEmpty()) {
-            player.sendMessage(Messages.errorNotFound());
+            messages.send(player, MessageKey.ERROR_NOT_FOUND);
             return;
         }
         final Aetheryte destination = opt.get();
 
         final WarpEvaluation evaluation = evaluateWarp(player, source, destination);
         if (!evaluation.allowed()) {
-            player.sendMessage(Messages.errorWarpDenied(
-                    evaluation.denyReason() != null
-                            ? evaluation.denyReason()
-                            : Component.text("条件を満たしていません", NamedTextColor.RED)
-            ));
+            final Component reason = evaluation.denyReason() != null
+                    ? evaluation.denyReason()
+                    : messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET);
+            player.sendMessage(messages.errorWarpDenied(player, reason));
             return;
         }
 
         final World targetWorld = Bukkit.getWorld(destination.worldId());
         if (targetWorld == null) {
-            player.sendMessage(Messages.errorNotFound());
+            messages.send(player, MessageKey.ERROR_NOT_FOUND);
             return;
         }
 
@@ -416,25 +454,35 @@ public final class AetheryteService {
                     pitch
             );
             if (safeLanding.isEmpty()) {
-                player.sendMessage(Messages.errorDestinationUnsafe());
+                messages.send(player, MessageKey.ERROR_DESTINATION_UNSAFE);
                 return;
             }
             final Location destinationLoc = safeLanding.get();
 
             player.getScheduler().run(plugin, task -> {
-                if (!canUse(player) || !costEvaluator.charge(player, source, destination)) {
+                if (!canUse(player)) {
                     final WarpEvaluation recheck = evaluateWarp(player, source, destination);
-                    player.sendMessage(Messages.errorWarpDenied(
-                            recheck.denyReason() != null
-                                    ? recheck.denyReason()
-                                    : Component.text("コストが不足しています", NamedTextColor.RED)
-                    ));
+                    final Component reason = recheck.denyReason() != null
+                            ? recheck.denyReason()
+                            : messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION);
+                    player.sendMessage(messages.errorWarpDenied(player, reason));
+                    return;
+                }
+
+                final boolean paid = Permissions.canBypassWarpCost(player)
+                        || costEvaluator.charge(player, source, destination);
+                if (!paid) {
+                    final WarpEvaluation recheck = evaluateWarp(player, source, destination);
+                    final Component reason = recheck.denyReason() != null
+                            ? recheck.denyReason()
+                            : messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST);
+                    player.sendMessage(messages.errorWarpDenied(player, reason));
                     return;
                 }
 
                 final CompletableFuture<Void> unused = player.teleportAsync(destinationLoc).thenAccept(success -> {
                     if (Boolean.TRUE.equals(success)) {
-                        player.sendMessage(Messages.warpedTo(destination));
+                        player.sendMessage(messages.warpedTo(player, destination));
                         player.getScheduler().run(plugin, postTask -> {
                             player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
                             hologramService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
@@ -461,7 +509,14 @@ public final class AetheryteService {
      */
     public static boolean isReplaceableBlock(final Block block) {
         final Material type = block.getType();
-        return type.isAir() || block.isReplaceable();
+        return isAir(type) || block.isReplaceable();
+    }
+
+    /**
+     * Checks whether the given material is an air variant without accessing RegistryAccess.
+     */
+    private static boolean isAir(final Material type) {
+        return type == Material.AIR || type == Material.CAVE_AIR || type == Material.VOID_AIR;
     }
 
     /**
@@ -505,12 +560,12 @@ public final class AetheryteService {
      */
     private static boolean isSafeFloor(final Block block) {
         final Material type = block.getType();
-        if (type.isAir() || type == Material.LAVA || type == Material.FIRE
+        if (isAir(type) || type == Material.LAVA || type == Material.FIRE
                 || type == Material.SOUL_FIRE || type == Material.MAGMA_BLOCK
                 || type == Material.CACTUS) {
             return false;
         }
-        return type.isSolid();
+        return block.isSolid();
     }
 
     /**

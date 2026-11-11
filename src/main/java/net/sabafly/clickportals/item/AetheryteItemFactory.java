@@ -35,7 +35,7 @@ import org.bukkit.persistence.PersistentDataType;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Factory and recipe registrar for the Aetheryte creation item with masked item components (#6, #12).
+ * Factory and recipe registrar for the Aetheryte creation item with masked item components (#6, #12, #19).
  */
 @SuppressWarnings("UnstableApiUsage")
 public final class AetheryteItemFactory {
@@ -63,6 +63,7 @@ public final class AetheryteItemFactory {
     }
 
     private static volatile Material configuredMaterial = Material.COMPASS;
+    private static volatile Messages configuredMessages = Messages.defaults();
 
     private AetheryteItemFactory() {
     }
@@ -72,20 +73,27 @@ public final class AetheryteItemFactory {
      * and masks native item components so the base item's vanilla behavior is disabled (#6).
      */
     public static ItemStack createItem(final int amount) {
-        return createItem(configuredMaterial, amount);
+        return createItem(configuredMaterial, amount, configuredMessages);
     }
 
     /**
      * Creates a new Aetheryte item stack with the specified base material and amount, masking its vanilla components.
      */
     public static ItemStack createItem(final Material baseMaterial, final int amount) {
+        return createItem(baseMaterial, amount, configuredMessages);
+    }
+
+    /**
+     * Creates a new Aetheryte item stack with the specified base material, amount, and {@link Messages} service.
+     */
+    public static ItemStack createItem(final Material baseMaterial, final int amount, final Messages messages) {
         final ItemStack stack = ItemStack.of(baseMaterial, Math.max(1, amount));
         for (final DataComponentType componentType : MaskedComponentHolder.MASKED_COMPONENTS) {
             stack.unsetData(componentType);
         }
         stack.setData(DataComponentTypes.ATTRIBUTE_MODIFIERS, ItemAttributeModifiers.itemAttributes().build());
-        stack.setData(DataComponentTypes.ITEM_NAME, Messages.aetheryteItemName());
-        stack.setData(DataComponentTypes.LORE, ItemLore.lore(Messages.aetheryteItemLore()));
+        stack.setData(DataComponentTypes.ITEM_NAME, messages.aetheryteItemName());
+        stack.setData(DataComponentTypes.LORE, ItemLore.lore(messages.aetheryteItemLore()));
         stack.setData(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE, Boolean.TRUE);
         stack.editPersistentDataContainer(pdc -> pdc.set(ITEM_MARKER_KEY, PersistentDataType.BYTE, (byte) 1));
         return stack;
@@ -106,12 +114,20 @@ public final class AetheryteItemFactory {
      * Registers (or re-registers) the crafting recipe configured in {@link PluginConfig}.
      */
     public static void registerRecipe(final PluginConfig config) {
+        registerRecipe(config, configuredMessages);
+    }
+
+    /**
+     * Registers (or re-registers) the crafting recipe configured in {@link PluginConfig} using the given {@link Messages}.
+     */
+    public static void registerRecipe(final PluginConfig config, final Messages messages) {
         configuredMaterial = config.itemMaterial();
+        configuredMessages = messages;
         Bukkit.removeRecipe(RECIPE_KEY);
         if (!config.recipeEnabled()) {
             return;
         }
-        final ShapedRecipe recipe = new ShapedRecipe(RECIPE_KEY, createItem(configuredMaterial, 1));
+        final ShapedRecipe recipe = new ShapedRecipe(RECIPE_KEY, createItem(configuredMaterial, 1, messages));
         recipe.setCategory(CraftingBookCategory.MISC);
         recipe.shape(config.recipeShape().toArray(new String[0]));
         for (final Map.Entry<Character, Material> entry : config.recipeIngredients().entrySet()) {

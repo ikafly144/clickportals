@@ -25,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import org.bukkit.Material;
 import org.junit.jupiter.api.Test;
@@ -37,7 +38,7 @@ class PluginConfigTest {
     Path tempDir;
 
     @Test
-    void defaultConfigIsCreatedAndPreservesComments() throws IOException {
+    void defaultConfigIsCreatedAndPreservesEnglishComments() throws IOException {
         final Path configFile = tempDir.resolve("config.yml");
         final ConfigManager manager = new ConfigManager(configFile, mock(Logger.class));
 
@@ -45,13 +46,17 @@ class PluginConfigTest {
 
         assertThat(configFile).exists();
         assertThat(loaded).isEqualTo(PluginConfig.defaultConfig());
+        assertThat(loaded.defaultLocale()).isEqualTo(Locale.US);
+        assertThat(loaded.useClientLocale()).isTrue();
         assertThat(loaded.itemMaterial()).isEqualTo(Material.COMPASS);
         assertThat(loaded.displayBlock()).isEqualTo("minecraft:lodestone");
 
         final String rawYaml = Files.readString(configFile, StandardCharsets.UTF_8);
         assertThat(rawYaml)
                 .contains("ClickPortals Configuration")
-                .contains("エーテライト作成用アイテムのクラフトレシピ設定")
+                .contains("Language and localization settings")
+                .contains("default-locale: en_US")
+                .contains("Crafting recipe settings for the Aetheryte creation item")
                 .contains("item-material: COMPASS")
                 .contains("display-block: minecraft:lodestone");
     }
@@ -60,6 +65,9 @@ class PluginConfigTest {
     void validCustomConfigIsLoadedAndSavedWithComments() throws IOException {
         final Path configFile = tempDir.resolve("config.yml");
         Files.writeString(configFile, """
+                language:
+                  default-locale: ja_JP
+                  use-client-locale: false
                 recipe:
                   enabled: true
                   item-material: ECHO_SHARD
@@ -79,6 +87,8 @@ class PluginConfigTest {
         final ConfigManager manager = new ConfigManager(configFile, mock(Logger.class));
         final PluginConfig config = manager.load();
 
+        assertThat(config.defaultLocale()).isEqualTo(Locale.JAPAN);
+        assertThat(config.useClientLocale()).isFalse();
         assertThat(config.itemMaterial()).isEqualTo(Material.ECHO_SHARD);
         assertThat(config.recipeShape()).containsExactly(" G ", "GAG", " G ");
         assertThat(config.recipeIngredients()).containsExactlyEntriesOf(Map.of(
@@ -88,13 +98,15 @@ class PluginConfigTest {
         assertThat(config.hologramViewDistance()).isEqualTo(48.0);
 
         final String savedYaml = Files.readString(configFile, StandardCharsets.UTF_8);
-        assertThat(savedYaml).contains("# クラフトレシピを有効にするかどうか");
+        assertThat(savedYaml).contains("# Whether the crafting recipe is enabled");
     }
 
     @Test
     void mismatchedShapeAndIngredientsFallsBackToDefaults() throws IOException {
         final Path configFile = tempDir.resolve("config.yml");
         Files.writeString(configFile, """
+                language:
+                  default-locale: ""
                 recipe:
                   enabled: true
                   item-material: INVALID_MATERIAL_NAME
@@ -112,6 +124,7 @@ class PluginConfigTest {
         final ConfigManager manager = new ConfigManager(configFile, mock(Logger.class));
         final PluginConfig config = manager.load();
 
+        assertThat(config.defaultLocale()).isEqualTo(Locale.US);
         assertThat(config.itemMaterial()).isEqualTo(Material.COMPASS);
         assertThat(config.recipeShape()).isEqualTo(PluginConfig.defaultConfig().recipeShape());
         assertThat(config.recipeIngredients()).isEqualTo(PluginConfig.defaultConfig().recipeIngredients());

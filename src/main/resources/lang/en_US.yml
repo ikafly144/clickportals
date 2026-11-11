@@ -1,0 +1,70 @@
+# ClickPortals Language File (en_US)
+# Uses Adventure MiniMessage format: https://docs.advntr.dev/minimessage/format.html
+
+prefix: "<dark_gray>[<aqua>ClickPortals</aqua>]</dark_gray> "
+
+item:
+  name: "<!italic><bold><aqua>Aetheryte</aqua></bold>"
+  lore:
+    - "<!italic><gray>Right-click a block to place</gray>"
+    - "<!italic><gray>an Aetheryte (warp point).</gray>"
+
+hologram:
+  title: "<aqua>✦ </aqua><white><bold><name></bold></white><aqua> ✦</aqua>"
+
+cost:
+  free: "<green>Free</green>"
+
+dialog:
+  create:
+    title: "<aqua><bold>Place Aetheryte</bold></aqua>"
+    description: "<gray>Target coordinates: </gray><white><world> (<x>, <y>, <z>)</white>"
+    name-input-label: "<aqua>Aetheryte Name</aqua>"
+    default-name: "<player>'s Aetheryte"
+  button:
+    confirm-create: "<green><bold>Place</bold></green>"
+    cancel: "<gray>Cancel</gray>"
+    close: "<gray>Close</gray>"
+    open-remove-confirm: "<red>Remove this Aetheryte</red>"
+    open-remove-confirm-tooltip: "<gray>Remove this Aetheryte and reclaim the item</gray>"
+    confirm-remove: "<red><bold>Remove</bold></red>"
+  warp:
+    title: "<aqua>✦ Aetheryte: </aqua><white><bold><name></bold></white>"
+    body-empty: "<gray>Current location: </gray><white><name></white><newline><yellow>No other Aetherytes are available to warp to yet.</yellow>"
+    body-select: "<gray>Select an Aetheryte destination to warp to.</gray>"
+    destination-available: "<aqua>✦ </aqua><white><name></white><dark_gray> [</dark_gray><cost><dark_gray>]</dark_gray>"
+    destination-unavailable: "<red>✖ </red><gray><name></gray><dark_gray> [</dark_gray><cost><dark_gray>]</dark_gray>"
+    distance-blocks: "<white><blocks> blocks</white>"
+    distance-other-dimension: "<light_purple>Other dimension</light_purple>"
+    tooltip-allowed: "<gray>World: </gray><gold><world></gold><newline><gray>Coordinates: </gray><white><x>, <y>, <z></white><newline><gray>Distance: </gray><distance><newline><gray>Cost: </gray><cost><newline><green>Click to warp</green>"
+    tooltip-denied: "<gray>World: </gray><gold><world></gold><newline><gray>Coordinates: </gray><white><x>, <y>, <z></white><newline><gray>Distance: </gray><distance><newline><gray>Cost: </gray><cost><newline><red>Unavailable: </red><reason>"
+  remove:
+    title: "<red><bold>Confirm Removal: </bold></red><white><name></white>"
+    body: "<gray>Are you sure you want to remove \"</gray><white><name></white><gray>\"?</gray><newline><yellow>The Aetheryte item will be returned to you.</yellow>"
+
+aetheryte:
+  created: "<prefix><green>Placed Aetheryte \"</green><white><bold><name></bold></white><green>\".</green>"
+  removed: "<prefix><yellow>Removed Aetheryte \"</yellow><white><bold><name></bold></white><yellow>\".</yellow>"
+
+warp:
+  success: "<prefix><aqua>Warped to \"</aqua><white><bold><name></bold></white><aqua>\".</aqua>"
+
+error:
+  invalid-name: "<prefix><red>Please enter a valid Aetheryte name (1-32 characters).</red>"
+  space-not-empty: "<prefix><red>Cannot place here because the target space is obstructed.</red>"
+  already-exists: "<prefix><red>An Aetheryte already exists at that location.</red>"
+  missing-item: "<prefix><red>You do not have an Aetheryte item.</red>"
+  not-found: "<prefix><red>Target Aetheryte was not found.</red>"
+  not-owner: "<prefix><red>You do not have permission to remove this Aetheryte (only the owner can remove it).</red>"
+  no-permission: "<prefix><red>You do not have permission to perform this action.</red>"
+  no-warp-permission: "<red>No warp permission</red>"
+  warp-requirements-not-met: "<red>Requirements not met</red>"
+  insufficient-cost: "<red>Insufficient cost</red>"
+  warp-denied: "<prefix><red>Cannot warp: </red><reason>"
+  destination-unsafe: "<prefix><red>Cannot warp because the destination landing area is obstructed or unsafe.</red>"
+  protected-break: "<prefix><red>Aetherytes cannot be broken directly. Please remove it from the right-click menu.</red>"
+
+command:
+  given-item: "<prefix><green>Gave <amount> Aetheryte(s) to </green><white><player></white><green>.</green>"
+  console-specify-player: "<prefix><red>Please specify a target player when executing from the console.</red>"
+  reloaded: "<prefix><green>Reloaded ClickPortals configuration and translations.</green>"

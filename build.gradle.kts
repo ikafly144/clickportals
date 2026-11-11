@@ -9,6 +9,7 @@ import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
+import xyz.jpenilla.resourcefactory.bukkit.Permission
 import xyz.jpenilla.resourcefactory.paper.PaperPluginYaml
 import xyz.jpenilla.runpaper.task.RunServer
 
@@ -143,6 +144,54 @@ paperPluginYaml {
     website = "https://github.com/ikafly144/clickportals"
     dependencies {
         server("packetevents", PaperPluginYaml.Load.BEFORE, false)
+    }
+    permissions {
+        register("clickportals.use") {
+            description = "Use Aetheryte warps"
+            default = Permission.Default.TRUE
+        }
+        register("clickportals.place") {
+            description = "Place Aetherytes"
+            default = Permission.Default.TRUE
+        }
+        register("clickportals.remove.any") {
+            description = "Remove Aetherytes owned by others"
+            default = Permission.Default.OP
+        }
+        register("clickportals.command.give") {
+            description = "Give Aetheryte creation items via command"
+            default = Permission.Default.OP
+        }
+        register("clickportals.command.reload") {
+            description = "Reload ClickPortals configuration and translations"
+            default = Permission.Default.OP
+        }
+        register("clickportals.bypass.limit") {
+            description = "Bypass per-player Aetheryte placement limits (reserved; currently inactive)"
+            default = Permission.Default.OP
+        }
+        register("clickportals.bypass.cost.warp") {
+            description = "Bypass Aetheryte warp costs"
+            default = Permission.Default.OP
+        }
+        register("clickportals.bypass.cost.place") {
+            description = "Bypass Aetheryte placement costs (reserved; currently inactive)"
+            default = Permission.Default.OP
+        }
+        register("clickportals.admin") {
+            description = "Full administrative access to ClickPortals"
+            default = Permission.Default.OP
+            children(
+                "clickportals.use",
+                "clickportals.place",
+                "clickportals.remove.any",
+                "clickportals.command.give",
+                "clickportals.command.reload",
+                "clickportals.bypass.limit",
+                "clickportals.bypass.cost.warp",
+                "clickportals.bypass.cost.place",
+            )
+        }
     }
 }
 

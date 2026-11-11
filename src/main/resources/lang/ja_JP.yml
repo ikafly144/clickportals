@@ -1,0 +1,70 @@
+# ClickPortals Language File (ja_JP)
+# Uses Adventure MiniMessage format: https://docs.advntr.dev/minimessage/format.html
+
+prefix: "<dark_gray>[<aqua>ClickPortals</aqua>]</dark_gray> "
+
+item:
+  name: "<!italic><bold><aqua>エーテライト</aqua></bold>"
+  lore:
+    - "<!italic><gray>ブロックに向かって右クリックして</gray>"
+    - "<!italic><gray>エーテライト（ワープポイント）を設置します。</gray>"
+
+hologram:
+  title: "<aqua>✦ </aqua><white><bold><name></bold></white><aqua> ✦</aqua>"
+
+cost:
+  free: "<green>無料</green>"
+
+dialog:
+  create:
+    title: "<aqua><bold>エーテライトの設置</bold></aqua>"
+    description: "<gray>設置座標: </gray><white><world> (<x>, <y>, <z>)</white>"
+    name-input-label: "<aqua>エーテライト名</aqua>"
+    default-name: "<player>のエーテライト"
+  button:
+    confirm-create: "<green><bold>設置する</bold></green>"
+    cancel: "<gray>キャンセル</gray>"
+    close: "<gray>閉じる</gray>"
+    open-remove-confirm: "<red>このエーテライトを撤去</red>"
+    open-remove-confirm-tooltip: "<gray>このエーテライトを撤去し、アイテムを回収します</gray>"
+    confirm-remove: "<red><bold>撤去する</bold></red>"
+  warp:
+    title: "<aqua>✦ エーテライト: </aqua><white><bold><name></bold></white>"
+    body-empty: "<gray>現在地: </gray><white><name></white><newline><yellow>ワープ可能な他のエーテライトがまだありません。</yellow>"
+    body-select: "<gray>ワープ先のエーテライトを選択してください。</gray>"
+    destination-available: "<aqua>✦ </aqua><white><name></white><dark_gray> [</dark_gray><cost><dark_gray>]</dark_gray>"
+    destination-unavailable: "<red>✖ </red><gray><name></gray><dark_gray> [</dark_gray><cost><dark_gray>]</dark_gray>"
+    distance-blocks: "<white><blocks> ブロック</white>"
+    distance-other-dimension: "<light_purple>別ディメンション</light_purple>"
+    tooltip-allowed: "<gray>ワールド: </gray><gold><world></gold><newline><gray>座標: </gray><white><x>, <y>, <z></white><newline><gray>距離: </gray><distance><newline><gray>コスト: </gray><cost><newline><green>クリックしてワープ</green>"
+    tooltip-denied: "<gray>ワールド: </gray><gold><world></gold><newline><gray>座標: </gray><white><x>, <y>, <z></white><newline><gray>距離: </gray><distance><newline><gray>コスト: </gray><cost><newline><red>ワープ不可: </red><reason>"
+  remove:
+    title: "<red><bold>エーテライトの撤去確認: </bold></red><white><name></white>"
+    body: "<gray>本当に「</gray><white><name></white><gray>」を撤去しますか？</gray><newline><yellow>撤去するとエーテライトアイテムが返却されます。</yellow>"
+
+aetheryte:
+  created: "<prefix><green>エーテライト「</green><white><bold><name></bold></white><green>」を設置しました。</green>"
+  removed: "<prefix><yellow>エーテライト「</yellow><white><bold><name></bold></white><yellow>」を撤去しました。</yellow>"
+
+warp:
+  success: "<prefix><aqua>「</aqua><white><bold><name></bold></white><aqua>」へワープしました。</aqua>"
+
+error:
+  invalid-name: "<prefix><red>有効なエーテライト名を入力してください（1〜32文字）。</red>"
+  space-not-empty: "<prefix><red>設置予定位置にブロックが存在するため設置できません。</red>"
+  already-exists: "<prefix><red>その場所には既にエーテライトが存在します。</red>"
+  missing-item: "<prefix><red>エーテライトアイテムを所持していません。</red>"
+  not-found: "<prefix><red>対象のエーテライトが見つかりません。</red>"
+  not-owner: "<prefix><red>このエーテライトを撤去する権限がありません（設置者のみ撤去可能）。</red>"
+  no-permission: "<prefix><red>この操作を行う権限がありません。</red>"
+  no-warp-permission: "<red>ワープ権限がありません</red>"
+  warp-requirements-not-met: "<red>条件を満たしていません</red>"
+  insufficient-cost: "<red>コストが不足しています</red>"
+  warp-denied: "<prefix><red>ワープできません: </red><reason>"
+  destination-unsafe: "<prefix><red>ワープ先の着地地点が塞がれているか安全ではないためワープできません。</red>"
+  protected-break: "<prefix><red>エーテライトは直接破壊できません。右クリックメニューから撤去してください。</red>"
+
+command:
+  given-item: "<prefix><white><player></white><green> にエーテライトを <amount> 個付与しました。</green>"
+  console-specify-player: "<prefix><red>コンソールから実行する場合は対象プレイヤーを指定してください。</red>"
+  reloaded: "<prefix><green>ClickPortals の設定と翻訳ファイルを再読み込みしました。</green>"

@@ -26,10 +26,11 @@ import io.papermc.paper.command.brigadier.argument.ArgumentTypes;
 import io.papermc.paper.command.brigadier.argument.resolvers.selector.PlayerSelectorArgumentResolver;
 import java.util.List;
 import java.util.Map;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
+import net.sabafly.clickportals.ClickPortals;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
+import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
+import net.sabafly.clickportals.permission.Permissions;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
@@ -38,7 +39,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 
 /**
- * Brigadier command tree for {@code /clickportals}.
+ * Brigadier command tree for {@code /clickportals} (#17, #18, #19).
  */
 @SuppressWarnings("UnstableApiUsage")
 public final class ClickPortalsCommand {
@@ -49,38 +50,50 @@ public final class ClickPortalsCommand {
     /**
      * Builds the {@code /clickportals} Brigadier command node.
      */
-    public static LiteralCommandNode<CommandSourceStack> createCommand(final Plugin plugin) {
+    public static LiteralCommandNode<CommandSourceStack> createCommand(
+            final ClickPortals plugin,
+            final Messages messages
+    ) {
         return Commands.literal("clickportals")
-                .requires(source -> source.getSender().hasPermission("clickportals.admin") || source.getSender().isOp())
+                .requires(source -> Permissions.canUseCommand(source.getSender()))
                 .then(Commands.literal("give")
+                        .requires(source -> Permissions.canGive(source.getSender()))
                         .executes(ctx -> {
                             final CommandSender sender = ctx.getSource().getSender();
                             if (!(sender instanceof Player player)) {
-                                sender.sendMessage(Messages.prefix().append(
-                                        Component.text("コンソールから実行する場合は対象プレイヤーを指定してください。", NamedTextColor.RED)
-                                ));
+                                messages.send(sender, MessageKey.COMMAND_CONSOLE_SPECIFY_PLAYER);
                                 return Command.SINGLE_SUCCESS;
                             }
-                            giveItems(plugin, sender, List.of(player), 1);
+                            giveItems(plugin, messages, sender, List.of(player), 1);
                             return Command.SINGLE_SUCCESS;
                         })
                         .then(Commands.argument("targets", ArgumentTypes.players())
                                 .executes(ctx -> {
-                                    final PlayerSelectorArgumentResolver resolver = ctx.getArgument("targets", PlayerSelectorArgumentResolver.class);
+                                    final PlayerSelectorArgumentResolver resolver =
+                                            ctx.getArgument("targets", PlayerSelectorArgumentResolver.class);
                                     final List<Player> targets = resolver.resolve(ctx.getSource());
-                                    giveItems(plugin, ctx.getSource().getSender(), targets, 1);
+                                    giveItems(plugin, messages, ctx.getSource().getSender(), targets, 1);
                                     return Command.SINGLE_SUCCESS;
                                 })
                                 .then(Commands.argument("amount", IntegerArgumentType.integer(1, 64))
                                         .executes(ctx -> {
-                                            final PlayerSelectorArgumentResolver resolver = ctx.getArgument("targets", PlayerSelectorArgumentResolver.class);
+                                            final PlayerSelectorArgumentResolver resolver =
+                                                    ctx.getArgument("targets", PlayerSelectorArgumentResolver.class);
                                             final List<Player> targets = resolver.resolve(ctx.getSource());
                                             final int amount = IntegerArgumentType.getInteger(ctx, "amount");
-                                            giveItems(plugin, ctx.getSource().getSender(), targets, amount);
+                                            giveItems(plugin, messages, ctx.getSource().getSender(), targets, amount);
                                             return Command.SINGLE_SUCCESS;
                                         })
                                 )
                         )
+                )
+                .then(Commands.literal("reload")
+                        .requires(source -> Permissions.canReload(source.getSender()))
+                        .executes(ctx -> {
+                            final CommandSender sender = ctx.getSource().getSender();
+                            plugin.reloadPlugin(sender);
+                            return Command.SINGLE_SUCCESS;
+                        })
                 )
                 .build();
     }
@@ -90,6 +103,7 @@ public final class ClickPortalsCommand {
      */
     private static void giveItems(
             final Plugin plugin,
+            final Messages messages,
             final CommandSender sender,
             final List<Player> targets,
             final int amount
@@ -108,7 +122,7 @@ public final class ClickPortalsCommand {
                     }
                 }
             }, null);
-            sender.sendMessage(Messages.commandGivenItem(target.getName(), amount));
+            sender.sendMessage(messages.commandGivenItem(sender, target.getName(), amount));
         }
     }
 }

@@ -27,6 +27,8 @@ import net.sabafly.clickportals.config.PluginConfig;
 import net.sabafly.clickportals.dialog.AetheryteDialogFactory;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
 import net.sabafly.clickportals.listener.AetheryteListener;
+import net.sabafly.clickportals.message.MessageKey;
+import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.visual.HologramService;
 import net.sabafly.clickportals.visual.NoopHologramService;
@@ -34,6 +36,7 @@ import net.sabafly.clickportals.visual.PacketEventsHologramService;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jspecify.annotations.Nullable;
@@ -47,14 +50,26 @@ public final class ClickPortals extends JavaPlugin {
     private static final double MAX_INTERACT_DISTANCE_SQUARED = 36.0;
 
     private @Nullable ConfigManager configManager;
+    private @Nullable Messages messages;
     private @Nullable AetheryteRegistry registry;
     private @Nullable HologramService hologramService;
+    private @Nullable AetheryteService aetheryteService;
+    private @Nullable AetheryteDialogFactory dialogFactory;
+    private @Nullable AetheryteListener aetheryteListener;
 
     @Override
     public void onEnable() {
         final ConfigManager cfgManager = new ConfigManager(getDataPath().resolve("config.yml"), getSLF4JLogger());
         this.configManager = cfgManager;
         final PluginConfig config = cfgManager.load();
+
+        final Messages msgService = Messages.load(
+                getDataPath().resolve("lang"),
+                config.defaultLocale(),
+                config.useClientLocale(),
+                getSLF4JLogger()
+        );
+        this.messages = msgService;
 
         final AetheryteRegistry aetheryteRegistry = new AetheryteRegistry();
         this.registry = aetheryteRegistry;
@@ -63,30 +78,31 @@ public final class ClickPortals extends JavaPlugin {
             aetheryteRegistry.loadWorld(world);
         }
 
-        final HologramService activeHologramService = createHologramService(config);
+        final HologramService activeHologramService = createHologramService(config, msgService);
         this.hologramService = activeHologramService;
 
-        final AetheryteService service = new AetheryteService(this, aetheryteRegistry, activeHologramService);
-        final AetheryteDialogFactory dialogFactory = new AetheryteDialogFactory(service);
+        final AetheryteService service = new AetheryteService(this, aetheryteRegistry, activeHologramService, msgService);
+        this.aetheryteService = service;
+        final AetheryteDialogFactory dialogs = new AetheryteDialogFactory(service, msgService);
+        this.dialogFactory = dialogs;
 
-        activeHologramService.setInteractionHandler((player, aetheryteId) ->
-                player.getScheduler().run(this, task ->
-                        aetheryteRegistry.getById(aetheryteId)
-                                .filter(aetheryte -> isWithinReach(player, aetheryte))
-                                .ifPresent(aetheryte -> dialogFactory.openWarpDialog(player, aetheryte)),
-                        null)
+        bindInteractionHandler(activeHologramService, aetheryteRegistry, dialogs);
+
+        AetheryteItemFactory.registerRecipe(config, msgService);
+
+        final AetheryteListener listener = new AetheryteListener(
+                this,
+                aetheryteRegistry,
+                dialogs,
+                activeHologramService,
+                msgService
         );
-
-        AetheryteItemFactory.registerRecipe(config);
-
-        Bukkit.getPluginManager().registerEvents(
-                new AetheryteListener(this, aetheryteRegistry, dialogFactory, activeHologramService),
-                this
-        );
+        this.aetheryteListener = listener;
+        Bukkit.getPluginManager().registerEvents(listener, this);
 
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event -> {
             event.registrar().register(
-                    ClickPortalsCommand.createCommand(this),
+                    ClickPortalsCommand.createCommand(this, msgService),
                     "ClickPortals management command",
                     List.of("cp")
             );
@@ -110,8 +126,114 @@ public final class ClickPortals extends JavaPlugin {
             registry.clear();
             registry = null;
         }
+        aetheryteListener = null;
+        dialogFactory = null;
+        aetheryteService = null;
+        messages = null;
         configManager = null;
         getComponentLogger().info("ClickPortals disabled.");
+    }
+
+    /**
+     * Reloads configuration, language files, recipes, and client-side holograms on the global region scheduler (#19).
+     */
+    public void reloadPlugin(final CommandSender sender) {
+        final ConfigManager cfgManager = this.configManager;
+        final Messages msgService = this.messages;
+        final AetheryteRegistry aetheryteRegistry = this.registry;
+        final HologramService currentHologramService = this.hologramService;
+        final AetheryteService service = this.aetheryteService;
+        final AetheryteDialogFactory dialogs = this.dialogFactory;
+        final AetheryteListener listener = this.aetheryteListener;
+        if (cfgManager == null
+                || msgService == null
+                || aetheryteRegistry == null
+                || currentHologramService == null
+                || service == null
+                || dialogs == null
+                || listener == null) {
+            return;
+        }
+
+        Bukkit.getGlobalRegionScheduler().execute(this, () -> {
+            final PluginConfig reloadedConfig = cfgManager.load();
+            msgService.reload(
+                    getDataPath().resolve("lang"),
+                    reloadedConfig.defaultLocale(),
+                    reloadedConfig.useClientLocale(),
+                    getSLF4JLogger()
+            );
+            AetheryteItemFactory.registerRecipe(reloadedConfig, msgService);
+
+            final HologramService activeHologramService = resolveReloadedHologramService(
+                    reloadedConfig,
+                    msgService,
+                    aetheryteRegistry,
+                    dialogs
+            );
+            service.setHologramService(activeHologramService);
+            listener.setHologramService(activeHologramService);
+
+            for (final Player player : Bukkit.getOnlinePlayers()) {
+                player.getScheduler().run(this, task -> {
+                    if (player.isOnline()) {
+                        activeHologramService.refreshPlayer(
+                                player,
+                                aetheryteRegistry.getByWorld(player.getWorld().getUID())
+                        );
+                    }
+                }, null);
+            }
+            msgService.send(sender, MessageKey.COMMAND_RELOADED);
+            getComponentLogger().info("ClickPortals configuration and translations reloaded.");
+        });
+    }
+
+    /**
+     * Re-evaluates {@code hologram.enabled} on reload, switching between {@link PacketEventsHologramService}
+     * and {@link NoopHologramService} and destroying existing displays when disabled.
+     */
+    private HologramService resolveReloadedHologramService(
+            final PluginConfig reloadedConfig,
+            final Messages msgService,
+            final AetheryteRegistry aetheryteRegistry,
+            final AetheryteDialogFactory dialogs
+    ) {
+        final HologramService current = this.hologramService != null
+                ? this.hologramService
+                : NoopHologramService.INSTANCE;
+        if (!reloadedConfig.hologramEnabled()) {
+            if (current != NoopHologramService.INSTANCE) {
+                current.destroyAll();
+            }
+            this.hologramService = NoopHologramService.INSTANCE;
+            return NoopHologramService.INSTANCE;
+        }
+        if (current == NoopHologramService.INSTANCE) {
+            final HologramService created = createHologramService(reloadedConfig, msgService);
+            bindInteractionHandler(created, aetheryteRegistry, dialogs);
+            this.hologramService = created;
+            return created;
+        }
+        current.updateSettings(reloadedConfig);
+        return current;
+    }
+
+    /**
+     * Registers the virtual interaction entity callback on the given {@link HologramService}.
+     */
+    private void bindInteractionHandler(
+            final HologramService targetService,
+            final AetheryteRegistry aetheryteRegistry,
+            final AetheryteDialogFactory dialogs
+    ) {
+        targetService.setInteractionHandler((player, aetheryteId) ->
+                player.getScheduler().run(this, task ->
+                        aetheryteRegistry.getById(aetheryteId)
+                                .filter(aetheryte -> isWithinReach(player, aetheryte))
+                                .ifPresent(aetheryte -> dialogs.openWarpDialog(player, aetheryte)),
+                        null)
+        );
     }
 
     /**
@@ -119,6 +241,13 @@ public final class ClickPortals extends JavaPlugin {
      */
     public @Nullable ConfigManager configManager() {
         return configManager;
+    }
+
+    /**
+     * Returns the active {@link Messages} service, if the plugin is enabled.
+     */
+    public @Nullable Messages messages() {
+        return messages;
     }
 
     /**
@@ -138,13 +267,17 @@ public final class ClickPortals extends JavaPlugin {
     /**
      * Creates the appropriate {@link HologramService} based on configuration and PacketEvents availability.
      */
-    private HologramService createHologramService(final PluginConfig config) {
+    private HologramService createHologramService(final PluginConfig config, final Messages msgService) {
         if (!config.hologramEnabled()) {
             return NoopHologramService.INSTANCE;
         }
         if (Bukkit.getPluginManager().getPlugin("packetevents") != null) {
             getComponentLogger().info("PacketEvents detected; enabling client-side Aetheryte visuals and interaction.");
-            return new PacketEventsHologramService(config.hologramViewDistance(), config.displayBlock());
+            return new PacketEventsHologramService(
+                    config.hologramViewDistance(),
+                    config.displayBlock(),
+                    msgService
+            );
         }
         return NoopHologramService.INSTANCE;
     }

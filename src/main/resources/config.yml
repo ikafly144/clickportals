@@ -1,26 +1,33 @@
 # ClickPortals Configuration
 
-# エーテライト作成用アイテムのクラフトレシピ設定
+# Language and localization settings
+language:
+  # Fallback locale used for console messages, item names, and unsupported client locales (e.g. en_US, ja_JP)
+  default-locale: en_US
+  # Whether to automatically switch player-facing messages and holograms to match the player's client language
+  use-client-locale: true
+
+# Crafting recipe settings for the Aetheryte creation item
 recipe:
-  # クラフトレシピを有効にするかどうか
+  # Whether the crafting recipe is enabled
   enabled: true
-  # エーテライト作成用アイテムのベース素材 (機能コンポーネントはマスクされます)
+  # Base material for the Aetheryte creation item (vanilla item components are masked)
   item-material: COMPASS
-  # 3x3 クラフトグリッドの形状 (1〜3行、各行1〜3文字)
+  # 3x3 crafting grid shape (1-3 rows, 1-3 characters per row)
   shape:
     - SSS
     - SAS
     - SSS
-  # 形状内の文字と Bukkit Material 名の対応
+  # Mapping of shape characters to Bukkit Material names
   ingredients:
     S: CHISELED_STONE_BRICKS
     A: AMETHYST_SHARD
 
-# エーテライトのクライアントサイド表示 (PacketEvents Display & Interaction) 設定
+# Client-side visual and interaction (PacketEvents Display & Interaction) settings
 hologram:
-  # PacketEvents を用いたクライアントサイド表示とインタラクト判定を有効にするかどうか
+  # Whether PacketEvents client-side displays and interaction hitboxes are enabled
   enabled: true
-  # ホログラムおよびモデルの表示距離 (ブロック単位、最小 4.0)
+  # View distance for holograms and models in blocks (minimum 4.0)
   view-distance: 32.0
-  # エーテライトの筐体としてクライアントに表示するブロック状態
+  # Block state displayed to clients as the Aetheryte body
   display-block: minecraft:lodestone

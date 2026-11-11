@@ -89,8 +89,9 @@ public final class PacketEventsHologramService implements HologramService {
     private final Map<UUID, ClientEntitySet> entitiesByAetheryte = new ConcurrentHashMap<>();
     private final Map<Integer, UUID> aetheryteByEntityId = new ConcurrentHashMap<>();
     private final Map<UUID, Long> lastInteractMillisByPlayer = new ConcurrentHashMap<>();
-    private final float viewRangeMultiplier;
-    private final int resolvedBlockStateId;
+    private final Messages messages;
+    private volatile float viewRangeMultiplier;
+    private volatile int resolvedBlockStateId;
     private volatile @Nullable BiConsumer<Player, UUID> interactionHandler;
     private @Nullable PacketListenerCommon registeredListener;
 
@@ -98,16 +99,35 @@ public final class PacketEventsHologramService implements HologramService {
      * Creates a new {@link PacketEventsHologramService} with the default Lodestone display block.
      */
     public PacketEventsHologramService(final double viewDistanceBlocks) {
-        this(viewDistanceBlocks, "minecraft:lodestone");
+        this(viewDistanceBlocks, "minecraft:lodestone", Messages.defaults());
     }
 
     /**
      * Creates a new {@link PacketEventsHologramService} with the given view distance and display block state string.
      */
     public PacketEventsHologramService(final double viewDistanceBlocks, final String displayBlockStateString) {
+        this(viewDistanceBlocks, displayBlockStateString, Messages.defaults());
+    }
+
+    /**
+     * Creates a new {@link PacketEventsHologramService} with the given view distance, display block state string,
+     * and {@link Messages} service.
+     */
+    public PacketEventsHologramService(
+            final double viewDistanceBlocks,
+            final String displayBlockStateString,
+            final Messages messages
+    ) {
+        this.messages = messages;
         this.viewRangeMultiplier = (float) Math.max(0.05, viewDistanceBlocks / BASE_VIEW_RANGE_BLOCKS);
         this.resolvedBlockStateId = resolveBlockStateGlobalId(displayBlockStateString);
         registerPacketListenerIfReady();
+    }
+
+    @Override
+    public void updateSettings(final net.sabafly.clickportals.config.PluginConfig config) {
+        this.viewRangeMultiplier = (float) Math.max(0.05, config.hologramViewDistance() / BASE_VIEW_RANGE_BLOCKS);
+        this.resolvedBlockStateId = resolveBlockStateGlobalId(config.displayBlock());
     }
 
     /**
@@ -363,7 +383,7 @@ public final class PacketEventsHologramService implements HologramService {
                 0,
                 Optional.empty()
         );
-        final Component title = Messages.hologramTitle(aetheryte.name());
+        final Component title = messages.hologramTitle(player, aetheryte.name());
         final List<EntityData<?>> textMeta = List.of(
                 new EntityData<>(DISPLAY_BILLBOARD_INDEX, EntityDataTypes.BYTE, BILLBOARD_CENTER),
                 new EntityData<>(DISPLAY_VIEW_RANGE_INDEX, EntityDataTypes.FLOAT, viewRangeMultiplier),

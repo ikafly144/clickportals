@@ -30,6 +30,7 @@ import java.util.List;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickCallback;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation;
@@ -37,7 +38,7 @@ import org.bukkit.World;
 import org.bukkit.entity.Player;
 
 /**
- * Paper Dialog API factory for Aetheryte creation, warp destination selection, and removal (#13).
+ * Paper Dialog API factory for Aetheryte creation, warp destination selection, and removal (#13, #18, #19).
  */
 @SuppressWarnings("UnstableApiUsage")
 public final class AetheryteDialogFactory {
@@ -49,12 +50,21 @@ public final class AetheryteDialogFactory {
             .build();
 
     private final AetheryteService service;
+    private final Messages messages;
 
     /**
-     * Creates a new {@link AetheryteDialogFactory}.
+     * Creates a new {@link AetheryteDialogFactory} using the {@link Messages} from {@code service}.
      */
     public AetheryteDialogFactory(final AetheryteService service) {
+        this(service, service.messages());
+    }
+
+    /**
+     * Creates a new {@link AetheryteDialogFactory} with an explicit {@link Messages} instance.
+     */
+    public AetheryteDialogFactory(final AetheryteService service, final Messages messages) {
         this.service = service;
+        this.messages = messages;
     }
 
     /**
@@ -67,9 +77,9 @@ public final class AetheryteDialogFactory {
             final int blockY,
             final int blockZ
     ) {
-        final String defaultName = player.getName() + "のエーテライト";
+        final String defaultName = messages.createDialogDefaultName(player);
 
-        final ActionButton confirmButton = ActionButton.builder(Messages.buttonConfirmCreate())
+        final ActionButton confirmButton = ActionButton.builder(messages.buttonConfirmCreate(player))
                 .width(150)
                 .action(DialogAction.customClick((view, audience) -> {
                     if (!(audience instanceof Player clicker)) {
@@ -77,27 +87,27 @@ public final class AetheryteDialogFactory {
                     }
                     final String enteredName = view.getText(INPUT_KEY_NAME);
                     if (enteredName == null) {
-                        clicker.sendMessage(Messages.errorInvalidName());
+                        messages.send(clicker, MessageKey.ERROR_INVALID_NAME);
                         return;
                     }
                     service.placeAetheryte(clicker, world, blockX, blockY, blockZ, enteredName);
                 }, SINGLE_USE_CALLBACK))
                 .build();
 
-        final ActionButton cancelButton = ActionButton.builder(Messages.buttonCancel())
+        final ActionButton cancelButton = ActionButton.builder(messages.buttonCancel(player))
                 .width(150)
                 .build();
 
         final Dialog dialog = Dialog.create(factory -> factory.empty()
-                .base(DialogBase.builder(Messages.createDialogTitle())
+                .base(DialogBase.builder(messages.createDialogTitle(player))
                         .canCloseWithEscape(true)
                         .pause(false)
                         .afterAction(DialogBase.DialogAfterAction.CLOSE)
                         .body(List.of(
-                                DialogBody.plainMessage(Messages.createDialogDescription(world.getName(), blockX, blockY, blockZ))
+                                DialogBody.plainMessage(messages.createDialogDescription(player, world.getName(), blockX, blockY, blockZ))
                         ))
                         .inputs(List.of(
-                                DialogInput.text(INPUT_KEY_NAME, Messages.createDialogNameInputLabel())
+                                DialogInput.text(INPUT_KEY_NAME, messages.createDialogNameInputLabel(player))
                                         .width(240)
                                         .maxLength(32)
                                         .initial(defaultName)
@@ -122,9 +132,10 @@ public final class AetheryteDialogFactory {
         for (final Aetheryte destination : allDestinations) {
             final WarpEvaluation evaluation = service.evaluateWarp(player, current, destination);
             final Component label = evaluation.allowed()
-                    ? Messages.warpDestinationLabel(destination, evaluation.costDisplay())
-                    : Messages.warpDestinationUnavailableLabel(destination, evaluation.costDisplay());
-            final Component tooltip = Messages.warpDestinationTooltip(
+                    ? messages.warpDestinationLabel(player, destination, evaluation.costDisplay())
+                    : messages.warpDestinationUnavailableLabel(player, destination, evaluation.costDisplay());
+            final Component tooltip = messages.warpDestinationTooltip(
+                    player,
                     current,
                     destination,
                     evaluation.costDisplay(),
@@ -144,8 +155,8 @@ public final class AetheryteDialogFactory {
         }
 
         if (AetheryteService.canRemove(player, current)) {
-            buttons.add(ActionButton.builder(Messages.buttonOpenRemoveConfirm())
-                    .tooltip(Messages.buttonOpenRemoveConfirmTooltip())
+            buttons.add(ActionButton.builder(messages.buttonOpenRemoveConfirm(player))
+                    .tooltip(messages.buttonOpenRemoveConfirmTooltip(player))
                     .width(220)
                     .action(DialogAction.customClick((view, audience) -> {
                         if (audience instanceof Player clicker) {
@@ -155,18 +166,18 @@ public final class AetheryteDialogFactory {
                     .build());
         }
 
-        final ActionButton closeButton = ActionButton.builder(Messages.buttonClose())
+        final ActionButton closeButton = ActionButton.builder(messages.buttonClose(player))
                 .width(150)
                 .build();
 
         if (buttons.isEmpty()) {
             final Dialog noticeDialog = Dialog.create(factory -> factory.empty()
-                    .base(DialogBase.builder(Messages.warpDialogTitle(current))
+                    .base(DialogBase.builder(messages.warpDialogTitle(player, current))
                             .canCloseWithEscape(true)
                             .pause(false)
                             .afterAction(DialogBase.DialogAfterAction.CLOSE)
                             .body(List.of(
-                                    DialogBody.plainMessage(Messages.warpDialogBody(current, 0))
+                                    DialogBody.plainMessage(messages.warpDialogBody(player, current, 0))
                             ))
                             .build())
                     .type(DialogType.notice(closeButton))
@@ -176,12 +187,12 @@ public final class AetheryteDialogFactory {
         }
 
         final Dialog dialog = Dialog.create(factory -> factory.empty()
-                .base(DialogBase.builder(Messages.warpDialogTitle(current))
+                .base(DialogBase.builder(messages.warpDialogTitle(player, current))
                         .canCloseWithEscape(true)
                         .pause(false)
                         .afterAction(DialogBase.DialogAfterAction.CLOSE)
                         .body(List.of(
-                                DialogBody.plainMessage(Messages.warpDialogBody(current, allDestinations.size()))
+                                DialogBody.plainMessage(messages.warpDialogBody(player, current, allDestinations.size()))
                         ))
                         .build())
                 .type(DialogType.multiAction(buttons)
@@ -197,7 +208,7 @@ public final class AetheryteDialogFactory {
      * Opens a confirmation dialog before removing an Aetheryte.
      */
     public void openRemoveConfirmDialog(final Player player, final Aetheryte target) {
-        final ActionButton confirmRemove = ActionButton.builder(Messages.buttonConfirmRemove())
+        final ActionButton confirmRemove = ActionButton.builder(messages.buttonConfirmRemove(player))
                 .width(150)
                 .action(DialogAction.customClick((view, audience) -> {
                     if (audience instanceof Player clicker) {
@@ -206,17 +217,17 @@ public final class AetheryteDialogFactory {
                 }, SINGLE_USE_CALLBACK))
                 .build();
 
-        final ActionButton cancel = ActionButton.builder(Messages.buttonCancel())
+        final ActionButton cancel = ActionButton.builder(messages.buttonCancel(player))
                 .width(150)
                 .build();
 
         final Dialog dialog = Dialog.create(factory -> factory.empty()
-                .base(DialogBase.builder(Messages.removeConfirmDialogTitle(target))
+                .base(DialogBase.builder(messages.removeConfirmDialogTitle(player, target))
                         .canCloseWithEscape(true)
                         .pause(false)
                         .afterAction(DialogBase.DialogAfterAction.CLOSE)
                         .body(List.of(
-                                DialogBody.plainMessage(Messages.removeConfirmDialogBody(target))
+                                DialogBody.plainMessage(messages.removeConfirmDialogBody(player, target))
                         ))
                         .build())
                 .type(DialogType.confirmation(confirmRemove, cancel))
