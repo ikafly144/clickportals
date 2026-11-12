@@ -22,6 +22,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -263,6 +264,53 @@ class AetheryteListenerTest {
 
             verify(evaluator, never()).charge(any(), any(), any());
             verify(player).sendMessage(any(Component.class));
+        } finally {
+            serverField.set(null, null);
+        }
+    }
+
+    @Test
+    void inFlightWarpDebouncesDuplicateAttempts() throws Exception {
+        final Server server = mock(Server.class);
+        final java.lang.reflect.Field serverField = Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            when(server.getWorld(WORLD_ID)).thenReturn(world);
+            final RegionScheduler regionScheduler = mock(RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+
+            final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
+            when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
+
+            final AetheryteService customService = new AetheryteService(
+                    plugin,
+                    registry,
+                    VariationRegistry.defaults(),
+                    NoopHologramService.INSTANCE,
+                    Messages.defaults(),
+                    () -> -1,
+                    () -> 0,
+                    p -> 0L,
+                    (p, t) -> {},
+                    evaluator
+            );
+
+            final Player player = mock(Player.class);
+            final UUID playerId = UUID.randomUUID();
+            when(player.getUniqueId()).thenReturn(playerId);
+            when(player.hasPermission("clickportals.use")).thenReturn(true);
+            when(player.getWorld()).thenReturn(world);
+            when(player.getLocation()).thenReturn(new Location(world, 5, 64, 5));
+
+            // Keep region execution pending so warp remains in flight
+            customService.warpToAetheryte(player, registeredAetheryte, registeredAetheryte.id());
+
+            // Second warp attempt should be debounced immediately
+            customService.warpToAetheryte(player, registeredAetheryte, registeredAetheryte.id());
+
+            // Region execution was requested exactly once
+            verify(regionScheduler, times(1)).execute(any(), any(Location.class), any(Runnable.class));
         } finally {
             serverField.set(null, null);
         }

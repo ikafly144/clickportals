@@ -221,4 +221,52 @@ class PlacementCostTest {
         service.processPendingRefunds(player);
         verify(economy, times(2)).deposit(eq(player), eq(100.0));
     }
+
+    @Test
+    void processPendingRefundsPreservesNewlyAddedRefunds() {
+        final AetheryteService service = new AetheryteService(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                messages,
+                () -> -1,
+                () -> 0,
+                p -> 0L,
+                (p, t) -> {},
+                (p, s, d) -> AetheryteService.WarpEvaluation.permitted(Component.empty())
+        );
+        service.setEconomyProvider(economy);
+
+        final CostBundle bundle1 = new CostBundle(List.of(CostEntry.of(CostType.VAULT, "100")));
+        final CostQuote quote1 = bundle1.quote(player, Map.of(), economy);
+        final CostBundle bundle2 = new CostBundle(List.of(CostEntry.of(CostType.VAULT, "200")));
+        final CostQuote quote2 = bundle2.quote(player, Map.of(), economy);
+
+        final Location targetLocation = new Location(world, 10, 64, 20);
+        final java.util.concurrent.atomic.AtomicBoolean deposit200Success = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+        // Fail immediate refund for bundle1
+        when(economy.deposit(eq(player), anyDouble())).thenReturn(false);
+        service.refundPlacement(player, targetLocation, "costly", false, false, bundle1, quote1);
+
+        // When processing pending refunds for bundle1, another failure adds bundle2
+        when(economy.deposit(eq(player), eq(100.0))).thenAnswer(inv -> {
+            service.refundPlacement(player, targetLocation, "costly", false, false, bundle2, quote2);
+            return true;
+        });
+        when(economy.deposit(eq(player), eq(200.0))).thenAnswer(inv -> deposit200Success.get());
+
+        service.processPendingRefunds(player);
+
+        // Bundle 1 was refunded: attempted once on initial placement failure and once on processPendingRefunds
+        verify(economy, times(2)).deposit(eq(player), eq(100.0));
+        // Bundle 2 attempted once on nested failure and failed
+        verify(economy, times(1)).deposit(eq(player), eq(200.0));
+
+        // Bundle 2 is still in pendingRefunds and is refunded on the next processing pass
+        deposit200Success.set(true);
+        service.processPendingRefunds(player);
+        verify(economy, times(2)).deposit(eq(player), eq(200.0));
+    }
 }

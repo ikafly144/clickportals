@@ -62,6 +62,24 @@ public enum CostType {
     }
 
     /**
+     * Checks whether this cost type represents a discrete integer Minecraft quantity (#7).
+     */
+    public boolean isInteger() {
+        return this != VAULT;
+    }
+
+    /**
+     * Normalizes the assessed amount according to this cost type's precision rules (#7).
+     * Integer quantities are rounded to the nearest whole number.
+     */
+    public double normalize(final double amount) {
+        if (!Double.isFinite(amount) || amount < 0.0) {
+            return amount;
+        }
+        return isInteger() ? (double) Math.round(amount) : amount;
+    }
+
+    /**
      * Resolves a {@link CostType} from its config string representation, returning {@code null} on unrecognized types.
      * Null or blank input defaults to {@link #VAULT}.
      */

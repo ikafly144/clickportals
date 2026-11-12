@@ -173,6 +173,7 @@ public final class AetheryteService {
     private volatile WarpCostEvaluator costEvaluator;
     private volatile EconomyProvider economyProvider = NoopEconomyProvider.INSTANCE;
     private final Set<UUID> pendingPlacements = ConcurrentHashMap.newKeySet();
+    private final Set<UUID> inFlightWarps = ConcurrentHashMap.newKeySet();
     private final Map<UUID, List<CostItemQuote>> pendingRefunds = new ConcurrentHashMap<>();
     private static final double BASE_INTERACT_REACH = 6.0;
 
@@ -357,6 +358,7 @@ public final class AetheryteService {
      */
     public void removePlayer(final UUID playerId) {
         pendingPlacements.remove(playerId);
+        inFlightWarps.remove(playerId);
     }
 
     /**
@@ -461,13 +463,19 @@ public final class AetheryteService {
             if (currentItems == null || currentItems.isEmpty()) {
                 return;
             }
-            final CostQuote quote = new CostQuote(new ArrayList<>(currentItems), true);
-            final boolean success = new CostBundle(List.of()).refund(player, quote, economyProvider);
-            if (success) {
-                pendingRefunds.remove(player.getUniqueId());
+            final List<CostItemQuote> snapshot = new ArrayList<>(currentItems);
+            final CostQuote quote = new CostQuote(snapshot, true);
+            final CostBundle.RefundResult result = new CostBundle(List.of()).refundWithResult(player, quote, economyProvider);
+            final List<CostItemQuote> succeeded = new ArrayList<>(snapshot);
+            succeeded.removeAll(result.unrefundedItems());
+            currentItems.removeAll(succeeded);
+            if (currentItems.isEmpty()) {
+                pendingRefunds.remove(player.getUniqueId(), currentItems);
+            }
+            if (result.success()) {
                 plugin.getSLF4JLogger().info("Processed pending placement cost refund for returning player {}", player.getName());
             } else {
-                plugin.getSLF4JLogger().warn("Failed to process pending placement cost refund for player {}", player.getName());
+                plugin.getSLF4JLogger().warn("Partially or wholly failed to process pending cost refund for player {}", player.getName());
             }
         }, () -> {
             // Player retired / disconnected before execution; keep pendingRefunds intact
@@ -868,10 +876,10 @@ public final class AetheryteService {
                 final ScheduledTask scheduled = player.getScheduler().run(
                         plugin,
                         t -> {
-                            final boolean refunded = costBundle.refund(player, costQuote, economyProvider);
-                            if (!refunded) {
+                            final CostBundle.RefundResult result = costBundle.refundWithResult(player, costQuote, economyProvider);
+                            if (!result.success()) {
                                 pendingRefunds.computeIfAbsent(player.getUniqueId(), k -> new CopyOnWriteArrayList<>())
-                                        .addAll(costQuote.items());
+                                        .addAll(result.unrefundedItems());
                                 plugin.getSLF4JLogger().warn(
                                         "Placement refund failed for player {}. Queued for next login.",
                                         player.getUniqueId());
@@ -1000,20 +1008,34 @@ public final class AetheryteService {
             final @Nullable Aetheryte source,
             final UUID destinationId
     ) {
+        final UUID playerId = player.getUniqueId();
+        if (playerId != null && !inFlightWarps.add(playerId)) {
+            return;
+        }
+
         final Optional<Aetheryte> opt = registry.getById(destinationId);
         if (opt.isEmpty()) {
+            if (playerId != null) {
+                inFlightWarps.remove(playerId);
+            }
             messages.send(player, MessageKey.ERROR_NOT_FOUND);
             return;
         }
         final Aetheryte destination = opt.get();
 
         if (source != null && !isWithinReach(player, source)) {
+            if (playerId != null) {
+                inFlightWarps.remove(playerId);
+            }
             messages.send(player, MessageKey.ERROR_TOO_FAR);
             return;
         }
 
         final WarpEvaluation evaluation = evaluateWarp(player, source, destination);
         if (!evaluation.allowed()) {
+            if (playerId != null) {
+                inFlightWarps.remove(playerId);
+            }
             final Component reason = evaluation.denyReason() != null
                     ? evaluation.denyReason()
                     : messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET);
@@ -1023,6 +1045,9 @@ public final class AetheryteService {
 
         final World targetWorld = Bukkit.getWorld(destination.worldId());
         if (targetWorld == null) {
+            if (playerId != null) {
+                inFlightWarps.remove(playerId);
+            }
             messages.send(player, MessageKey.ERROR_NOT_FOUND);
             return;
         }
@@ -1043,6 +1068,9 @@ public final class AetheryteService {
                     destVariation
             );
             if (safeLanding.isEmpty()) {
+                if (playerId != null) {
+                    inFlightWarps.remove(playerId);
+                }
                 messages.send(player, MessageKey.ERROR_DESTINATION_UNSAFE);
                 return;
             }
@@ -1050,11 +1078,17 @@ public final class AetheryteService {
 
             player.getScheduler().run(plugin, task -> {
                 if (source != null && !isWithinReach(player, source)) {
+                    if (playerId != null) {
+                        inFlightWarps.remove(playerId);
+                    }
                     messages.send(player, MessageKey.ERROR_TOO_FAR);
                     return;
                 }
 
                 if (!canUse(player)) {
+                    if (playerId != null) {
+                        inFlightWarps.remove(playerId);
+                    }
                     final WarpEvaluation recheck = evaluateWarp(player, source, destination);
                     final Component reason = recheck.denyReason() != null
                             ? recheck.denyReason()
@@ -1067,6 +1101,9 @@ public final class AetheryteService {
                 final boolean bypassCost = Permissions.canBypassWarpCost(player);
                 final boolean paid = bypassCost || activeEvaluator.charge(player, source, destination);
                 if (!paid) {
+                    if (playerId != null) {
+                        inFlightWarps.remove(playerId);
+                    }
                     final WarpEvaluation recheck = evaluateWarp(player, source, destination);
                     final Component reason = recheck.denyReason() != null
                             ? recheck.denyReason()
@@ -1079,6 +1116,9 @@ public final class AetheryteService {
                     modelService.triggerAnimation(source.id(), ModelAnimationTrigger.ON_WARP_DEPART);
                 }
                 final CompletableFuture<Void> unused = player.teleportAsync(destinationLoc).thenAccept(success -> {
+                    if (playerId != null) {
+                        inFlightWarps.remove(playerId);
+                    }
                     if (Boolean.TRUE.equals(success)) {
                         if (!bypassCost) {
                             activeEvaluator.commit(player, source, destination);
@@ -1094,6 +1134,9 @@ public final class AetheryteService {
                         handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_DESTINATION_UNSAFE);
                     }
                 }).exceptionally(ex -> {
+                    if (playerId != null) {
+                        inFlightWarps.remove(playerId);
+                    }
                     plugin.getSLF4JLogger().warn(
                             "Failed to teleport player {} to aetheryte {}",
                             player.getName(),
@@ -1104,9 +1147,16 @@ public final class AetheryteService {
                     return null;
                 });
                 if (unused.isCancelled()) {
+                    if (playerId != null) {
+                        inFlightWarps.remove(playerId);
+                    }
                     return;
                 }
-            }, null);
+            }, () -> {
+                if (playerId != null) {
+                    inFlightWarps.remove(playerId);
+                }
+            });
         });
     }
 
@@ -1118,6 +1168,10 @@ public final class AetheryteService {
             final boolean bypassCost,
             final MessageKey errorKey
     ) {
+        final UUID playerId = player.getUniqueId();
+        if (playerId != null) {
+            inFlightWarps.remove(playerId);
+        }
         final ScheduledTask task = player.getScheduler().run(plugin, t -> {
             if (!bypassCost) {
                 final boolean refunded = evaluator.refund(player, source, destination);

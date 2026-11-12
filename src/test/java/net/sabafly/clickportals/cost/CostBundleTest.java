@@ -301,5 +301,59 @@ class CostBundleTest {
         final String missingText = PlainTextComponentSerializer.plainText().serialize(missing);
         // Should not say "---" or insufficient currency
         assertThat(missingText).doesNotContain("---");
+        assertThat(missingText).contains("Requirements not met");
+        assertThat(missingText).doesNotContain("Not enough money");
+    }
+
+    @Test
+    void fractionalIntegerResourceIsNormalizedAndDoesNotAbortCharge() {
+        final java.util.concurrent.atomic.AtomicInteger level = new java.util.concurrent.atomic.AtomicInteger(3);
+        when(player.getLevel()).thenAnswer(inv -> level.get());
+        org.mockito.Mockito.doAnswer(inv -> {
+            level.set((int) inv.getArgument(0));
+            return null;
+        }).when(player).setLevel(org.mockito.ArgumentMatchers.anyInt());
+
+        // Formula 2.4 for an integer resource (EXP_LEVELS) should normalize to 2
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.EXP_LEVELS, "2.4", true)
+        ));
+
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        assertThat(quote.affordable()).isTrue();
+        assertThat(quote.items().get(0).amount()).isEqualTo(2.0);
+
+        // Charge must deduct 2 levels and succeed without triggering a rollback
+        final CostBundle.ChargeResult result = bundle.chargeWithResult(player, quote, economy);
+        assertThat(result.success()).isTrue();
+        assertThat(level.get()).isEqualTo(1); // 3 - 2 = 1
+    }
+
+    @Test
+    void partialRefundReturnsOnlyFailedItems() {
+        final java.util.concurrent.atomic.AtomicInteger level = new java.util.concurrent.atomic.AtomicInteger(5);
+        when(player.getLevel()).thenAnswer(inv -> level.get());
+        org.mockito.Mockito.doAnswer(inv -> {
+            level.set((int) inv.getArgument(0));
+            return null;
+        }).when(player).setLevel(org.mockito.ArgumentMatchers.anyInt());
+
+        when(economy.deposit(eq(player), anyDouble())).thenReturn(false);
+
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.EXP_LEVELS, "2"),
+                CostEntry.of(CostType.VAULT, "100")
+        ));
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        final CostBundle.RefundResult refundResult = bundle.refundWithResult(player, quote, economy);
+
+        assertThat(refundResult.success()).isFalse();
+        // Exp refund succeeded, so player's level increased back by 2
+        assertThat(level.get()).isEqualTo(7);
+
+        // Unrefunded items list must contain only the Vault cost item
+        assertThat(refundResult.unrefundedItems()).hasSize(1);
+        assertThat(refundResult.unrefundedItems().get(0).type()).isEqualTo(CostType.VAULT);
+        assertThat(refundResult.unrefundedItems().get(0).amount()).isEqualTo(100.0);
     }
 }

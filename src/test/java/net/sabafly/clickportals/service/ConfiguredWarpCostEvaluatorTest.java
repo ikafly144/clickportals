@@ -34,6 +34,7 @@ import net.sabafly.clickportals.config.DistanceSection;
 import net.sabafly.clickportals.config.PluginConfig;
 import net.sabafly.clickportals.config.PluginConfig.WarpSection;
 import net.sabafly.clickportals.cost.CostEntry;
+import net.sabafly.clickportals.cost.CostItemQuote;
 import net.sabafly.clickportals.cost.CostType;
 import net.sabafly.clickportals.economy.EconomyProvider;
 import net.sabafly.clickportals.message.Messages;
@@ -277,7 +278,19 @@ class ConfiguredWarpCostEvaluatorTest {
 
     @Test
     void effectiveMinGreaterThanMaxClampsToUnlimited() {
-        // Global min is 10, global max is 50
+        // Global min is 10, global max is 50 for this test
+        final WarpSection warpSection = new WarpSection(
+                new DistanceSection(10.0, 50.0),
+                List.of(CostEntry.of(CostType.VAULT, "$block_distance * 0.5 + 5")),
+                true
+        );
+        pluginConfig = new PluginConfig(
+                PluginConfig.LanguageSection.defaults(),
+                PluginConfig.HologramSection.defaults(),
+                PluginConfig.LimitsSection.defaults(),
+                warpSection,
+                net.sabafly.clickportals.route.DimensionRoutesConfig.defaults()
+        );
         final ConfiguredWarpCostEvaluator evaluator = createEvaluator();
 
         // Variation specifies min 100, but omits max (inherits global max 50)
@@ -300,6 +313,54 @@ class ConfiguredWarpCostEvaluatorTest {
 
         final WarpEvaluation eval = evaluator.evaluate(player, src, dest);
         assertThat(eval.allowed()).isTrue();
+    }
+
+    @Test
+    void partialRefundPushesBackOnlyUnrefundedItems() {
+        final java.util.concurrent.atomic.AtomicInteger level = new java.util.concurrent.atomic.AtomicInteger(10);
+        when(player.getLevel()).thenAnswer(inv -> level.get());
+        org.mockito.Mockito.doAnswer(inv -> {
+            level.set((int) inv.getArgument(0));
+            return null;
+        }).when(player).setLevel(org.mockito.ArgumentMatchers.anyInt());
+
+        final WarpSection warpSection = new WarpSection(
+                new DistanceSection(0.0, -1.0),
+                List.of(
+                        CostEntry.of(CostType.EXP_LEVELS, "2"),
+                        CostEntry.of(CostType.VAULT, "50")
+                ),
+                true
+        );
+        pluginConfig = new PluginConfig(
+                PluginConfig.LanguageSection.defaults(),
+                PluginConfig.HologramSection.defaults(),
+                PluginConfig.LimitsSection.defaults(),
+                warpSection,
+                net.sabafly.clickportals.route.DimensionRoutesConfig.defaults()
+        );
+        final ConfiguredWarpCostEvaluator evaluator = createEvaluator();
+
+        final Aetheryte src = new Aetheryte(UUID.randomUUID(), "Origin", worldId, "world", 0, 64, 0, UUID.randomUUID(), 0L);
+        final Aetheryte dest = new Aetheryte(UUID.randomUUID(), "Dest", worldId, "world", 10, 64, 0, UUID.randomUUID(), 0L);
+
+        assertThat(evaluator.charge(player, src, dest)).isTrue();
+        assertThat(level.get()).isEqualTo(8);
+
+        // Exp refund succeeds, Vault deposit fails
+        when(economy.deposit(eq(player), anyDouble())).thenReturn(false);
+
+        final boolean refunded = evaluator.refund(player, src, dest);
+        assertThat(refunded).isFalse();
+
+        // Exp level was refunded back to player (8 + 2 = 10)
+        assertThat(level.get()).isEqualTo(10);
+
+        // Remaining unrefunded items in evaluator contains only Vault
+        final List<CostItemQuote> remaining = evaluator.popPendingCharge(player, dest);
+        assertThat(remaining).hasSize(1);
+        assertThat(remaining.get(0).type()).isEqualTo(CostType.VAULT);
+        assertThat(remaining.get(0).amount()).isEqualTo(50.0);
     }
 
     @Test

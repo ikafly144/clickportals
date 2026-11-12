@@ -213,4 +213,33 @@ class DimensionRouterTest {
 
         assertThat(plan).isEmpty();
     }
+
+    @Test
+    void resolvableAlternateRouteIsSelectedWhenShorterIntermediateWorldIsUnresolvable() {
+        final World worldD = mock(World.class);
+        when(worldD.getName()).thenReturn("world_d");
+
+        final DimensionRoutesConfig config = new DimensionRoutesConfig(
+                List.of(CostEntry.of(CostType.VAULT, "$amount")),
+                Map.of("world_a", 0.0, "world_b", 10.0, "world_c", 20.0, "world_d", 30.0),
+                List.of(
+                        new RouteEntryConfig(List.of("world_a", "world_b"), Map.of(), Map.of()),
+                        new RouteEntryConfig(List.of("world_b", "world_d"), Map.of(), Map.of()),
+                        new RouteEntryConfig(List.of("world_a", "world_c"), Map.of(), Map.of()),
+                        new RouteEntryConfig(List.of("world_c", "world_d"), Map.of(), Map.of())
+                )
+        );
+        // world_b is unresolvable (null), but world_c is resolvable
+        final DimensionRouter customRouter = new DimensionRouter(config, name -> switch (name) {
+            case "world_a" -> worldA;
+            case "world_c" -> worldC;
+            case "world_d" -> worldD;
+            default -> null;
+        });
+        final Location src = new Location(worldA, 0.0, 64.0, 0.0);
+        final Optional<RoutePlan> plan = customRouter.findRoute(worldA, worldD, src);
+
+        assertThat(plan).isPresent();
+        assertThat(plan.get().worldPath()).containsExactly("world_a", "world_c", "world_d");
+    }
 }

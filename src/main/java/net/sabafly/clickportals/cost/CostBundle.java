@@ -96,9 +96,10 @@ public final class CostBundle {
                 continue;
             }
 
-            evaluatedAmounts[i] = rawAmount;
+            final double normalizedAmount = type.normalize(rawAmount);
+            evaluatedAmounts[i] = normalizedAmount;
             if (entry.required() && !(type == CostType.VAULT && !economy.isAvailable())) {
-                totalRequiredByType.merge(type, rawAmount, Double::sum);
+                totalRequiredByType.merge(type, normalizedAmount, Double::sum);
             }
         }
 
@@ -261,13 +262,42 @@ public final class CostBundle {
     }
 
     /**
+     * Outcome of a refund operation tracking whether all items were restored and any items that failed (#15).
+     *
+     * @param success whether all items were successfully refunded
+     * @param unrefundedItems list of items that could not be refunded
+     */
+    public record RefundResult(boolean success, List<CostItemQuote> unrefundedItems) {
+        public static RefundResult successful() {
+            return new RefundResult(true, List.of());
+        }
+
+        public static RefundResult failure(final List<CostItemQuote> unrefunded) {
+            return new RefundResult(false, List.copyOf(unrefunded));
+        }
+    }
+
+    /**
+     * Refunds previously charged costs back to the player, returning detailed itemized failure tracking (#15).
+     * Must be called on the player's entity thread.
+     *
+     * @param player player to refund
+     * @param quote quote containing items to refund
+     * @param economy active economy provider
+     * @return {@link RefundResult} containing success status and list of unrefunded items
+     */
+    public RefundResult refundWithResult(final Player player, final CostQuote quote, final EconomyProvider economy) {
+        return rollbackWithResult(player, quote.items(), economy);
+    }
+
+    /**
      * Refunds previously charged costs back to the player (e.g. when placement fails after charge) (#15).
      * Must be called on the player's entity thread.
      *
      * @return {@code true} if all refunds succeeded, {@code false} if any refund failed
      */
     public boolean refund(final Player player, final CostQuote quote, final EconomyProvider economy) {
-        return rollback(player, quote.items(), economy);
+        return refundWithResult(player, quote, economy).success();
     }
 
     private static boolean rollback(
@@ -275,6 +305,15 @@ public final class CostBundle {
             final List<CostItemQuote> items,
             final EconomyProvider economy
     ) {
+        return rollbackWithResult(player, items, economy).success();
+    }
+
+    private static RefundResult rollbackWithResult(
+            final Player player,
+            final List<CostItemQuote> items,
+            final EconomyProvider economy
+    ) {
+        final List<CostItemQuote> unrefunded = new ArrayList<>();
         boolean allSuccess = true;
         for (final CostItemQuote item : items) {
             if (item.disabled() || item.type() == null) {
@@ -287,9 +326,10 @@ public final class CostBundle {
             final boolean success = refundResource(player, item.type(), amount, economy);
             if (!success) {
                 allSuccess = false;
+                unrefunded.add(item);
             }
         }
-        return allSuccess;
+        return allSuccess ? RefundResult.successful() : RefundResult.failure(unrefunded);
     }
 
     private static void populatePlayerVariables(

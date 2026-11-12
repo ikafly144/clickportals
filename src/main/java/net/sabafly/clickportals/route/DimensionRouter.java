@@ -218,9 +218,13 @@ public final class DimensionRouter {
             final List<Edge> edges = adjacency.get(current);
             if (edges != null) {
                 for (final Edge edge : edges) {
-                    if (visited.add(edge.targetWorld())) {
+                    final String next = edge.targetWorld();
+                    if (!next.equals(target) && worldResolver.apply(next) == null) {
+                        continue;
+                    }
+                    if (visited.add(next)) {
                         final List<String> nextPath = new ArrayList<>(path);
-                        nextPath.add(edge.targetWorld());
+                        nextPath.add(next);
                         queue.add(nextPath);
                     }
                 }

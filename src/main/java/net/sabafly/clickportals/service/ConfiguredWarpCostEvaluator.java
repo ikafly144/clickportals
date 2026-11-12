@@ -181,9 +181,10 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         if (payment == null) {
             return true;
         }
-        final boolean success = payment.bundle().refund(player, payment.quote(), payment.economy());
-        if (!success) {
-            deque.push(payment);
+        final CostBundle.RefundResult result = payment.bundle().refundWithResult(player, payment.quote(), payment.economy());
+        if (!result.success()) {
+            final CostQuote unrefundedQuote = new CostQuote(result.unrefundedItems(), true);
+            deque.push(new ChargedPayment(payment.bundle(), unrefundedQuote, payment.economy()));
             return false;
         }
         if (deque.isEmpty()) {
