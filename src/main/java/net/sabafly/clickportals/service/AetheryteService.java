@@ -26,9 +26,15 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntSupplier;
 import java.util.function.ToLongFunction;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry.RegistrationOutcome;
+import net.sabafly.clickportals.cost.CostBundle;
+import net.sabafly.clickportals.cost.CostFormatter;
+import net.sabafly.clickportals.cost.CostQuote;
+import net.sabafly.clickportals.economy.EconomyProvider;
+import net.sabafly.clickportals.economy.NoopEconomyProvider;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
@@ -132,7 +138,8 @@ public final class AetheryteService {
     private final IntSupplier globalCooldownTicksSupplier;
     private final ToLongFunction<Player> tickSupplier;
     private final CooldownPacketSender cooldownPacketSender;
-    private final WarpCostEvaluator costEvaluator;
+    private volatile WarpCostEvaluator costEvaluator;
+    private volatile EconomyProvider economyProvider = NoopEconomyProvider.INSTANCE;
     private final Set<UUID> pendingPlacements = ConcurrentHashMap.newKeySet();
 
     /**
@@ -312,6 +319,34 @@ public final class AetheryteService {
      */
     public void setHologramService(final HologramService hologramService) {
         this.hologramService = hologramService;
+    }
+
+    /**
+     * Returns the active {@link WarpCostEvaluator}.
+     */
+    public WarpCostEvaluator costEvaluator() {
+        return costEvaluator;
+    }
+
+    /**
+     * Updates the active {@link WarpCostEvaluator} on reload.
+     */
+    public void setCostEvaluator(final WarpCostEvaluator costEvaluator) {
+        this.costEvaluator = costEvaluator;
+    }
+
+    /**
+     * Returns the active {@link EconomyProvider}.
+     */
+    public EconomyProvider economyProvider() {
+        return economyProvider;
+    }
+
+    /**
+     * Updates the active {@link EconomyProvider} on reload (#16).
+     */
+    public void setEconomyProvider(final EconomyProvider economyProvider) {
+        this.economyProvider = economyProvider;
     }
 
     /**
@@ -550,28 +585,54 @@ public final class AetheryteService {
             }
 
             final boolean creative = player.getGameMode() == GameMode.CREATIVE;
+            final boolean bypassCost = Permissions.canBypassPlaceCost(player);
+            final CostBundle placementCostBundle = new CostBundle(variation.placement().cost());
+            final CostQuote placementQuote;
+            if (!bypassCost && !placementCostBundle.isEmpty()) {
+                final Map<String, Double> costVars = Map.of(
+                        "owned_count", (double) registry.countByOwner(ownerId),
+                        "variation_count", (double) registry.countByOwnerAndVariation(ownerId, normalizedVar)
+                );
+                placementQuote = placementCostBundle.quote(player, costVars, economyProvider);
+                if (!placementQuote.affordable()) {
+                    pendingPlacements.remove(ownerId);
+                    final Component reason = CostFormatter.formatMissingRequirements(player, placementQuote, economyProvider, messages);
+                    player.sendMessage(messages.get(player, MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT, Placeholder.component("reason", reason)));
+                    return;
+                }
+            } else {
+                placementQuote = CostQuote.FREE;
+            }
+
             if (!creative && !consumeOneAetheryteItem(player.getInventory(), normalizedVar)) {
                 pendingPlacements.remove(ownerId);
                 messages.send(player, MessageKey.ERROR_MISSING_ITEM);
                 return;
             }
 
+            if (!creative && !bypassCost && !placementCostBundle.isEmpty()) {
+                final boolean paid = placementCostBundle.charge(player, placementQuote, economyProvider);
+                if (!paid) {
+                    refundItemToPlayer(player, targetLocation, normalizedVar);
+                    pendingPlacements.remove(ownerId);
+                    final Component reason = CostFormatter.formatMissingRequirements(player, placementQuote, economyProvider, messages);
+                    player.sendMessage(messages.get(player, MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT, Placeholder.component("reason", reason)));
+                    return;
+                }
+            }
+
             // Step 2: Validate clearance, check limits atomically, and spawn the Marker entity on the region thread.
             Bukkit.getRegionScheduler().execute(plugin, targetLocation, () -> {
                 try {
                     if (registry.getByPosition(world, blockX, blockY, blockZ).isPresent()) {
-                        if (!creative) {
-                            refundItemToPlayer(player, targetLocation, normalizedVar);
-                        }
+                        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, placementQuote);
                         pendingPlacements.remove(ownerId);
                         messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
                         return;
                     }
 
                     if (!ClearanceChecker.hasClearance(world, blockX, blockY, blockZ, variation)) {
-                        if (!creative) {
-                            refundItemToPlayer(player, targetLocation, normalizedVar);
-                        }
+                        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, placementQuote);
                         pendingPlacements.remove(ownerId);
                         sendClearanceError(player, variation);
                         return;
@@ -600,9 +661,7 @@ public final class AetheryteService {
                     );
 
                     if (outcome != RegistrationOutcome.REGISTERED) {
-                        if (!creative) {
-                            refundItemToPlayer(player, targetLocation, normalizedVar);
-                        }
+                        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, placementQuote);
                         pendingPlacements.remove(ownerId);
                         switch (outcome) {
                             case ALREADY_EXISTS -> messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
@@ -640,11 +699,29 @@ public final class AetheryteService {
                         }
                     }, null);
                 } catch (final Throwable t) {
+                    refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, placementQuote);
                     pendingPlacements.remove(ownerId);
                     throw t;
                 }
             });
         }, null);
+    }
+
+    private void refundPlacement(
+            final Player player,
+            final Location targetLocation,
+            final String normalizedVar,
+            final boolean creative,
+            final boolean bypassCost,
+            final CostBundle costBundle,
+            final CostQuote costQuote
+    ) {
+        if (!creative) {
+            refundItemToPlayer(player, targetLocation, normalizedVar);
+            if (!bypassCost && !costBundle.isEmpty()) {
+                player.getScheduler().run(plugin, t -> costBundle.refund(player, costQuote, economyProvider), null);
+            }
+        }
     }
 
     /**

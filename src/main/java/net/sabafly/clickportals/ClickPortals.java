@@ -25,11 +25,16 @@ import net.sabafly.clickportals.command.ClickPortalsCommand;
 import net.sabafly.clickportals.config.ConfigManager;
 import net.sabafly.clickportals.config.PluginConfig;
 import net.sabafly.clickportals.dialog.AetheryteDialogFactory;
+import net.sabafly.clickportals.economy.EconomyProvider;
+import net.sabafly.clickportals.economy.NoopEconomyProvider;
+import net.sabafly.clickportals.economy.VaultEconomyProvider;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
 import net.sabafly.clickportals.listener.AetheryteListener;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
+import net.sabafly.clickportals.route.DimensionRouter;
 import net.sabafly.clickportals.service.AetheryteService;
+import net.sabafly.clickportals.service.ConfiguredWarpCostEvaluator;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.VariationRegistry;
 import net.sabafly.clickportals.visual.HologramService;
@@ -40,6 +45,7 @@ import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jspecify.annotations.Nullable;
 
@@ -59,6 +65,8 @@ public final class ClickPortals extends JavaPlugin {
     private @Nullable AetheryteService aetheryteService;
     private @Nullable AetheryteDialogFactory dialogFactory;
     private @Nullable AetheryteListener aetheryteListener;
+    private volatile EconomyProvider economyProvider = NoopEconomyProvider.INSTANCE;
+    private volatile DimensionRouter dimensionRouter = new DimensionRouter(net.sabafly.clickportals.route.DimensionRoutesConfig.defaults());
 
     @Override
     public void onEnable() {
@@ -90,6 +98,17 @@ public final class ClickPortals extends JavaPlugin {
         final HologramService activeHologramService = createHologramService(config, variations, msgService);
         this.hologramService = activeHologramService;
 
+        this.economyProvider = resolveEconomyProvider();
+        this.dimensionRouter = new DimensionRouter(config.dimensions());
+
+        final ConfiguredWarpCostEvaluator warpEvaluator = new ConfiguredWarpCostEvaluator(
+                () -> cfgManager.config(),
+                variations,
+                () -> this.economyProvider,
+                () -> this.dimensionRouter,
+                msgService
+        );
+
         final AetheryteService service = new AetheryteService(
                 this,
                 aetheryteRegistry,
@@ -99,6 +118,8 @@ public final class ClickPortals extends JavaPlugin {
                 () -> cfgManager.config().maxAetherytesPerPlayer(),
                 () -> cfgManager.config().placementCooldownTicks()
         );
+        service.setCostEvaluator(warpEvaluator);
+        service.setEconomyProvider(this.economyProvider);
         this.aetheryteService = service;
         final AetheryteDialogFactory dialogs = new AetheryteDialogFactory(service, msgService);
         this.dialogFactory = dialogs;
@@ -201,6 +222,17 @@ public final class ClickPortals extends JavaPlugin {
             );
             service.setHologramService(activeHologramService);
             listener.setHologramService(activeHologramService);
+
+            this.economyProvider = resolveEconomyProvider();
+            this.dimensionRouter = new DimensionRouter(reloadedConfig.dimensions());
+            service.setEconomyProvider(this.economyProvider);
+            service.setCostEvaluator(new ConfiguredWarpCostEvaluator(
+                    () -> cfgManager.config(),
+                    variations,
+                    () -> this.economyProvider,
+                    () -> this.dimensionRouter,
+                    msgService
+            ));
 
             for (final Player player : Bukkit.getOnlinePlayers()) {
                 player.getScheduler().run(this, task -> {
@@ -333,5 +365,21 @@ public final class ClickPortals extends JavaPlugin {
             );
         }
         return NoopHologramService.INSTANCE;
+    }
+
+    /**
+     * Resolves the active {@link EconomyProvider}, hooking into Vault if present (#16).
+     */
+    private EconomyProvider resolveEconomyProvider() {
+        if (Bukkit.getPluginManager().isPluginEnabled("Vault")) {
+            final RegisteredServiceProvider<net.milkbowl.vault.economy.Economy> rsp =
+                    Bukkit.getServicesManager().getRegistration(net.milkbowl.vault.economy.Economy.class);
+            if (rsp != null && rsp.getProvider() != null) {
+                getSLF4JLogger().info("Hooked into Vault economy: {}", rsp.getProvider().getName());
+                return new VaultEconomyProvider(rsp.getProvider());
+            }
+        }
+        getSLF4JLogger().info("Vault economy provider not available; currency costs disabled.");
+        return NoopEconomyProvider.INSTANCE;
     }
 }

@@ -14,12 +14,23 @@ hologram:
 
 cost:
   free: "<green>Free</green>"
+  separator: "<dark_gray> + </dark_gray>"
+  vault: "<gold><amount></gold>"
+  exp-points: "<green><amount> XP</green>"
+  exp-levels: "<green><amount> Lv</green>"
+  food: "<yellow><amount> 🍗</yellow>"
+  insufficient:
+    vault: "<red>Not enough money (need <amount>)</red>"
+    exp-points: "<red>Not enough experience points (need <amount> XP)</red>"
+    exp-levels: "<red>Not enough experience levels (need <amount> Lv)</red>"
+    food: "<red>Not enough hunger (need <amount> 🍗)</red>"
 
 dialog:
   create:
     title: "<aqua><bold>Place Aetheryte</bold></aqua>"
     description: "<gray>Target coordinates: </gray><white><world> (<x>, <y>, <z>)</white>"
     variation: "<gray>Variation: </gray><variation>"
+    cost: "<gray>Placement cost: </gray><cost>"
     name-input-label: "<aqua>Aetheryte Name</aqua>"
     default-name: "<player>'s Aetheryte"
   button:
@@ -65,6 +76,10 @@ error:
   no-warp-permission: "<red>No warp permission</red>"
   warp-requirements-not-met: "<red>Requirements not met</red>"
   insufficient-cost: "<red>Insufficient cost</red>"
+  too-close: "<red>Destination is too close</red>"
+  too-far: "<red>Destination is too far</red>"
+  no-route: "<red>No route connects to this dimension</red>"
+  placement-cost-insufficient: "<prefix><red>Cannot place Aetheryte: </red><reason>"
   warp-denied: "<prefix><red>Cannot warp: </red><reason>"
   destination-unsafe: "<prefix><red>Cannot warp because the destination landing area is obstructed or unsafe.</red>"
   protected-break: "<prefix><red>Aetherytes cannot be broken directly. Please remove it from the right-click menu.</red>"

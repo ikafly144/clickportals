@@ -13,13 +13,16 @@
 - **Type-Safe Configuration**: Powered by [SpongePowered Configurate 4](https://github.com/SpongePowered/Configurate) (`configurate-yaml`) with comment preservation.
 - **Per-Player Localization (i18n)**: MiniMessage YAML translation files (`lang/en_US.yml`, `lang/ja_JP.yml`) that automatically adapt chat messages, Dialog UIs, and client-side holograms to each player's client language.
 - **Aetheryte Variations**: Define multiple Aetheryte types (`aetheryte/<type>.yml`) with custom creation items (`item_model` & `custom_model_data`), crafting recipes, `BLOCK_DISPLAY` visual block models, configurable interaction hitboxes, ring-shaped surrounding landing spread (`min-radius` / `max-radius`), placement clearance checks, per-player placement limits, and placement cooldowns.
-- **Granular Permissions**: Fine-grained permission nodes for warp usage, placement, removal, warp cost / limit / cooldown bypass, and commands (`/cp give`, `/cp reload`), plus reserved bypass nodes for future placement costs.
+- **Costs & Economy System**: Powerful mathematical formula engine supporting Vault currency, total experience points, experience levels, and hunger—with support for combined costs, all-or-nothing rollback guarantees, and mandatory vs optional payments.
+- **Distance Limitations & Cross-Dimension Routes**: Configure minimum and maximum warp distance boundaries, coordinate scaling origins (e.g. Nether 8:1 ratio, world spawn, fixed coordinates), and shortest-path dimension route networks.
+- **Granular Permissions**: Fine-grained permission nodes for warp usage, placement, removal, warp & placement cost bypass, limit & cooldown bypass, and administrative commands (`/cp give`, `/cp reload`).
 
 ## Documentation
 
 - [Permissions & Commands Reference](docs/permissions.md)
 - [Localization & Message Formatting (i18n)](docs/i18n.md)
 - [Aetheryte Variations Reference](docs/variations.md)
+- [Costs & Economy Guide](docs/costs.md)
 
 ## Requirements
 
@@ -27,6 +30,7 @@
 - **Server**: Paper or Folia `26.3`+
 - **Dependencies**:
   - [PacketEvents](https://modrinth.com/plugin/packetevents) (optional, recommended for client-side Aetheryte visuals and interaction)
+  - [Vault](https://www.spigotmc.org/resources/vault.34315/) (optional, required only if using currency-based costs)
 
 ## Building
 

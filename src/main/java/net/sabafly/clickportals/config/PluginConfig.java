@@ -17,8 +17,11 @@
  */
 package net.sabafly.clickportals.config;
 
+import java.util.List;
 import java.util.Locale;
+import net.sabafly.clickportals.cost.CostEntry;
 import net.sabafly.clickportals.message.LanguageLoader;
+import net.sabafly.clickportals.route.DimensionRoutesConfig;
 import org.slf4j.Logger;
 import org.spongepowered.configurate.objectmapping.ConfigSerializable;
 import org.spongepowered.configurate.objectmapping.meta.Comment;
@@ -39,7 +42,15 @@ public record PluginConfig(
 
         @Setting("limits")
         @Comment("Global per-player Aetheryte placement limit and cooldown settings (#43)")
-        LimitsSection limits
+        LimitsSection limits,
+
+        @Setting("warp")
+        @Comment("Global warping settings: distance limits and base cost (#14, #26)")
+        WarpSection warp,
+
+        @Setting("dimensions")
+        @Comment("Cross-dimension warping routes and dimension pricing (#9)")
+        DimensionRoutesConfig dimensions
 ) {
 
     /**
@@ -111,6 +122,37 @@ public record PluginConfig(
     }
 
     /**
+     * Global warping configuration section (#14, #26).
+     */
+    @ConfigSerializable
+    public record WarpSection(
+            @Setting("distance")
+            @Comment("Distance limitations for warping")
+            DistanceSection distance,
+
+            @Setting("cost")
+            @Comment("Base cost specifications for warping")
+            List<CostEntry> cost,
+
+            @Setting("show-optional-costs")
+            @Comment("Whether non-mandatory costs are shown in destination menus and tooltips (default true)")
+            boolean showOptionalCosts
+    ) {
+        public WarpSection {
+            if (distance == null) {
+                distance = DistanceSection.defaults();
+            }
+            if (cost == null) {
+                cost = List.of();
+            }
+        }
+
+        public static WarpSection defaults() {
+            return new WarpSection(DistanceSection.defaults(), List.of(), true);
+        }
+    }
+
+    /**
      * Compact constructor ensuring non-null sections when deserialized by Configurate.
      */
     public PluginConfig {
@@ -123,6 +165,12 @@ public record PluginConfig(
         if (limits == null) {
             limits = LimitsSection.defaults();
         }
+        if (warp == null) {
+            warp = WarpSection.defaults();
+        }
+        if (dimensions == null) {
+            dimensions = DimensionRoutesConfig.defaults();
+        }
     }
 
     /**
@@ -132,7 +180,9 @@ public record PluginConfig(
         return new PluginConfig(
                 LanguageSection.defaults(),
                 HologramSection.defaults(),
-                LimitsSection.defaults()
+                LimitsSection.defaults(),
+                WarpSection.defaults(),
+                DimensionRoutesConfig.defaults()
         );
     }
 
@@ -158,6 +208,13 @@ public record PluginConfig(
         final int validMaxPerPlayer = limits.maxAetherytesPerPlayer() < -1 ? -1 : limits.maxAetherytesPerPlayer();
         final int validCooldownTicks = Math.max(0, limits.placementCooldownTicks());
 
+        final DistanceSection rawDist = warp.distance();
+        final double validMinDist = rawDist.min() == null || rawDist.min() < 0.0 ? 0.0 : rawDist.min();
+        final double validMaxDist = rawDist.max() == null || rawDist.max() < -1.0 ? -1.0 : rawDist.max();
+        final DistanceSection validDist = new DistanceSection(validMinDist, validMaxDist);
+
+        final WarpSection validWarp = new WarpSection(validDist, warp.cost(), warp.showOptionalCosts());
+
         return new PluginConfig(
                 new LanguageSection(
                         validDefaultLocale,
@@ -167,7 +224,9 @@ public record PluginConfig(
                         hologram.enabled(),
                         validViewDistance
                 ),
-                new LimitsSection(validMaxPerPlayer, validCooldownTicks)
+                new LimitsSection(validMaxPerPlayer, validCooldownTicks),
+                validWarp,
+                dimensions != null ? dimensions : DimensionRoutesConfig.defaults()
         );
     }
 
@@ -211,5 +270,33 @@ public record PluginConfig(
      */
     public int placementCooldownTicks() {
         return limits.placementCooldownTicks();
+    }
+
+    /**
+     * Returns the global minimum warp distance in blocks (0 for disabled) (#26).
+     */
+    public double warpDistanceMin() {
+        return warp.distance().min();
+    }
+
+    /**
+     * Returns the global maximum warp distance in blocks (-1 for unlimited) (#26).
+     */
+    public double warpDistanceMax() {
+        return warp.distance().max();
+    }
+
+    /**
+     * Returns the global warp cost specifications (#14).
+     */
+    public List<CostEntry> warpCost() {
+        return warp.cost();
+    }
+
+    /**
+     * Returns whether non-mandatory costs are shown in destination menus and tooltips.
+     */
+    public boolean showOptionalCosts() {
+        return warp.showOptionalCosts();
     }
 }

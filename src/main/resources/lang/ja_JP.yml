@@ -14,12 +14,23 @@ hologram:
 
 cost:
   free: "<green>無料</green>"
+  separator: "<dark_gray> + </dark_gray>"
+  vault: "<gold><amount></gold>"
+  exp-points: "<green><amount> XP</green>"
+  exp-levels: "<green><amount> Lv</green>"
+  food: "<yellow><amount> 🍗</yellow>"
+  insufficient:
+    vault: "<red>所持金が足りません（必要: <amount>）</red>"
+    exp-points: "<red>経験値ポイントが足りません（必要: <amount> XP）</red>"
+    exp-levels: "<red>経験値レベルが足りません（必要: <amount> Lv）</red>"
+    food: "<red>空腹度が足りません（必要: <amount> 🍗）</red>"
 
 dialog:
   create:
     title: "<aqua><bold>エーテライトの設置</bold></aqua>"
     description: "<gray>設置座標: </gray><white><world> (<x>, <y>, <z>)</white>"
     variation: "<gray>種類: </gray><variation>"
+    cost: "<gray>設置コスト: </gray><cost>"
     name-input-label: "<aqua>エーテライト名</aqua>"
     default-name: "<player>のエーテライト"
   button:
@@ -65,6 +76,10 @@ error:
   no-warp-permission: "<red>ワープ権限がありません</red>"
   warp-requirements-not-met: "<red>条件を満たしていません</red>"
   insufficient-cost: "<red>コストが不足しています</red>"
+  too-close: "<red>近すぎるためワープできません</red>"
+  too-far: "<red>遠すぎるためワープできません</red>"
+  no-route: "<red>このディメンションへの移動経路がありません</red>"
+  placement-cost-insufficient: "<prefix><red>設置コストが不足しているため設置できません: </red><reason>"
   warp-denied: "<prefix><red>ワープできません: </red><reason>"
   destination-unsafe: "<prefix><red>ワープ先の着地地点が塞がれているか安全ではないためワープできません。</red>"
   protected-break: "<prefix><red>エーテライトは直接破壊できません。右クリックメニューから撤去してください。</red>"

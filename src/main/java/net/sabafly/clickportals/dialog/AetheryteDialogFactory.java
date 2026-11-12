@@ -27,9 +27,14 @@ import io.papermc.paper.registry.data.dialog.type.DialogType;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickCallback;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.cost.CostBundle;
+import net.sabafly.clickportals.cost.CostFormatter;
+import net.sabafly.clickportals.cost.CostQuote;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.service.AetheryteService;
@@ -115,9 +120,24 @@ public final class AetheryteDialogFactory {
                 .width(150)
                 .build();
 
+        final CostBundle placementCostBundle = new CostBundle(variation.placement().cost());
+        final Component costLine;
+        if (!placementCostBundle.isEmpty()) {
+            final Map<String, Double> costVars = Map.of(
+                    "owned_count", (double) service.registry().countByOwner(player.getUniqueId()),
+                    "variation_count", (double) service.registry().countByOwnerAndVariation(player.getUniqueId(), normalizedVar)
+            );
+            final CostQuote quote = placementCostBundle.quote(player, costVars, service.economyProvider());
+            final Component costDisplay = CostFormatter.format(player, quote, service.economyProvider(), messages, true);
+            costLine = Component.newline().append(messages.get(player, MessageKey.DIALOG_CREATE_COST, Placeholder.component("cost", costDisplay)));
+        } else {
+            costLine = Component.empty();
+        }
+
         final Component bodyComponent = messages.createDialogDescription(player, world.getName(), blockX, blockY, blockZ)
                 .append(Component.newline())
-                .append(messages.createDialogVariation(player, variation.displayName()));
+                .append(messages.createDialogVariation(player, variation.displayName()))
+                .append(costLine);
 
         final Dialog dialog = Dialog.create(factory -> factory.empty()
                 .base(DialogBase.builder(messages.createDialogTitle(player))

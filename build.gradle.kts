@@ -39,6 +39,9 @@ repositories {
     maven("https://repo.codemc.io/repository/maven-releases/") {
         name = "codemc-releases"
     }
+    maven("https://jitpack.io") {
+        name = "jitpack"
+    }
 }
 
 val paperLibrary: Configuration = configurations.create("paperLibrary") {
@@ -56,6 +59,9 @@ configurations.named(JavaPlugin.TEST_IMPLEMENTATION_CONFIGURATION_NAME) {
 dependencies {
     compileOnly(libs.paper.api)
     compileOnly(libs.packetevents.spigot)
+    compileOnly(libs.vault.api) {
+        exclude(group = "org.bukkit")
+    }
     compileOnly(libs.jspecify)
     testCompileOnly(libs.jspecify)
 
@@ -144,6 +150,7 @@ paperPluginYaml {
     website = "https://github.com/ikafly144/clickportals"
     dependencies {
         server("packetevents", PaperPluginYaml.Load.BEFORE, false)
+        server("Vault", PaperPluginYaml.Load.BEFORE, false)
     }
     permissions {
         register("clickportals.use") {
@@ -175,7 +182,7 @@ paperPluginYaml {
             default = Permission.Default.OP
         }
         register("clickportals.bypass.cost.place") {
-            description = "Bypass Aetheryte placement costs (reserved; currently inactive)"
+            description = "Bypass Aetheryte placement costs"
             default = Permission.Default.OP
         }
         register("clickportals.admin") {
@@ -223,6 +230,9 @@ testing {
                 implementation(libs.assertj.core)
                 implementation(libs.paper.api)
                 implementation(libs.packetevents.spigot)
+                implementation(libs.vault.api) {
+                    exclude(group = "org.bukkit")
+                }
             }
             targets {
                 all {

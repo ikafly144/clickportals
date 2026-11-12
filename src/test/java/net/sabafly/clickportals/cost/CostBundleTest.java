@@ -1,0 +1,149 @@
+/*
+ * ClickPortals
+ * Copyright (C) 2026 ikafly144
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+package net.sabafly.clickportals.cost;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.util.List;
+import java.util.Map;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import net.sabafly.clickportals.economy.EconomyProvider;
+import net.sabafly.clickportals.economy.NoopEconomyProvider;
+import net.sabafly.clickportals.message.Messages;
+import org.bukkit.entity.Player;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+class CostBundleTest {
+
+    private Player player;
+    private EconomyProvider economy;
+
+    @BeforeEach
+    void setUp() {
+        player = mock(Player.class);
+        economy = mock(EconomyProvider.class);
+
+        when(economy.isAvailable()).thenReturn(true);
+        when(economy.getBalance(player)).thenReturn(1000.0);
+        when(economy.has(eq(player), anyDouble())).thenAnswer(inv -> (double) inv.getArgument(1) <= 1000.0);
+        when(economy.withdraw(eq(player), anyDouble())).thenReturn(true);
+        when(economy.deposit(eq(player), anyDouble())).thenReturn(true);
+        when(economy.format(anyDouble())).thenAnswer(inv -> String.format("$%.2f", (double) inv.getArgument(0)));
+
+        when(player.calculateTotalExperiencePoints()).thenReturn(500);
+        when(player.getLevel()).thenReturn(30);
+        when(player.getFoodLevel()).thenReturn(20);
+    }
+
+    @Test
+    void quoteAndChargeAllSucceeds() {
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.VAULT, "100"),
+                CostEntry.of(CostType.EXP_LEVELS, "5"),
+                CostEntry.of(CostType.FOOD, "4")
+        ));
+
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        assertThat(quote.affordable()).isTrue();
+        assertThat(quote.items()).hasSize(3);
+
+        final boolean charged = bundle.charge(player, quote, economy);
+        assertThat(charged).isTrue();
+
+        verify(economy).withdraw(player, 100.0);
+        verify(player).setLevel(25);
+        verify(player).setFoodLevel(16);
+    }
+
+    @Test
+    void rollbacksWhenLaterWithdrawFails() {
+        // Vault succeeds, but food deduction fails to meet requirement
+        when(player.getFoodLevel()).thenReturn(2); // needs 5
+
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.VAULT, "50"),
+                CostEntry.of(CostType.FOOD, "5", true)
+        ));
+
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        assertThat(quote.affordable()).isFalse();
+
+        // Charge aborted due to unaffordability
+        final boolean charged = bundle.charge(player, quote, economy);
+        assertThat(charged).isFalse();
+    }
+
+    @Test
+    void nonRequiredCostDeductsAvailableAndSucceeds() {
+        when(player.getFoodLevel()).thenReturn(3); // only 3 food, but cost is 10 optional
+
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.FOOD, "10", false)
+        ));
+
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        assertThat(quote.affordable()).isTrue();
+
+        final boolean charged = bundle.charge(player, quote, economy);
+        assertThat(charged).isTrue();
+        verify(player).setFoodLevel(0); // consumed all 3 available
+    }
+
+    @Test
+    void noopEconomyDisablesVaultCost() {
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.VAULT, "500"),
+                CostEntry.of(CostType.EXP_LEVELS, "2")
+        ));
+
+        final CostQuote quote = bundle.quote(player, Map.of(), NoopEconomyProvider.INSTANCE);
+        assertThat(quote.affordable()).isTrue();
+        assertThat(quote.items().get(0).disabled()).isTrue();
+
+        final boolean charged = bundle.charge(player, quote, NoopEconomyProvider.INSTANCE);
+        assertThat(charged).isTrue();
+        verify(player).setLevel(28);
+    }
+
+    @Test
+    void costFormatterHidesOptionalCostsWhenConfigured() {
+        final Messages messages = Messages.defaults();
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.VAULT, "100", true),
+                CostEntry.of(CostType.EXP_LEVELS, "3", false)
+        ));
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+
+        // With showOptional = true
+        final Component withOpt = CostFormatter.format(player, quote, economy, messages, true);
+        final String textWithOpt = PlainTextComponentSerializer.plainText().serialize(withOpt);
+        assertThat(textWithOpt).contains("$100.00").contains("3 Lv");
+
+        // With showOptional = false
+        final Component withoutOpt = CostFormatter.format(player, quote, economy, messages, false);
+        final String textWithoutOpt = PlainTextComponentSerializer.plainText().serialize(withoutOpt);
+        assertThat(textWithoutOpt).contains("$100.00").doesNotContain("3 Lv");
+    }
+}

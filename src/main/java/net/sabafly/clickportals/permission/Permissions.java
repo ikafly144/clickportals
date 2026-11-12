@@ -62,7 +62,7 @@ public final class Permissions {
     public static final String BYPASS_COST_WARP = "clickportals.bypass.cost.warp";
 
     /**
-     * Allows bypassing Aetheryte placement costs (default: {@code op}; reserved for #15, currently inactive).
+     * Allows bypassing Aetheryte placement costs (default: {@code op}) (#15).
      */
     public static final String BYPASS_COST_PLACE = "clickportals.bypass.cost.place";
 
