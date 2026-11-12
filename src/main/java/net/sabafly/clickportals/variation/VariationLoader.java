@@ -96,10 +96,7 @@ public final class VariationLoader {
                     }
 
                     try {
-                        final CommentedConfigurationNode root = YamlConfigurationLoader.builder()
-                                .path(file)
-                                .indent(2)
-                                .nodeStyle(NodeStyle.BLOCK)
+                        final CommentedConfigurationNode root = loaderBuilder(file)
                                 .build()
                                 .load();
                         final AetheryteVariation parsed = root.get(AetheryteVariation.class);
@@ -184,10 +181,7 @@ public final class VariationLoader {
                     LimitSection.defaults()
             );
 
-            final YamlConfigurationLoader defaultLoader = YamlConfigurationLoader.builder()
-                    .path(defaultFile)
-                    .indent(2)
-                    .nodeStyle(NodeStyle.BLOCK)
+            final YamlConfigurationLoader defaultLoader = loaderBuilder(defaultFile)
                     .build();
             final CommentedConfigurationNode defaultRoot = defaultLoader.createNode();
             defaultRoot.set(AetheryteVariation.class, migrated);
@@ -210,10 +204,7 @@ public final class VariationLoader {
         }
 
         try {
-            final YamlConfigurationLoader loader = YamlConfigurationLoader.builder()
-                    .path(targetFile)
-                    .indent(2)
-                    .nodeStyle(NodeStyle.BLOCK)
+            final YamlConfigurationLoader loader = loaderBuilder(targetFile)
                     .build();
             final CommentedConfigurationNode root = loader.createNode();
             root.set(AetheryteVariation.class, AetheryteVariation.defaultVariation());
@@ -221,5 +212,16 @@ public final class VariationLoader {
         } catch (final IOException e) {
             logger.warn("Failed to write fallback default variation file to {}", targetFile, e);
         }
+    }
+
+    private static YamlConfigurationLoader.Builder loaderBuilder(final Path path) {
+        return YamlConfigurationLoader.builder()
+                .path(path)
+                .indent(2)
+                .nodeStyle(NodeStyle.BLOCK)
+                .defaultOptions(opts -> opts.serializers(s -> s.register(
+                        AetheryteVariation.WarpOverrideSection.class,
+                        AetheryteVariation.WarpOverrideSectionSerializer.INSTANCE
+                )));
     }
 }

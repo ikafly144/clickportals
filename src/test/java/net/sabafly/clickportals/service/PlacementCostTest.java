@@ -366,4 +366,35 @@ class PlacementCostTest {
         assertThat(unbypassedRoute.allowed()).isFalse();
         assertThat(unbypassedRoute.denyReasonCode()).isEqualTo(AetheryteService.WarpEvaluation.DenyReason.NO_ROUTE);
     }
+
+    @Test
+    void evaluateWarpPreservesRealCostDisplayWhenPermissionDenied() {
+        final AetheryteService.WarpCostEvaluator mockEvaluator = mock(AetheryteService.WarpCostEvaluator.class);
+        final AetheryteService service = new AetheryteService(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                messages,
+                () -> -1,
+                () -> 0,
+                p -> 0L,
+                (p, t) -> {},
+                mockEvaluator
+        );
+
+        final UUID worldId = UUID.randomUUID();
+        final net.sabafly.clickportals.aetheryte.Aetheryte dest =
+                new net.sabafly.clickportals.aetheryte.Aetheryte(UUID.randomUUID(), "Dest", worldId, "world", 10, 64, 20, UUID.randomUUID(), 0L);
+
+        when(player.hasPermission(Permissions.USE)).thenReturn(false);
+        when(mockEvaluator.evaluate(eq(player), any(), eq(dest)))
+                .thenReturn(AetheryteService.WarpEvaluation.permitted(net.kyori.adventure.text.Component.text("$85.00")));
+
+        final AetheryteService.WarpEvaluation eval = service.evaluateWarp(player, null, dest);
+        assertThat(eval.allowed()).isFalse();
+        assertThat(eval.denyReasonCode()).isEqualTo(AetheryteService.WarpEvaluation.DenyReason.NO_PERMISSION);
+        assertThat(net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(eval.costDisplay()))
+                .isEqualTo("$85.00");
+    }
 }

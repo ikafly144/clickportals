@@ -100,7 +100,8 @@ public enum MessageKey {
     COMMAND_GIVEN_ITEM("command.given-item"),
     COMMAND_CONSOLE_SPECIFY_PLAYER("command.console-specify-player"),
     COMMAND_UNKNOWN_VARIATION("command.unknown-variation"),
-    COMMAND_RELOADED("command.reloaded");
+    COMMAND_RELOADED("command.reloaded"),
+    COMMAND_RELOAD_FAILED("command.reload-failed");
 
     private final String path;
     private final boolean listValue;

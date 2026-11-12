@@ -126,4 +126,50 @@ class VariationLoaderTest {
         assertThat(defaultVar.recipe().shape()).containsExactly(" G ", "GAG", " G ");
         assertThat(defaultVar.recipe().bukkitIngredients()).containsEntry('G', Material.GOLD_INGOT);
     }
+
+    @Test
+    void preservesExplicitNullVersusEmptyListInWarpCost() throws IOException {
+        final Path aetheryteDir = tempDir.resolve("warp_cost_variations");
+        Files.createDirectories(aetheryteDir);
+
+        // Inherit global cost (explicit null)
+        Files.writeString(aetheryteDir.resolve("inherit.yml"), """
+                warp:
+                  cost: null
+                """, StandardCharsets.UTF_8);
+
+        // Explicitly free (empty list)
+        Files.writeString(aetheryteDir.resolve("free.yml"), """
+                warp:
+                  cost: []
+                """, StandardCharsets.UTF_8);
+
+        // Custom override
+        Files.writeString(aetheryteDir.resolve("custom.yml"), """
+                warp:
+                  cost:
+                    - type: VAULT
+                      amount: "100"
+                """, StandardCharsets.UTF_8);
+
+        final VariationRegistry registry = VariationRegistry.load(aetheryteDir, mock(Logger.class));
+
+        final AetheryteVariation inheritVar = registry.getOrDefault("inherit");
+        assertThat(inheritVar.warp()).isNotNull();
+        assertThat(inheritVar.warp().cost()).isNull();
+
+        final AetheryteVariation freeVar = registry.getOrDefault("free");
+        assertThat(freeVar.warp()).isNotNull();
+        assertThat(freeVar.warp().cost()).isEmpty();
+
+        final AetheryteVariation customVar = registry.getOrDefault("custom");
+        assertThat(customVar.warp()).isNotNull();
+        assertThat(customVar.warp().cost()).hasSize(1);
+        assertThat(java.util.Objects.requireNonNull(customVar.warp().cost()).get(0).amount()).isEqualTo("100");
+
+        // default.yml generated automatically should also have null cost (inherits global config)
+        final AetheryteVariation defaultVar = registry.getOrDefault(Aetheryte.DEFAULT_VARIATION);
+        assertThat(defaultVar.warp()).isNotNull();
+        assertThat(defaultVar.warp().cost()).isNull();
+    }
 }

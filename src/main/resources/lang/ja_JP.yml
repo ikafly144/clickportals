@@ -89,3 +89,4 @@ command:
   console-specify-player: "<prefix><red>コンソールから実行する場合は対象プレイヤーを指定してください。</red>"
   unknown-variation: "<prefix><red>不明なエーテライト種類です: <variation></red>"
   reloaded: "<prefix><green>ClickPortals の設定と翻訳ファイルを再読み込みしました。</green>"
+  reload-failed: "<prefix><red>エラーのため設定の再読み込みに失敗しました。コンソールログを確認してください。</red>"

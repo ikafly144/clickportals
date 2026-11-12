@@ -28,11 +28,11 @@ import org.spongepowered.configurate.objectmapping.meta.Setting;
 @ConfigSerializable
 public record DistanceSection(
         @Setting("min")
-        @Comment("Minimum block distance required to warp (0 for no minimum, -1 to inherit global)")
+        @Comment("Minimum block distance required to warp (0 for no minimum limit; in variations: -1 to inherit global)")
         @Nullable Double min,
 
         @Setting("max")
-        @Comment("Maximum block distance allowed to warp (-1 for unlimited / inherit global)")
+        @Comment("Maximum block distance allowed to warp (-1 for unlimited; in variations: -1 to inherit global)")
         @Nullable Double max
 ) {
 

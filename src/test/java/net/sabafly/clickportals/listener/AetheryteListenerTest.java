@@ -88,6 +88,7 @@ class AetheryteListenerTest {
     @BeforeEach
     void setUp() {
         plugin = mock(Plugin.class);
+        when(plugin.getSLF4JLogger()).thenReturn(mock(org.slf4j.Logger.class));
         registry = new AetheryteRegistry();
         final AetheryteService service = new AetheryteService(plugin, registry, NoopHologramService.INSTANCE);
         final AetheryteDialogFactory dialogFactory = new AetheryteDialogFactory(service);
@@ -216,6 +217,7 @@ class AetheryteListenerTest {
         serverField.set(null, server);
         try {
             when(server.getWorld(WORLD_ID)).thenReturn(world);
+            when(server.isOwnedByCurrentRegion(any(), any(int.class), any(int.class))).thenReturn(true);
             final RegionScheduler regionScheduler = mock(RegionScheduler.class);
             when(server.getRegionScheduler()).thenReturn(regionScheduler);
             doAnswer(inv -> {
@@ -233,6 +235,7 @@ class AetheryteListenerTest {
             when(world.getBlockAt(5, 63, 5)).thenReturn(safeFloor);
             when(world.getBlockAt(5, 64, 5)).thenReturn(safeAir);
             when(world.getBlockAt(5, 65, 5)).thenReturn(safeAir);
+            when(world.getBlockAt(5, 66, 5)).thenReturn(safeAir);
 
             final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
             when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
@@ -311,6 +314,84 @@ class AetheryteListenerTest {
 
             // Region execution was requested exactly once
             verify(regionScheduler, times(1)).execute(any(), any(Location.class), any(Runnable.class));
+        } finally {
+            serverField.set(null, null);
+        }
+    }
+
+    @Test
+    void warpToAetheryteRecoversAndClearsInFlightWhenExceptionThrownDuringCharge() throws Exception {
+        final Server server = mock(Server.class);
+        final java.lang.reflect.Field serverField = Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            when(server.getWorld(WORLD_ID)).thenReturn(world);
+            when(server.isOwnedByCurrentRegion(any(), any(int.class), any(int.class))).thenReturn(true);
+            final RegionScheduler regionScheduler = mock(RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+            doAnswer(inv -> {
+                ((Runnable) inv.getArgument(2)).run();
+                return null;
+            }).when(regionScheduler).execute(any(), any(Location.class), any());
+
+            final Block safeFloor = mock(Block.class);
+            when(safeFloor.isSolid()).thenReturn(true);
+            when(safeFloor.getType()).thenReturn(Material.STONE);
+            final Block safeAir = mock(Block.class);
+            when(safeAir.isPassable()).thenReturn(true);
+            when(safeAir.getType()).thenReturn(Material.AIR);
+
+            when(world.getBlockAt(5, 63, 5)).thenReturn(safeFloor);
+            when(world.getBlockAt(5, 64, 5)).thenReturn(safeAir);
+            when(world.getBlockAt(5, 65, 5)).thenReturn(safeAir);
+            when(world.getBlockAt(5, 66, 5)).thenReturn(safeAir);
+
+            final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
+            when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
+            when(evaluator.charge(any(), any(), any())).thenThrow(new RuntimeException("Economy database crashed"));
+
+            final AetheryteService customService = new AetheryteService(
+                    plugin,
+                    registry,
+                    VariationRegistry.defaults(),
+                    NoopHologramService.INSTANCE,
+                    Messages.defaults(),
+                    () -> -1,
+                    () -> 0,
+                    p -> 0L,
+                    (p, t) -> {},
+                    evaluator
+            );
+
+            final Player player = mock(Player.class);
+            final UUID playerId = UUID.randomUUID();
+            when(player.getUniqueId()).thenReturn(playerId);
+            when(player.hasPermission("clickportals.use")).thenReturn(true);
+            when(player.getWorld()).thenReturn(world);
+            when(player.getLocation()).thenReturn(new Location(world, 5, 64, 5));
+
+            final EntityScheduler entityScheduler = mock(EntityScheduler.class);
+            when(player.getScheduler()).thenReturn(entityScheduler);
+            doAnswer(inv -> {
+                @SuppressWarnings("unchecked")
+                final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+                consumer.accept(mock(ScheduledTask.class));
+                return mock(ScheduledTask.class);
+            }).when(entityScheduler).run(any(), any(), any());
+
+            // First warp attempt crashes in charge()
+            customService.warpToAetheryte(player, registeredAetheryte, registeredAetheryte.id());
+
+            // Player should receive error notification
+            verify(player).sendMessage(any(Component.class));
+
+            // Evaluator charge was called once
+            verify(evaluator, times(1)).charge(any(), any(), any());
+
+            // Next warp attempt: player is NOT locked in inFlightWarps, so charge() is invoked again!
+            customService.warpToAetheryte(player, registeredAetheryte, registeredAetheryte.id());
+            verify(evaluator, times(2)).charge(any(), any(), any());
         } finally {
             serverField.set(null, null);
         }

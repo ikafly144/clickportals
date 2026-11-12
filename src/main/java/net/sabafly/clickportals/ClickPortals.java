@@ -248,6 +248,10 @@ public final class ClickPortals extends JavaPlugin {
 
         Bukkit.getGlobalRegionScheduler().execute(this, () -> {
             final PluginConfig reloadedConfig = cfgManager.load();
+            if (!cfgManager.lastLoadSuccessful()) {
+                msgService.send(sender, MessageKey.COMMAND_RELOAD_FAILED);
+                return;
+            }
             msgService.reload(
                     getDataPath().resolve("lang"),
                     reloadedConfig.defaultLocale(),

@@ -20,11 +20,15 @@ package net.sabafly.clickportals.economy;
 import net.milkbowl.vault.economy.Economy;
 import net.milkbowl.vault.economy.EconomyResponse;
 import org.bukkit.entity.Player;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Vault API-backed {@link EconomyProvider} (#16).
  */
 public final class VaultEconomyProvider implements EconomyProvider {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(VaultEconomyProvider.class);
 
     private final Economy economy;
 
@@ -34,17 +38,32 @@ public final class VaultEconomyProvider implements EconomyProvider {
 
     @Override
     public boolean isAvailable() {
-        return economy.isEnabled();
+        try {
+            return economy.isEnabled();
+        } catch (final Throwable t) {
+            LOGGER.warn("Vault economy isEnabled check failed", t);
+            return false;
+        }
     }
 
     @Override
     public double getBalance(final Player player) {
-        return economy.getBalance(player);
+        try {
+            return economy.getBalance(player);
+        } catch (final Throwable t) {
+            LOGGER.warn("Vault economy getBalance failed for player {}", player.getName(), t);
+            return 0.0;
+        }
     }
 
     @Override
     public boolean has(final Player player, final double amount) {
-        return economy.has(player, amount);
+        try {
+            return economy.has(player, amount);
+        } catch (final Throwable t) {
+            LOGGER.warn("Vault economy has failed for player {} (amount: {})", player.getName(), amount, t);
+            return false;
+        }
     }
 
     @Override
@@ -52,8 +71,13 @@ public final class VaultEconomyProvider implements EconomyProvider {
         if (amount <= 0.0) {
             return true;
         }
-        final EconomyResponse response = economy.withdrawPlayer(player, amount);
-        return response != null && response.transactionSuccess();
+        try {
+            final EconomyResponse response = economy.withdrawPlayer(player, amount);
+            return response != null && response.transactionSuccess();
+        } catch (final Throwable t) {
+            LOGGER.warn("Vault economy withdrawPlayer failed for player {} (amount: {})", player.getName(), amount, t);
+            return false;
+        }
     }
 
     @Override
@@ -61,12 +85,22 @@ public final class VaultEconomyProvider implements EconomyProvider {
         if (amount <= 0.0) {
             return true;
         }
-        final EconomyResponse response = economy.depositPlayer(player, amount);
-        return response != null && response.transactionSuccess();
+        try {
+            final EconomyResponse response = economy.depositPlayer(player, amount);
+            return response != null && response.transactionSuccess();
+        } catch (final Throwable t) {
+            LOGGER.warn("Vault economy depositPlayer failed for player {} (amount: {})", player.getName(), amount, t);
+            return false;
+        }
     }
 
     @Override
     public String format(final double amount) {
-        return economy.format(amount);
+        try {
+            return economy.format(amount);
+        } catch (final Throwable t) {
+            LOGGER.debug("Vault economy format failed", t);
+            return String.format(java.util.Locale.ROOT, "%.2f", amount);
+        }
     }
 }

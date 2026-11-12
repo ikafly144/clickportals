@@ -89,3 +89,4 @@ command:
   console-specify-player: "<prefix><red>Please specify a target player when executing from the console.</red>"
   unknown-variation: "<prefix><red>Unknown Aetheryte variation: <variation></red>"
   reloaded: "<prefix><green>Reloaded ClickPortals configuration and translations.</green>"
+  reload-failed: "<prefix><red>Failed to reload configuration due to errors. Check console logs.</red>"

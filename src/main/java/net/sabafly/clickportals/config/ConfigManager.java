@@ -43,6 +43,7 @@ public final class ConfigManager {
     private final Logger logger;
     private final YamlConfigurationLoader loader;
     private PluginConfig currentConfig;
+    private boolean lastLoadSuccessful = true;
 
     /**
      * Creates a new {@link ConfigManager} for the given configuration file path.
@@ -60,8 +61,8 @@ public final class ConfigManager {
     }
 
     /**
-     * Loads the configuration from disk (creating the default file if missing), validates it, and saves back
-     * with comments preserved.
+     * Loads the configuration from disk (creating the default file if missing), validates it,
+     * and logs warnings or errors for invalid settings.
      */
     public PluginConfig load() {
         try {
@@ -72,6 +73,7 @@ public final class ConfigManager {
             if (!Files.exists(configFile)) {
                 currentConfig = PluginConfig.defaultConfig();
                 save(currentConfig);
+                lastLoadSuccessful = true;
                 return currentConfig;
             }
 
@@ -88,15 +90,34 @@ public final class ConfigManager {
                 }
             }
             final PluginConfig parsed = root.get(PluginConfig.class);
-            final PluginConfig validated = (parsed == null ? PluginConfig.defaultConfig() : parsed).validated(logger);
+            if (parsed == null) {
+                logger.error("Failed to parse configuration from {}; file appears empty or malformed. Retaining active configuration.", configFile);
+                lastLoadSuccessful = false;
+                if (currentConfig == null) {
+                    currentConfig = PluginConfig.defaultConfig();
+                }
+                return currentConfig;
+            }
+            final PluginConfig validated = parsed.validated(logger);
             currentConfig = validated;
-            save(validated);
+            lastLoadSuccessful = true;
             return currentConfig;
-        } catch (final IOException e) {
-            logger.warn("Failed to load config from {}; using default configuration", configFile, e);
-            currentConfig = PluginConfig.defaultConfig();
+        } catch (final Exception e) {
+            logger.error("Failed to load config from {}: syntax or deserialization error; retaining active configuration: {}",
+                    configFile, e.getMessage(), e);
+            lastLoadSuccessful = false;
+            if (currentConfig == null) {
+                currentConfig = PluginConfig.defaultConfig();
+            }
             return currentConfig;
         }
+    }
+
+    /**
+     * Returns whether the most recent {@link #load()} operation completed without syntax or deserialization errors.
+     */
+    public boolean lastLoadSuccessful() {
+        return lastLoadSuccessful;
     }
 
     /**

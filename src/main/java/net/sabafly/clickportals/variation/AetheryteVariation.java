@@ -31,9 +31,12 @@ import org.bukkit.Color;
 import org.bukkit.Material;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
+import org.spongepowered.configurate.ConfigurationNode;
 import org.spongepowered.configurate.objectmapping.ConfigSerializable;
 import org.spongepowered.configurate.objectmapping.meta.Comment;
 import org.spongepowered.configurate.objectmapping.meta.Setting;
+import org.spongepowered.configurate.serialize.SerializationException;
+import org.spongepowered.configurate.serialize.TypeSerializer;
 
 /**
  * Type-safe Configurate model representing a single Aetheryte variation loaded from
@@ -474,6 +477,48 @@ public record AetheryteVariation(
 
         public static WarpOverrideSection defaults() {
             return new WarpOverrideSection(DistanceSection.inherit(), null);
+        }
+    }
+
+    /**
+     * Custom {@link TypeSerializer} for {@link WarpOverrideSection} ensuring {@code cost: null} is preserved
+     * as {@code null} (inheriting global config) rather than being coerced into an empty list (#14, #26).
+     */
+    public static final class WarpOverrideSectionSerializer implements TypeSerializer<WarpOverrideSection> {
+        public static final WarpOverrideSectionSerializer INSTANCE = new WarpOverrideSectionSerializer();
+
+        @Override
+        public WarpOverrideSection deserialize(final java.lang.reflect.Type type, final ConfigurationNode node)
+                throws SerializationException {
+            final DistanceSection distance = node.node("distance").get(DistanceSection.class, DistanceSection.inherit());
+            final ConfigurationNode costNode = node.node("cost");
+            final List<CostEntry> cost;
+            if (costNode.isNull() || costNode.raw() == null) {
+                cost = null;
+            } else if (costNode.isList()) {
+                cost = costNode.getList(CostEntry.class);
+            } else {
+                cost = null;
+            }
+            return new WarpOverrideSection(distance, cost);
+        }
+
+        @Override
+        public void serialize(
+                final java.lang.reflect.Type type,
+                final @Nullable WarpOverrideSection obj,
+                final ConfigurationNode node
+        ) throws SerializationException {
+            if (obj == null) {
+                node.raw(null);
+                return;
+            }
+            node.node("distance").set(DistanceSection.class, obj.distance());
+            if (obj.cost() == null) {
+                node.node("cost").raw(null);
+            } else {
+                node.node("cost").setList(CostEntry.class, obj.cost());
+            }
         }
     }
 

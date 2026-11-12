@@ -19,11 +19,14 @@ package net.sabafly.clickportals.config;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import net.sabafly.clickportals.cost.CostEntry;
 import net.sabafly.clickportals.cost.expr.ExpressionException;
 import net.sabafly.clickportals.cost.expr.ExpressionParser;
 import net.sabafly.clickportals.message.LanguageLoader;
+import net.sabafly.clickportals.route.CostOverrideConfig;
 import net.sabafly.clickportals.route.DimensionRoutesConfig;
+import net.sabafly.clickportals.route.RouteEntryConfig;
 import org.slf4j.Logger;
 import org.spongepowered.configurate.objectmapping.ConfigSerializable;
 import org.spongepowered.configurate.objectmapping.meta.Comment;
@@ -189,15 +192,19 @@ public record PluginConfig(
     }
 
     /**
-     * Validates and normalizes this configuration, falling back to safe defaults on invalid values.
+     * Validates and normalizes this configuration, logging warnings and falling back to safe defaults on invalid values.
      */
     public PluginConfig validated(final Logger logger) {
         final LanguageSection defaultLanguage = LanguageSection.defaults();
 
         final String rawLocale = language.defaultLocale();
-        final String validDefaultLocale = (rawLocale == null || rawLocale.isBlank())
-                ? defaultLanguage.defaultLocale()
-                : rawLocale.strip();
+        final String validDefaultLocale;
+        if (rawLocale == null || rawLocale.isBlank()) {
+            logger.warn("language.default-locale is missing or empty; falling back to {}", defaultLanguage.defaultLocale());
+            validDefaultLocale = defaultLanguage.defaultLocale();
+        } else {
+            validDefaultLocale = rawLocale.strip();
+        }
 
         final double validViewDistance;
         if (!Double.isFinite(hologram.viewDistance()) || hologram.viewDistance() < 4.0) {
@@ -207,12 +214,47 @@ public record PluginConfig(
             validViewDistance = hologram.viewDistance();
         }
 
-        final int validMaxPerPlayer = limits.maxAetherytesPerPlayer() < -1 ? -1 : limits.maxAetherytesPerPlayer();
-        final int validCooldownTicks = Math.max(0, limits.placementCooldownTicks());
+        final int rawMaxPerPlayer = limits.maxAetherytesPerPlayer();
+        final int validMaxPerPlayer;
+        if (rawMaxPerPlayer < -1) {
+            logger.warn("Invalid limits.max-aetherytes-per-player {} (must be >= -1); falling back to -1 (unlimited)", rawMaxPerPlayer);
+            validMaxPerPlayer = -1;
+        } else {
+            validMaxPerPlayer = rawMaxPerPlayer;
+        }
+
+        final int rawCooldownTicks = limits.placementCooldownTicks();
+        final int validCooldownTicks;
+        if (rawCooldownTicks < 0) {
+            logger.warn("Invalid limits.placement-cooldown-ticks {} (must be >= 0); falling back to 0", rawCooldownTicks);
+            validCooldownTicks = 0;
+        } else {
+            validCooldownTicks = rawCooldownTicks;
+        }
 
         final DistanceSection rawDist = warp.distance();
-        final double validMinDist = rawDist.min() == null || rawDist.min() < 0.0 ? 0.0 : rawDist.min();
-        double validMaxDist = rawDist.max() == null || rawDist.max() < -1.0 ? -1.0 : rawDist.max();
+        final double validMinDist;
+        if (rawDist.min() == null) {
+            logger.warn("warp.distance.min is missing; falling back to 0.0");
+            validMinDist = 0.0;
+        } else if (rawDist.min() < 0.0) {
+            logger.warn("Invalid warp.distance.min {} (must be >= 0.0); falling back to 0.0", rawDist.min());
+            validMinDist = 0.0;
+        } else {
+            validMinDist = rawDist.min();
+        }
+
+        double validMaxDist;
+        if (rawDist.max() == null) {
+            logger.warn("warp.distance.max is missing; falling back to -1.0 (unlimited)");
+            validMaxDist = -1.0;
+        } else if (rawDist.max() < -1.0) {
+            logger.warn("Invalid warp.distance.max {} (must be >= -1.0); falling back to -1.0 (unlimited)", rawDist.max());
+            validMaxDist = -1.0;
+        } else {
+            validMaxDist = rawDist.max();
+        }
+
         if (validMaxDist >= 0.0 && validMinDist > validMaxDist) {
             logger.warn("warp.distance.min ({}) is greater than warp.distance.max ({}). Disabling max distance (-1.0) to prevent deadlocks.",
                     validMinDist, validMaxDist);
@@ -236,6 +278,14 @@ public record PluginConfig(
 
         final WarpSection validWarp = new WarpSection(validDist, warp.cost(), warp.showOptionalCosts());
 
+        final DimensionRoutesConfig validDimensions;
+        if (dimensions == null) {
+            logger.warn("Missing 'dimensions' section in config.yml; falling back to default dimension routes");
+            validDimensions = DimensionRoutesConfig.defaults();
+        } else {
+            validDimensions = validateDimensions(dimensions, logger);
+        }
+
         return new PluginConfig(
                 new LanguageSection(
                         validDefaultLocale,
@@ -247,8 +297,55 @@ public record PluginConfig(
                 ),
                 new LimitsSection(validMaxPerPlayer, validCooldownTicks),
                 validWarp,
-                dimensions != null ? dimensions : DimensionRoutesConfig.defaults()
+                validDimensions
         );
+    }
+
+    private static DimensionRoutesConfig validateDimensions(final DimensionRoutesConfig config, final Logger logger) {
+        if (config.defaultCost() != null) {
+            for (final CostEntry entry : config.defaultCost()) {
+                if (entry.type() == null) {
+                    logger.warn("Unknown cost type '{}' in dimensions.default-cost", entry.rawType());
+                } else {
+                    try {
+                        ExpressionParser.parse(entry.amount(), "$amount");
+                    } catch (final ExpressionException e) {
+                        logger.warn("Invalid cost expression '{}' in dimensions.default-cost: {}", entry.amount(), e.getMessage());
+                    }
+                }
+            }
+        }
+        if (config.amounts() != null) {
+            for (final Map.Entry<String, Double> entry : config.amounts().entrySet()) {
+                final Double amount = entry.getValue();
+                if (amount == null || !Double.isFinite(amount) || amount < 0.0) {
+                    logger.warn("Invalid dimension amount {} for world '{}' in dimensions.amounts; must be >= 0.0",
+                            amount, entry.getKey());
+                }
+            }
+        }
+        if (config.routes() != null) {
+            for (final RouteEntryConfig route : config.routes()) {
+                if (route.between() == null || route.between().size() < 2) {
+                    logger.warn("Invalid route in dimensions.routes: 'between' must contain at least 2 world names, got {}",
+                            route.between());
+                }
+                if (route.costOverride() != null) {
+                    for (final Map.Entry<String, CostOverrideConfig> entry : route.costOverride().entrySet()) {
+                        final String expr = entry.getValue().amount();
+                        if (expr != null) {
+                            try {
+                                ExpressionParser.parse(expr, "$default");
+                            } catch (final ExpressionException e) {
+                                logger.warn("Invalid cost-override expression '{}' for world '{}' in dimensions.routes: {}",
+                                        expr, entry.getKey(), e.getMessage());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return config;
     }
 
     /**

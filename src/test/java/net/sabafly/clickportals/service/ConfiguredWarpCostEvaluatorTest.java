@@ -154,6 +154,10 @@ class ConfiguredWarpCostEvaluatorTest {
 
         final String reason = PlainTextComponentSerializer.plainText().serialize(Objects.requireNonNull(eval.denyReason()));
         assertThat(reason).contains("too close");
+
+        // Real cost is calculated and displayed even when denied
+        final String cost = PlainTextComponentSerializer.plainText().serialize(eval.costDisplay());
+        assertThat(cost).contains("$7.50");
     }
 
     @Test
@@ -171,6 +175,10 @@ class ConfiguredWarpCostEvaluatorTest {
 
         final String reason = PlainTextComponentSerializer.plainText().serialize(Objects.requireNonNull(eval.denyReason()));
         assertThat(reason).contains("too far");
+
+        // Real cost is calculated and displayed even when denied
+        final String cost = PlainTextComponentSerializer.plainText().serialize(eval.costDisplay());
+        assertThat(cost).contains("$755.00");
     }
 
     @Test
@@ -213,8 +221,8 @@ class ConfiguredWarpCostEvaluatorTest {
         assertThat(eval.allowed()).isTrue();
 
         final String costText = PlainTextComponentSerializer.plainText().serialize(eval.costDisplay());
-        // Both entries combined (55 + 30) or formatted items
-        assertThat(costText).contains("$55.00").contains("$30.00");
+        // Both entries combined (55 + 30 = 85) via cost aggregation
+        assertThat(costText).contains("$85.00");
     }
 
     @Test
@@ -233,6 +241,10 @@ class ConfiguredWarpCostEvaluatorTest {
         assertThat(eval.denyReason()).isNotNull();
         final String reason = PlainTextComponentSerializer.plainText().serialize(Objects.requireNonNull(eval.denyReason()));
         assertThat(reason).contains("too far");
+
+        // Real cost is calculated and displayed even when denied
+        final String cost = PlainTextComponentSerializer.plainText().serialize(eval.costDisplay());
+        assertThat(cost).contains("$30.00");
     }
 
     @Test
@@ -277,6 +289,10 @@ class ConfiguredWarpCostEvaluatorTest {
         assertThat(eval.denyReason()).isNotNull();
         final String reason = PlainTextComponentSerializer.plainText().serialize(Objects.requireNonNull(eval.denyReason()));
         assertThat(reason).contains("too close");
+
+        // Real cost is calculated and displayed even when denied
+        final String cost = PlainTextComponentSerializer.plainText().serialize(eval.costDisplay());
+        assertThat(cost).contains("$7.50");
     }
 
     @Test

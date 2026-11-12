@@ -18,6 +18,7 @@
 package net.sabafly.clickportals.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 
@@ -85,6 +86,7 @@ class PluginConfigTest {
         assertThat(config.maxAetherytesPerPlayer()).isEqualTo(5);
         assertThat(config.placementCooldownTicks()).isEqualTo(200);
 
+        manager.save(config);
         final String savedYaml = Files.readString(configFile, StandardCharsets.UTF_8);
         assertThat(savedYaml).contains("# Maximum total Aetherytes a single player may own across all variations");
     }
@@ -133,5 +135,69 @@ class PluginConfigTest {
                 eq(100.0),
                 eq(50.0)
         );
+    }
+
+    @Test
+    void syntaxErrorInConfigRetainsActiveConfigAndSetsLastLoadSuccessfulFalse() throws IOException {
+        final Path configFile = tempDir.resolve("config.yml");
+        Files.writeString(configFile, """
+                limits:
+                  max-aetherytes-per-player: 42
+                """, StandardCharsets.UTF_8);
+
+        final Logger logger = mock(Logger.class);
+        final ConfigManager manager = new ConfigManager(configFile, logger);
+        final PluginConfig initial = manager.load();
+
+        assertThat(manager.lastLoadSuccessful()).isTrue();
+        assertThat(initial.maxAetherytesPerPlayer()).isEqualTo(42);
+
+        // Corrupt file with syntax error
+        Files.writeString(configFile, "limits: [ invalid yaml syntax {", StandardCharsets.UTF_8);
+
+        final PluginConfig reloaded = manager.load();
+
+        assertThat(manager.lastLoadSuccessful()).isFalse();
+        // Retains active config
+        assertThat(reloaded.maxAetherytesPerPlayer()).isEqualTo(42);
+        // File on disk was NOT overwritten
+        assertThat(Files.readString(configFile, StandardCharsets.UTF_8)).contains("limits: [ invalid yaml syntax {");
+        org.mockito.Mockito.verify(logger).error(
+                org.mockito.ArgumentMatchers.contains("syntax or deserialization error"),
+                eq(configFile),
+                any(),
+                any()
+        );
+    }
+
+    @Test
+    void dimensionsValidationLogsWarningsForInvalidExpressions() throws IOException {
+        final Path configFile = tempDir.resolve("config.yml");
+        Files.writeString(configFile, """
+                dimensions:
+                  default-cost:
+                    - type: UNKNOWN_COST
+                      amount: "10"
+                    - type: VAULT
+                      amount: "invalid expression ++"
+                  amounts:
+                    world_bad: -5.0
+                  routes:
+                    - between: [ "only_one_world" ]
+                    - between: [ "world_a", "world_b" ]
+                      cost-override:
+                        world_b:
+                          amount: "invalid syntax ++"
+                """, StandardCharsets.UTF_8);
+
+        final Logger logger = mock(Logger.class);
+        final ConfigManager manager = new ConfigManager(configFile, logger);
+        manager.load();
+
+        org.mockito.Mockito.verify(logger).warn(org.mockito.ArgumentMatchers.contains("Unknown cost type"), eq("UNKNOWN_COST"));
+        org.mockito.Mockito.verify(logger).warn(org.mockito.ArgumentMatchers.contains("Invalid cost expression"), eq("invalid expression ++"), any());
+        org.mockito.Mockito.verify(logger).warn(org.mockito.ArgumentMatchers.contains("Invalid dimension amount"), eq(-5.0), eq("world_bad"));
+        org.mockito.Mockito.verify(logger).warn(org.mockito.ArgumentMatchers.contains("between' must contain at least 2"), any(Object.class));
+        org.mockito.Mockito.verify(logger).warn(org.mockito.ArgumentMatchers.contains("Invalid cost-override expression"), eq("invalid syntax ++"), eq("world_b"), any());
     }
 }

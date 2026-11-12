@@ -126,15 +126,15 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         final PluginConfig config = configSupplier.get();
         final EconomyProvider economy = economySupplier.get();
 
-        if (ctx.blockReason() != null) {
-            final DenyReason code = ctx.blockReasonCode() != null ? ctx.blockReasonCode() : DenyReason.OTHER;
-            return WarpEvaluation.denied(messages.freeCostLabel(player), ctx.blockReason(), code);
-        }
-
         final CostBundle bundle = new CostBundle(ctx.effectiveEntries());
         final Map<String, Double> vars = buildVariables(ctx);
         final CostQuote quote = bundle.quote(player, vars, economy);
         final Component costDisplay = CostFormatter.format(player, quote, economy, messages, config.showOptionalCosts());
+
+        if (ctx.blockReason() != null) {
+            final DenyReason code = ctx.blockReasonCode() != null ? ctx.blockReasonCode() : DenyReason.OTHER;
+            return WarpEvaluation.denied(costDisplay, ctx.blockReason(), code);
+        }
 
         if (!quote.affordable()) {
             final Component reason = CostFormatter.formatMissingRequirements(player, quote, economy, messages);
@@ -243,29 +243,12 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         final World targetWorld = worldResolver.apply(destination.worldId());
         final World sourceWorld = source != null ? worldResolver.apply(source.worldId()) : player.getWorld();
 
-        if (targetWorld == null) {
-            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(),
-                    messages.get(player, MessageKey.ERROR_NOT_FOUND), WarpEvaluation.DenyReason.NOT_FOUND);
-        }
+        final List<CostEntry> baseEntries = resolveBaseCostEntries(source, config);
+        final List<CostEntry> extraEntries = new ArrayList<>();
 
-        // Validate source reach and world match if source Aetheryte was provided (#40)
-        if (source != null) {
-            if (sourceWorld == null || !player.getWorld().getUID().equals(source.worldId())) {
-                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(),
-                        messages.get(player, MessageKey.ERROR_NOT_FOUND), WarpEvaluation.DenyReason.NOT_FOUND);
-            }
-            final Location pLoc = player.getLocation();
-            if (pLoc == null) {
-                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(),
-                        messages.get(player, MessageKey.ERROR_NOT_FOUND), WarpEvaluation.DenyReason.NOT_FOUND);
-            }
-            final AetheryteVariation sourceVar = variationRegistry.getOrDefault(source.variation());
-            final double hitboxAllowance = Math.max(sourceVar.hitbox().width(), sourceVar.hitbox().height());
-            final double maxReach = BASE_INTERACT_REACH + hitboxAllowance;
-            if (pLoc.distanceSquared(source.markerLocation(sourceWorld)) > maxReach * maxReach) {
-                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(),
-                        messages.get(player, MessageKey.ERROR_TOO_FAR), WarpEvaluation.DenyReason.TOO_FAR);
-            }
+        if (targetWorld == null) {
+            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,
+                    messages.get(player, MessageKey.ERROR_NOT_FOUND), WarpEvaluation.DenyReason.NOT_FOUND);
         }
 
         final boolean sameWorld = sourceWorld != null && sourceWorld.getUID().equals(targetWorld.getUID());
@@ -276,7 +259,6 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         final double crossDim;
         final double hops;
         final double dimCostAmt;
-        final List<CostEntry> extraEntries = new ArrayList<>();
 
         final Location playerLoc = player.getLocation();
         final Location fallbackSrc = playerLoc != null
@@ -299,7 +281,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             dimCostAmt = 0.0;
         } else {
             if (sourceWorld == null) {
-                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(),
+                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,
                         messages.get(player, MessageKey.ERROR_NO_ROUTE), WarpEvaluation.DenyReason.NO_ROUTE);
             }
             final Location srcLoc = source != null
@@ -308,7 +290,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             final DimensionRouter router = routerSupplier.get();
             final Optional<RoutePlan> plan = router.findRoute(sourceWorld, targetWorld, srcLoc);
             if (plan.isEmpty()) {
-                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(),
+                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,
                         messages.get(player, MessageKey.ERROR_NO_ROUTE), WarpEvaluation.DenyReason.NO_ROUTE);
             }
 
@@ -327,24 +309,42 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             extraEntries.addAll(route.dimensionCostEntries());
         }
 
+        final List<CostEntry> allEntries = new ArrayList<>(baseEntries);
+        allEntries.addAll(extraEntries);
+
+        // Validate source reach and world match if source Aetheryte was provided (#40)
+        if (source != null) {
+            if (sourceWorld == null || !player.getWorld().getUID().equals(source.worldId())) {
+                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries,
+                        messages.get(player, MessageKey.ERROR_NOT_FOUND), WarpEvaluation.DenyReason.NOT_FOUND);
+            }
+            final Location pLoc = player.getLocation();
+            if (pLoc == null) {
+                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries,
+                        messages.get(player, MessageKey.ERROR_NOT_FOUND), WarpEvaluation.DenyReason.NOT_FOUND);
+            }
+            final AetheryteVariation sourceVar = variationRegistry.getOrDefault(source.variation());
+            final double hitboxAllowance = Math.max(sourceVar.hitbox().width(), sourceVar.hitbox().height());
+            final double maxReach = BASE_INTERACT_REACH + hitboxAllowance;
+            if (pLoc.distanceSquared(source.markerLocation(sourceWorld)) > maxReach * maxReach) {
+                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries,
+                        messages.get(player, MessageKey.ERROR_TOO_FAR), WarpEvaluation.DenyReason.TOO_FAR);
+            }
+        }
+
         // Distance limits (#26)
         final DistanceSection effectiveDistanceLimits = resolveDistanceLimits(source, config);
         final double minDist = effectiveDistanceLimits.minOrDefault(0.0);
         final double maxDist = effectiveDistanceLimits.maxOrDefault(-1.0);
 
         if (minDist > 0.0 && blockDist < minDist) {
-            return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, List.of(),
+            return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries,
                     messages.get(player, MessageKey.ERROR_TOO_CLOSE), WarpEvaluation.DenyReason.TOO_CLOSE);
         }
         if (maxDist >= 0.0 && blockDist > maxDist) {
-            return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, List.of(),
+            return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries,
                     messages.get(player, MessageKey.ERROR_TOO_FAR), WarpEvaluation.DenyReason.TOO_FAR);
         }
-
-        // Resolve base cost entries
-        final List<CostEntry> baseEntries = resolveBaseCostEntries(source, config);
-        final List<CostEntry> allEntries = new ArrayList<>(baseEntries);
-        allEntries.addAll(extraEntries);
 
         return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries, null, null);
     }

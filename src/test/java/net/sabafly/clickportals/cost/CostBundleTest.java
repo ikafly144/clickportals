@@ -384,4 +384,34 @@ class CostBundleTest {
         // With BigDecimal decimal aggregation, it evaluates to exactly 0.3 and is affordable
         assertThat(quote.affordable()).isTrue();
     }
+
+    @Test
+    void costFormatterAggregatesMultipleItemsOfSameCostType() {
+        when(economy.format(85.0)).thenReturn("$85.00");
+        final Messages messages = Messages.defaults();
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.VAULT, "55"),
+                CostEntry.of(CostType.VAULT, "30")
+        ));
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        final Component formatted = CostFormatter.format(player, quote, economy, messages, true);
+        final String text = PlainTextComponentSerializer.plainText().serialize(formatted);
+        assertThat(text).isEqualTo("$85.00");
+    }
+
+    @Test
+    void costFormatterAggregatesMissingRequirementsOfSameCostType() {
+        when(economy.getBalance(player)).thenReturn(50.0);
+        when(economy.format(85.0)).thenReturn("$85.00");
+        when(economy.format(35.0)).thenReturn("$35.00");
+        final Messages messages = Messages.defaults();
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.VAULT, "55"),
+                CostEntry.of(CostType.VAULT, "30")
+        ));
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        final Component missing = CostFormatter.formatMissingRequirements(player, quote, economy, messages);
+        final String text = PlainTextComponentSerializer.plainText().serialize(missing);
+        assertThat(text).contains("$85.00");
+    }
 }

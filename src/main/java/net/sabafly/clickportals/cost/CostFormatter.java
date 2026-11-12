@@ -17,8 +17,11 @@
  */
 package net.sabafly.clickportals.cost;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.sabafly.clickportals.economy.EconomyProvider;
@@ -37,6 +40,7 @@ public final class CostFormatter {
     /**
      * Formats the quote into a readable label (e.g. {@code "100.00 G + 3 Lv"}).
      * Non-mandatory costs can be hidden according to {@code showOptionalCosts}.
+     * Items of the same {@link CostType} are aggregated together into a single total.
      *
      * @param player player to format for (for localization)
      * @param quote assessed cost quote
@@ -56,7 +60,8 @@ public final class CostFormatter {
             return messages.freeCostLabel(player);
         }
 
-        final List<Component> parts = new ArrayList<>();
+        final Map<CostType, BigDecimal> aggregated = new LinkedHashMap<>();
+        boolean hasInvalid = false;
         for (final CostItemQuote item : quote.items()) {
             if (item.disabled() || item.amount() <= 0.0) {
                 continue;
@@ -64,11 +69,27 @@ public final class CostFormatter {
             if (!showOptionalCosts && !item.required()) {
                 continue;
             }
-            parts.add(formatSingleItem(player, item, economy, messages));
+            if (item.type() == null || !Double.isFinite(item.amount())) {
+                hasInvalid = true;
+                continue;
+            }
+            aggregated.merge(item.type(), item.type().toBigDecimal(item.amount()), BigDecimal::add);
         }
 
-        if (parts.isEmpty()) {
-            return messages.freeCostLabel(player);
+        if (aggregated.isEmpty()) {
+            return hasInvalid
+                    ? messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET)
+                    : messages.freeCostLabel(player);
+        }
+
+        final List<Component> parts = new ArrayList<>();
+        if (hasInvalid) {
+            parts.add(messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET));
+        }
+        for (final Map.Entry<CostType, BigDecimal> entry : aggregated.entrySet()) {
+            final CostType type = entry.getKey();
+            final double amount = entry.getValue().doubleValue();
+            parts.add(formatSingleItem(player, type, amount, economy, messages));
         }
 
         final Component separator = messages.get(player, MessageKey.COST_SEPARATOR);
@@ -81,6 +102,7 @@ public final class CostFormatter {
 
     /**
      * Formats the specific insufficient cost reasons into a descriptive error {@link Component} (#7).
+     * Items of the same {@link CostType} are aggregated together.
      */
     public static Component formatMissingRequirements(
             final Player player,
@@ -93,20 +115,35 @@ public final class CostFormatter {
             return messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST);
         }
 
-        final List<Component> reasons = new ArrayList<>(missing.size());
+        final Map<CostType, BigDecimal> aggregatedMissing = new LinkedHashMap<>();
+        boolean hasInvalid = false;
         for (final CostItemQuote item : missing) {
             if (item.type() == null || !Double.isFinite(item.amount())) {
-                reasons.add(messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET));
+                hasInvalid = true;
                 continue;
             }
-            final String formattedAmount = formatAmountString(item, economy);
-            final MessageKey key = switch (item.type()) {
+            aggregatedMissing.merge(item.type(), item.type().toBigDecimal(item.amount()), BigDecimal::add);
+        }
+
+        final List<Component> reasons = new ArrayList<>();
+        if (hasInvalid) {
+            reasons.add(messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET));
+        }
+        for (final Map.Entry<CostType, BigDecimal> entry : aggregatedMissing.entrySet()) {
+            final CostType type = entry.getKey();
+            final double amount = entry.getValue().doubleValue();
+            final String formattedAmount = formatAmountString(type, amount, economy);
+            final MessageKey key = switch (type) {
                 case VAULT -> MessageKey.COST_INSUFFICIENT_VAULT;
                 case EXP_POINTS -> MessageKey.COST_INSUFFICIENT_EXP_POINTS;
                 case EXP_LEVELS -> MessageKey.COST_INSUFFICIENT_EXP_LEVELS;
                 case FOOD -> MessageKey.COST_INSUFFICIENT_FOOD;
             };
             reasons.add(messages.get(player, key, Placeholder.unparsed("amount", formattedAmount)));
+        }
+
+        if (reasons.isEmpty()) {
+            return messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST);
         }
 
         final Component separator = messages.get(player, MessageKey.COST_SEPARATOR);
@@ -119,15 +156,13 @@ public final class CostFormatter {
 
     private static Component formatSingleItem(
             final Player player,
-            final CostItemQuote item,
+            final CostType type,
+            final double amount,
             final EconomyProvider economy,
             final Messages messages
     ) {
-        if (item.type() == null || !Double.isFinite(item.amount())) {
-            return messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET);
-        }
-        final String formattedAmount = formatAmountString(item, economy);
-        final MessageKey key = switch (item.type()) {
+        final String formattedAmount = formatAmountString(type, amount, economy);
+        final MessageKey key = switch (type) {
             case VAULT -> MessageKey.COST_VAULT;
             case EXP_POINTS -> MessageKey.COST_EXP_POINTS;
             case EXP_LEVELS -> MessageKey.COST_EXP_LEVELS;
@@ -136,16 +171,16 @@ public final class CostFormatter {
         return messages.get(player, key, Placeholder.unparsed("amount", formattedAmount));
     }
 
-    private static String formatAmountString(final CostItemQuote item, final EconomyProvider economy) {
-        if (!Double.isFinite(item.amount())) {
+    private static String formatAmountString(final CostType type, final double amount, final EconomyProvider economy) {
+        if (!Double.isFinite(amount)) {
             return "---";
         }
-        if (item.type() == CostType.VAULT && economy.isAvailable()) {
-            return economy.format(item.amount());
+        if (type == CostType.VAULT && economy.isAvailable()) {
+            return economy.format(amount);
         }
-        if (item.type() == CostType.VAULT) {
-            return String.format(java.util.Locale.ROOT, "%.2f", item.amount());
+        if (type == CostType.VAULT) {
+            return String.format(java.util.Locale.ROOT, "%.2f", amount);
         }
-        return Long.toString(Math.round(item.amount()));
+        return Long.toString(Math.round(amount));
     }
 }

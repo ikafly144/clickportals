@@ -666,14 +666,14 @@ public final class AetheryteService {
             final @Nullable Aetheryte source,
             final Aetheryte destination
     ) {
+        final WarpEvaluation evaluation = costEvaluator.evaluate(player, source, destination);
         if (!canUse(player)) {
             return WarpEvaluation.denied(
-                    messages.freeCostLabel(player),
+                    evaluation.costDisplay(),
                     messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION),
                     WarpEvaluation.DenyReason.NO_PERMISSION
             );
         }
-        final WarpEvaluation evaluation = costEvaluator.evaluate(player, source, destination);
         if (Permissions.canBypassWarpCost(player)) {
             if (evaluation.denyReasonCode() == WarpEvaluation.DenyReason.INSUFFICIENT_COST) {
                 return WarpEvaluation.permitted(messages.freeCostLabel(player));
@@ -1094,105 +1094,136 @@ public final class AetheryteService {
         final AetheryteVariation destVariation = variationRegistry.getOrDefault(destination.variation());
 
         Bukkit.getRegionScheduler().execute(plugin, checkLoc, () -> {
-            final Optional<Location> safeLanding = LandingResolver.resolveForVariation(
-                    targetWorld,
-                    destination.blockX(),
-                    destination.blockY(),
-                    destination.blockZ(),
-                    yaw,
-                    pitch,
-                    destVariation
-            );
-            if (safeLanding.isEmpty()) {
-                if (playerId != null) {
-                    inFlightWarps.remove(playerId);
-                }
-                messages.send(player, MessageKey.ERROR_DESTINATION_UNSAFE);
-                return;
-            }
-            final Location destinationLoc = safeLanding.get();
-
-            player.getScheduler().run(plugin, task -> {
-                if (source != null && !isWithinReach(player, source)) {
+            try {
+                final Optional<Location> safeLanding = LandingResolver.resolveForVariation(
+                        targetWorld,
+                        destination.blockX(),
+                        destination.blockY(),
+                        destination.blockZ(),
+                        yaw,
+                        pitch,
+                        destVariation
+                );
+                if (safeLanding.isEmpty()) {
                     if (playerId != null) {
                         inFlightWarps.remove(playerId);
                     }
-                    messages.send(player, MessageKey.ERROR_TOO_FAR);
+                    messages.send(player, MessageKey.ERROR_DESTINATION_UNSAFE);
                     return;
                 }
+                final Location destinationLoc = safeLanding.get();
 
-                if (!canUse(player)) {
-                    if (playerId != null) {
-                        inFlightWarps.remove(playerId);
-                    }
-                    final WarpEvaluation recheck = evaluateWarp(player, source, destination);
-                    final Component reason = recheck.denyReason() != null
-                            ? recheck.denyReason()
-                            : messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION);
-                    player.sendMessage(messages.errorWarpDenied(player, reason));
-                    return;
-                }
-
-                final WarpCostEvaluator activeEvaluator = this.costEvaluator;
-                final boolean bypassCost = Permissions.canBypassWarpCost(player);
-                final boolean paid = bypassCost || activeEvaluator.charge(player, source, destination);
-                if (!paid) {
-                    if (playerId != null) {
-                        inFlightWarps.remove(playerId);
-                    }
-                    final WarpEvaluation recheck = evaluateWarp(player, source, destination);
-                    final Component reason = recheck.denyReason() != null
-                            ? recheck.denyReason()
-                            : messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST);
-                    player.sendMessage(messages.errorWarpDenied(player, reason));
-                    return;
-                }
-
-                if (source != null) {
-                    modelService.triggerAnimation(source.id(), ModelAnimationTrigger.ON_WARP_DEPART);
-                }
-                final CompletableFuture<Void> unused = player.teleportAsync(destinationLoc).thenAccept(success -> {
-                    if (playerId != null) {
-                        inFlightWarps.remove(playerId);
-                    }
-                    if (Boolean.TRUE.equals(success)) {
-                        if (!bypassCost) {
-                            activeEvaluator.commit(player, source, destination);
+                player.getScheduler().run(plugin, task -> {
+                    final WarpCostEvaluator activeEvaluator = this.costEvaluator;
+                    final boolean bypassCost = Permissions.canBypassWarpCost(player);
+                    boolean paid = false;
+                    try {
+                        if (source != null && !isWithinReach(player, source)) {
+                            if (playerId != null) {
+                                inFlightWarps.remove(playerId);
+                            }
+                            messages.send(player, MessageKey.ERROR_TOO_FAR);
+                            return;
                         }
-                        modelService.triggerAnimation(destination.id(), ModelAnimationTrigger.ON_WARP_ARRIVE);
-                        player.sendMessage(messages.warpedTo(player, destination));
-                        player.getScheduler().run(plugin, postTask -> {
-                            player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
-                            hologramService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
-                            modelService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
-                        }, null);
-                    } else {
-                        handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_DESTINATION_UNSAFE);
+
+                        if (!canUse(player)) {
+                            if (playerId != null) {
+                                inFlightWarps.remove(playerId);
+                            }
+                            final WarpEvaluation recheck = evaluateWarp(player, source, destination);
+                            final Component reason = recheck.denyReason() != null
+                                    ? recheck.denyReason()
+                                    : messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION);
+                            player.sendMessage(messages.errorWarpDenied(player, reason));
+                            return;
+                        }
+
+                        paid = bypassCost || activeEvaluator.charge(player, source, destination);
+                        if (!paid) {
+                            if (playerId != null) {
+                                inFlightWarps.remove(playerId);
+                            }
+                            final WarpEvaluation recheck = evaluateWarp(player, source, destination);
+                            final Component reason = recheck.denyReason() != null
+                                    ? recheck.denyReason()
+                                    : messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST);
+                            player.sendMessage(messages.errorWarpDenied(player, reason));
+                            return;
+                        }
+
+                        if (source != null) {
+                            modelService.triggerAnimation(source.id(), ModelAnimationTrigger.ON_WARP_DEPART);
+                        }
+                        final CompletableFuture<Void> unused = player.teleportAsync(destinationLoc).thenAccept(success -> {
+                            if (playerId != null) {
+                                inFlightWarps.remove(playerId);
+                            }
+                            if (Boolean.TRUE.equals(success)) {
+                                if (!bypassCost) {
+                                    activeEvaluator.commit(player, source, destination);
+                                }
+                                modelService.triggerAnimation(destination.id(), ModelAnimationTrigger.ON_WARP_ARRIVE);
+                                player.sendMessage(messages.warpedTo(player, destination));
+                                player.getScheduler().run(plugin, postTask -> {
+                                    player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
+                                    hologramService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
+                                    modelService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
+                                }, null);
+                            } else {
+                                handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_DESTINATION_UNSAFE);
+                            }
+                        }).exceptionally(ex -> {
+                            if (playerId != null) {
+                                inFlightWarps.remove(playerId);
+                            }
+                            plugin.getSLF4JLogger().warn(
+                                    "Failed to teleport player {} to aetheryte {}",
+                                    player.getName(),
+                                    destination.id(),
+                                    ex
+                            );
+                            handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
+                            return null;
+                        });
+                        if (unused.isCancelled()) {
+                            if (playerId != null) {
+                                inFlightWarps.remove(playerId);
+                            }
+                            handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
+                        }
+                    } catch (final Throwable t) {
+                        if (playerId != null) {
+                            inFlightWarps.remove(playerId);
+                        }
+                        plugin.getSLF4JLogger().error(
+                                "Unexpected error during warp charge or execution for player {} to {}",
+                                player.getName(),
+                                destination.id(),
+                                t
+                        );
+                        if (paid) {
+                            handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
+                        } else {
+                            messages.send(player, MessageKey.ERROR_NOT_FOUND);
+                        }
                     }
-                }).exceptionally(ex -> {
+                }, () -> {
                     if (playerId != null) {
                         inFlightWarps.remove(playerId);
                     }
-                    plugin.getSLF4JLogger().warn(
-                            "Failed to teleport player {} to aetheryte {}",
-                            player.getName(),
-                            destination.id(),
-                            ex
-                    );
-                    handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
-                    return null;
                 });
-                if (unused.isCancelled()) {
-                    if (playerId != null) {
-                        inFlightWarps.remove(playerId);
-                    }
-                    return;
-                }
-            }, () -> {
+            } catch (final Throwable t) {
                 if (playerId != null) {
                     inFlightWarps.remove(playerId);
                 }
-            });
+                plugin.getSLF4JLogger().error(
+                        "Unexpected error during warp landing resolution for player {} to {}",
+                        player.getName(),
+                        destination.id(),
+                        t
+                );
+                messages.send(player, MessageKey.ERROR_NOT_FOUND);
+            }
         });
     }
 
