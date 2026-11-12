@@ -326,15 +326,15 @@ public record PluginConfig(
         if (config.defaultCost() != null) {
             for (final CostEntry entry : config.defaultCost()) {
                 if (entry.type() == null) {
-                    logger.warn("Unknown cost type '{}' in dimensions.default-cost", entry.rawType());
+                    logger.warn("Unknown cost type '{}' in dimensions.default-cost; this cost will fail affordability checks.", entry.rawType());
                 } else {
                     try {
                         ExpressionParser.parse(entry.amount(), "$amount");
-                        validatedDefaultCost.add(entry);
                     } catch (final ExpressionException e) {
                         logger.warn("Invalid cost expression '{}' in dimensions.default-cost: {}", entry.amount(), e.getMessage());
                     }
                 }
+                validatedDefaultCost.add(entry);
             }
         }
         final Map<String, Double> sanitizedAmounts = new HashMap<>();
@@ -365,11 +365,11 @@ public record PluginConfig(
                         if (expr != null) {
                             try {
                                 ExpressionParser.parse(expr, "$default");
-                                sanitizedOverrides.put(entry.getKey(), entry.getValue());
                             } catch (final ExpressionException e) {
                                 logger.warn("Invalid cost-override expression '{}' for world '{}' in dimensions.routes: {}",
                                         expr, entry.getKey(), e.getMessage());
                             }
+                            sanitizedOverrides.put(entry.getKey(), entry.getValue());
                         }
                     }
                     sanitizedRoutes.add(new RouteEntryConfig(route.between(), route.origin(), sanitizedOverrides));

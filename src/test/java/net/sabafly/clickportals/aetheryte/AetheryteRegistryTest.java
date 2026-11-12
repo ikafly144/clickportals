@@ -306,4 +306,28 @@ class AetheryteRegistryTest {
         assertThat(registry.tryRegister(world, farEnough, -1, -1, 50.0))
                 .isEqualTo(AetheryteRegistry.RegistrationOutcome.REGISTERED);
     }
+
+    @Test
+    void reRegisterAetheryteReplacesOldChunkIndexEntry() {
+        final UUID aetheryteId = UUID.randomUUID();
+        final UUID owner = UUID.randomUUID();
+        // Initial registration at block (10, 64, 10) -> chunk (0, 0)
+        final Aetheryte initial = new Aetheryte(aetheryteId, "Initial", WORLD_ID, WORLD_NAME, 10, 64, 10, owner, 100L);
+        registry.register(world, initial);
+
+        assertThat(registry.getByChunk(WORLD_ID, 0, 0)).containsExactly(initial);
+
+        // Re-register same UUID at block (32, 64, 32) -> chunk (2, 2)
+        final Aetheryte updated = new Aetheryte(aetheryteId, "Updated", WORLD_ID, WORLD_NAME, 32, 64, 32, owner, 200L);
+        registry.register(world, updated);
+
+        // Old chunk index must no longer contain the Aetheryte
+        assertThat(registry.getByChunk(WORLD_ID, 0, 0)).isEmpty();
+        // New chunk index must contain updated Aetheryte
+        assertThat(registry.getByChunk(WORLD_ID, 2, 2)).containsExactly(updated);
+
+        // Unregister removes from new chunk cleanly
+        registry.unregister(world, aetheryteId);
+        assertThat(registry.getByChunk(WORLD_ID, 2, 2)).isEmpty();
+    }
 }

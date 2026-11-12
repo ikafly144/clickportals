@@ -140,7 +140,15 @@ public final class AetheryteRegistry {
      * Registers a new Aetheryte in memory and persists the updated list to the world's PDC.
      */
     public synchronized void register(final World world, final Aetheryte aetheryte) {
-        byId.put(aetheryte.id(), aetheryte);
+        final Aetheryte existing = byId.put(aetheryte.id(), aetheryte);
+        if (existing != null) {
+            byPos.remove(existing.posKey());
+            final ChunkPosKey oldChunkKey = new ChunkPosKey(existing.worldId(), existing.blockX() >> 4, existing.blockZ() >> 4);
+            byChunk.computeIfPresent(oldChunkKey, (k, list) -> {
+                list.removeIf(a -> a.id().equals(existing.id()));
+                return list.isEmpty() ? null : list;
+            });
+        }
         byPos.put(aetheryte.posKey(), aetheryte);
         final ChunkPosKey chunkKey = new ChunkPosKey(world.getUID(), aetheryte.blockX() >> 4, aetheryte.blockZ() >> 4);
         byChunk.computeIfAbsent(chunkKey, k -> new CopyOnWriteArrayList<>()).add(aetheryte);
@@ -175,7 +183,15 @@ public final class AetheryteRegistry {
         if (maxVariation >= 0 && countByOwnerAndVariation(aetheryte.ownerId(), aetheryte.variation()) >= maxVariation) {
             return RegistrationOutcome.VARIATION_LIMIT_REACHED;
         }
-        byId.put(aetheryte.id(), aetheryte);
+        final Aetheryte existing = byId.put(aetheryte.id(), aetheryte);
+        if (existing != null) {
+            byPos.remove(existing.posKey());
+            final ChunkPosKey oldChunkKey = new ChunkPosKey(existing.worldId(), existing.blockX() >> 4, existing.blockZ() >> 4);
+            byChunk.computeIfPresent(oldChunkKey, (k, list) -> {
+                list.removeIf(a -> a.id().equals(existing.id()));
+                return list.isEmpty() ? null : list;
+            });
+        }
         byPos.put(posKey, aetheryte);
         final ChunkPosKey chunkKey = new ChunkPosKey(world.getUID(), aetheryte.blockX() >> 4, aetheryte.blockZ() >> 4);
         byChunk.computeIfAbsent(chunkKey, k -> new CopyOnWriteArrayList<>()).add(aetheryte);

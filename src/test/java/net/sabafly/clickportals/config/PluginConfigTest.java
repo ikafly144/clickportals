@@ -201,9 +201,13 @@ class PluginConfigTest {
         org.mockito.Mockito.verify(logger).warn(org.mockito.ArgumentMatchers.contains("Invalid cost-override expression"), eq("invalid syntax ++"), eq("world_b"), any());
 
         // Sanitized amounts and routes
+        assertThat(manager.config().dimensions().defaultCost()).hasSize(2);
         assertThat(manager.config().dimensions().amounts().get("world_bad")).isEqualTo(0.0);
         assertThat(manager.config().dimensions().routes()).hasSize(1);
         assertThat(manager.config().dimensions().routes().get(0).between()).containsExactly("world_a", "world_b");
+        final var overrides = java.util.Objects.requireNonNull(manager.config().dimensions().routes().get(0).costOverride());
+        final var bOverride = java.util.Objects.requireNonNull(overrides.get("world_b"));
+        assertThat(bOverride.amount()).isEqualTo("invalid syntax ++");
     }
 
     @Test
@@ -243,9 +247,9 @@ class PluginConfigTest {
 
     @Test
     void initialDefaultSaveFailurePreservesConfigWithoutOverwriting() throws IOException {
-        final Path readOnlyDir = tempDir.resolve("readonly");
-        Files.createDirectories(readOnlyDir);
-        final Path configFile = readOnlyDir.resolve("config.yml");
+        final Path dir = tempDir.resolve("blocked_save_dir");
+        Files.createDirectories(dir);
+        final Path configFile = dir.resolve("config.yml");
 
         // Write a valid initial configuration and load it
         Files.writeString(configFile, """
@@ -257,16 +261,16 @@ class PluginConfigTest {
         final PluginConfig initial = manager.load();
         assertThat(initial.maxAetherytesPerPlayer()).isEqualTo(77);
 
-        // Delete the file and make the directory read-only so saving defaultConfig fails
+        // Delete configFile and replace directory 'dir' with a regular file
+        // so that creating or writing to dir/config.yml fails deterministically (NotADirectoryException)
+        // regardless of OS permissions or root user status
         Files.delete(configFile);
-        readOnlyDir.toFile().setWritable(false);
-        try {
-            final PluginConfig afterFailure = manager.load();
-            assertThat(manager.lastLoadSuccessful()).isFalse();
-            // Retains previous configuration
-            assertThat(afterFailure.maxAetherytesPerPlayer()).isEqualTo(77);
-        } finally {
-            readOnlyDir.toFile().setWritable(true);
-        }
+        Files.delete(dir);
+        Files.writeString(dir, "not-a-directory", StandardCharsets.UTF_8);
+
+        final PluginConfig afterFailure = manager.load();
+        assertThat(manager.lastLoadSuccessful()).isFalse();
+        // Retains previous configuration
+        assertThat(afterFailure.maxAetherytesPerPlayer()).isEqualTo(77);
     }
 }

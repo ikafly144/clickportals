@@ -601,4 +601,65 @@ class PlacementCostTest {
         when(player.hasPermission("clickportals.bypass.limit")).thenReturn(true);
         assertThat(service.checkPlacementDistance(player, world, 110, 64, 100, Aetheryte.DEFAULT_VARIATION)).isEmpty();
     }
+
+    @Test
+    void pendingRefundsPersistAcrossServerRestarts(@org.junit.jupiter.api.io.TempDir final java.nio.file.Path tempDir) {
+        final java.nio.file.Path storageFile = tempDir.resolve("pending_refunds.yml");
+        final PendingRefundStorage storage = new PendingRefundStorage(storageFile, null);
+
+        final AetheryteService service1 = new AetheryteService(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                net.sabafly.clickportals.model.NoopAetheryteModelService.INSTANCE,
+                messages,
+                () -> -1,
+                () -> 0,
+                () -> 0.0,
+                p -> 0L,
+                (p, t) -> {},
+                (p, s, d) -> AetheryteService.WarpEvaluation.permitted(Component.empty()),
+                storage
+        );
+        service1.setEconomyProvider(economy);
+
+        final CostBundle costBundle = new CostBundle(List.of(
+                CostEntry.of(CostType.VAULT, "75")
+        ));
+        final CostQuote costQuote = costBundle.quote(player, Map.of(), economy);
+
+        // Initial refund fails, queuing to storage and persisting to file
+        when(economy.deposit(eq(player), anyDouble())).thenReturn(false);
+        service1.refundPlacement(player, new Location(world, 10, 64, 20), "costly", false, false, costBundle, costQuote);
+
+        assertThat(java.nio.file.Files.exists(storageFile)).isTrue();
+
+        // Simulate server restart: new service instance reading from same storage file
+        final PendingRefundStorage newStorage = new PendingRefundStorage(storageFile, null);
+        final AetheryteService restartedService = new AetheryteService(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                net.sabafly.clickportals.model.NoopAetheryteModelService.INSTANCE,
+                messages,
+                () -> -1,
+                () -> 0,
+                () -> 0.0,
+                p -> 0L,
+                (p, t) -> {},
+                (p, s, d) -> AetheryteService.WarpEvaluation.permitted(Component.empty()),
+                newStorage
+        );
+        restartedService.setEconomyProvider(economy);
+
+        // When player reconnects, deposit succeeds
+        when(economy.deposit(eq(player), anyDouble())).thenReturn(true);
+        restartedService.processPendingRefunds(player);
+
+        verify(economy, times(2)).deposit(eq(player), eq(75.0));
+        // Storage file deleted upon clean refund
+        assertThat(java.nio.file.Files.exists(storageFile)).isFalse();
+    }
 }

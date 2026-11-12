@@ -206,6 +206,7 @@ public final class AetheryteService {
     private final Set<UUID> pendingPlacements = ConcurrentHashMap.newKeySet();
     private final Set<UUID> inFlightWarps = ConcurrentHashMap.newKeySet();
     private final Map<UUID, List<CostItemQuote>> pendingRefunds = new ConcurrentHashMap<>();
+    private final PendingRefundStorage pendingRefundStorage;
     private static final double BASE_INTERACT_REACH = 6.0;
 
     /**
@@ -397,6 +398,42 @@ public final class AetheryteService {
             final CooldownPacketSender cooldownPacketSender,
             final WarpCostEvaluator costEvaluator
     ) {
+        this(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                modelService,
+                messages,
+                globalMaxPerPlayerSupplier,
+                globalCooldownTicksSupplier,
+                globalMinDistanceSupplier,
+                tickSupplier,
+                cooldownPacketSender,
+                costEvaluator,
+                resolveDefaultRefundStorage(plugin)
+        );
+    }
+
+    /**
+     * Creates a new {@link AetheryteService} with full dependencies including minimum placement distance supplier
+     * and custom pending refund storage (#15).
+     */
+    public AetheryteService(
+            final Plugin plugin,
+            final AetheryteRegistry registry,
+            final VariationRegistry variationRegistry,
+            final HologramService hologramService,
+            final AetheryteModelService modelService,
+            final Messages messages,
+            final IntSupplier globalMaxPerPlayerSupplier,
+            final IntSupplier globalCooldownTicksSupplier,
+            final DoubleSupplier globalMinDistanceSupplier,
+            final ToLongFunction<Player> tickSupplier,
+            final CooldownPacketSender cooldownPacketSender,
+            final WarpCostEvaluator costEvaluator,
+            final PendingRefundStorage pendingRefundStorage
+    ) {
         this.plugin = plugin;
         this.registry = registry;
         this.variationRegistry = variationRegistry;
@@ -409,6 +446,18 @@ public final class AetheryteService {
         this.tickSupplier = tickSupplier;
         this.cooldownPacketSender = cooldownPacketSender;
         this.costEvaluator = costEvaluator;
+        this.pendingRefundStorage = pendingRefundStorage != null ? pendingRefundStorage : PendingRefundStorage.noop();
+        this.pendingRefunds.putAll(this.pendingRefundStorage.load());
+    }
+
+    private static PendingRefundStorage resolveDefaultRefundStorage(final Plugin plugin) {
+        if (plugin == null || plugin.getDataFolder() == null) {
+            return PendingRefundStorage.noop();
+        }
+        return new PendingRefundStorage(
+                plugin.getDataFolder().toPath().resolve("pending_refunds.yml"),
+                plugin.getSLF4JLogger()
+        );
     }
 
     /**
@@ -585,6 +634,7 @@ public final class AetheryteService {
             if (currentItems.isEmpty()) {
                 pendingRefunds.remove(player.getUniqueId(), currentItems);
             }
+            pendingRefundStorage.save(pendingRefunds);
             if (result.success()) {
                 plugin.getSLF4JLogger().info("Processed pending placement cost refund for returning player {}", player.getName());
             } else {
@@ -596,6 +646,21 @@ public final class AetheryteService {
         if (task == null) {
             plugin.getSLF4JLogger().warn("Could not schedule pending refund task for player {}", player.getName());
         }
+    }
+
+    /**
+     * Returns the active {@link PendingRefundStorage} (#15).
+     */
+    public PendingRefundStorage pendingRefundStorage() {
+        return pendingRefundStorage;
+    }
+
+    private void recordPendingRefund(final UUID playerId, final List<CostItemQuote> items) {
+        if (items == null || items.isEmpty()) {
+            return;
+        }
+        pendingRefunds.computeIfAbsent(playerId, k -> new CopyOnWriteArrayList<>()).addAll(items);
+        pendingRefundStorage.save(pendingRefunds);
     }
 
     /**
@@ -857,6 +922,7 @@ public final class AetheryteService {
 
             final boolean creative = player.getGameMode() == GameMode.CREATIVE;
             final boolean bypassCost = Permissions.canBypassPlaceCost(player);
+            final boolean canBypassDistance = Permissions.canBypassPlacementDistance(player);
             final CostBundle placementCostBundle = new CostBundle(variation.placement().cost());
             final CostQuote placementQuote;
             final EconomyProvider activeEconomy = this.economyProvider;
@@ -888,8 +954,7 @@ public final class AetheryteService {
                 if (!chargeResult.success()) {
                     refundItemToPlayer(player, targetLocation, normalizedVar);
                     if (!chargeResult.unrefundedItems().isEmpty()) {
-                        pendingRefunds.computeIfAbsent(player.getUniqueId(), k -> new CopyOnWriteArrayList<>())
-                                .addAll(chargeResult.unrefundedItems());
+                        recordPendingRefund(player.getUniqueId(), chargeResult.unrefundedItems());
                     }
                     pendingPlacements.remove(ownerId);
                     final Component reason = CostFormatter.formatMissingRequirements(player, placementQuote, activeEconomy, messages);
@@ -934,7 +999,7 @@ public final class AetheryteService {
 
                     final int effectiveMaxGlobal = bypassLimit ? -1 : globalMaxPerPlayerSupplier.getAsInt();
                     final int effectiveMaxVariation = bypassLimit ? -1 : variation.limit().maxPerPlayer();
-                    final double effectiveMinDist = Permissions.canBypassPlacementDistance(player) ? 0.0 : effectiveMinDistance(normalizedVar);
+                    final double effectiveMinDist = canBypassDistance ? 0.0 : effectiveMinDistance(normalizedVar);
                     final RegistrationOutcome outcome = registry.tryRegister(
                             world,
                             aetheryte,
@@ -1045,24 +1110,21 @@ public final class AetheryteService {
                         t -> {
                             final CostBundle.RefundResult result = costBundle.refundWithResult(player, costQuote, paymentProvider);
                             if (!result.success()) {
-                                pendingRefunds.computeIfAbsent(player.getUniqueId(), k -> new CopyOnWriteArrayList<>())
-                                        .addAll(result.unrefundedItems());
+                                recordPendingRefund(player.getUniqueId(), result.unrefundedItems());
                                 plugin.getSLF4JLogger().warn(
                                         "Placement refund failed for player {}. Queued for next login.",
                                         player.getUniqueId());
                             }
                         },
                         () -> {
-                            pendingRefunds.computeIfAbsent(player.getUniqueId(), k -> new CopyOnWriteArrayList<>())
-                                    .addAll(costQuote.items());
+                            recordPendingRefund(player.getUniqueId(), costQuote.items());
                             plugin.getSLF4JLogger().warn(
                                     "Player {} disconnected before placement refund could be applied directly. Queued for next login.",
                                     player.getUniqueId());
                         }
                 );
                 if (scheduled == null) {
-                    pendingRefunds.computeIfAbsent(player.getUniqueId(), k -> new CopyOnWriteArrayList<>())
-                            .addAll(costQuote.items());
+                    recordPendingRefund(player.getUniqueId(), costQuote.items());
                     plugin.getSLF4JLogger().warn(
                             "Failed to schedule placement refund for player {}. Queued for next login.",
                             player.getUniqueId());
@@ -1388,8 +1450,7 @@ public final class AetheryteService {
                 if (!refunded) {
                     final List<CostItemQuote> unrefunded = evaluator.popPendingCharge(player, destination);
                     if (!unrefunded.isEmpty()) {
-                        pendingRefunds.computeIfAbsent(player.getUniqueId(), k -> new CopyOnWriteArrayList<>())
-                                .addAll(unrefunded);
+                        recordPendingRefund(player.getUniqueId(), unrefunded);
                         plugin.getSLF4JLogger().warn("Warp refund failed for player {}. Queued for next login.", player.getUniqueId());
                     }
                 }
@@ -1399,8 +1460,7 @@ public final class AetheryteService {
             if (!bypassCost) {
                 final List<CostItemQuote> unrefunded = evaluator.popPendingCharge(player, destination);
                 if (!unrefunded.isEmpty()) {
-                    pendingRefunds.computeIfAbsent(player.getUniqueId(), k -> new CopyOnWriteArrayList<>())
-                            .addAll(unrefunded);
+                    recordPendingRefund(player.getUniqueId(), unrefunded);
                     plugin.getSLF4JLogger().warn(
                             "Player {} disconnected before warp refund could execute. Queued for next login.",
                             player.getUniqueId());
@@ -1411,8 +1471,7 @@ public final class AetheryteService {
         if (task == null && !bypassCost) {
             final List<CostItemQuote> unrefunded = evaluator.popPendingCharge(player, destination);
             if (!unrefunded.isEmpty()) {
-                pendingRefunds.computeIfAbsent(player.getUniqueId(), k -> new CopyOnWriteArrayList<>())
-                        .addAll(unrefunded);
+                recordPendingRefund(player.getUniqueId(), unrefunded);
                 plugin.getSLF4JLogger().warn(
                         "Could not schedule warp refund for player {}. Queued for next login.",
                         player.getUniqueId());
