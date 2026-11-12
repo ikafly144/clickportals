@@ -296,6 +296,9 @@ tasks.named<RunServer>("runServer") {
     downloadPlugins {
         modrinth("packetevents", "${libs.versions.packetevents.get()}+spigot")
         github("toxicity188", "BetterModel", libs.versions.bettermodel.get(), "bettermodel-${libs.versions.bettermodel.get()}-paper.jar")
+        github("MilkBowl", "Vault", "1.7.3", "Vault.jar")
+        modrinth("emeraldbank", "1.2.4")
+        modrinth("luckperms", "v5.5.71-bukkit")
     }
 }
 
@@ -306,5 +309,8 @@ runPaper.folia.registerTask {
     downloadPlugins {
         modrinth("packetevents", "${libs.versions.packetevents.get()}+spigot")
         github("toxicity188", "BetterModel", libs.versions.bettermodel.get(), "bettermodel-${libs.versions.bettermodel.get()}-paper.jar")
+        github("SirBlobman", "Vault-Folia", "v1.7.3-folia", "Vault-1.7.3.jar")
+        modrinth("emeraldbank", "1.2.4")
+        modrinth("luckperms", "v5.5.71-bukkit")
     }
 }
