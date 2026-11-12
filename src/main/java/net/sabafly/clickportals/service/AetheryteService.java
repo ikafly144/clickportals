@@ -101,20 +101,49 @@ public final class AetheryteService {
     public record WarpEvaluation(
             boolean allowed,
             Component costDisplay,
-            @Nullable Component denyReason
+            @Nullable Component denyReason,
+            @Nullable DenyReason denyReasonCode
     ) {
+        /**
+         * Category of denial for warp evaluation (#13, #26).
+         */
+        public enum DenyReason {
+            NO_ROUTE,
+            TOO_FAR,
+            TOO_CLOSE,
+            INSUFFICIENT_COST,
+            NOT_FOUND,
+            NO_PERMISSION,
+            OTHER
+        }
+
+        public WarpEvaluation(final boolean allowed, final Component costDisplay, final @Nullable Component denyReason) {
+            this(allowed, costDisplay, denyReason, allowed ? null : DenyReason.OTHER);
+        }
+
         /**
          * Creates an allowed evaluation with the given cost display.
          */
         public static WarpEvaluation permitted(final Component costDisplay) {
-            return new WarpEvaluation(true, costDisplay, null);
+            return new WarpEvaluation(true, costDisplay, null, null);
         }
 
         /**
          * Creates a denied evaluation with the given cost display and rejection reason.
          */
         public static WarpEvaluation denied(final Component costDisplay, final Component denyReason) {
-            return new WarpEvaluation(false, costDisplay, denyReason);
+            return new WarpEvaluation(false, costDisplay, denyReason, DenyReason.OTHER);
+        }
+
+        /**
+         * Creates a denied evaluation with the given cost display, rejection reason, and structured code.
+         */
+        public static WarpEvaluation denied(
+                final Component costDisplay,
+                final Component denyReason,
+                final @Nullable DenyReason code
+        ) {
+            return new WarpEvaluation(false, costDisplay, denyReason, code != null ? code : DenyReason.OTHER);
         }
     }
 
@@ -637,16 +666,23 @@ public final class AetheryteService {
             final @Nullable Aetheryte source,
             final Aetheryte destination
     ) {
-        final WarpEvaluation costResult = Permissions.canBypassWarpCost(player)
-                ? WarpEvaluation.permitted(messages.freeCostLabel(player))
-                : costEvaluator.evaluate(player, source, destination);
         if (!canUse(player)) {
             return WarpEvaluation.denied(
-                    costResult.costDisplay(),
-                    messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION)
+                    messages.freeCostLabel(player),
+                    messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION),
+                    WarpEvaluation.DenyReason.NO_PERMISSION
             );
         }
-        return costResult;
+        final WarpEvaluation evaluation = costEvaluator.evaluate(player, source, destination);
+        if (Permissions.canBypassWarpCost(player)) {
+            if (evaluation.denyReasonCode() == WarpEvaluation.DenyReason.INSUFFICIENT_COST) {
+                return WarpEvaluation.permitted(messages.freeCostLabel(player));
+            }
+            if (evaluation.allowed()) {
+                return WarpEvaluation.permitted(messages.freeCostLabel(player));
+            }
+        }
+        return evaluation;
     }
 
     /**

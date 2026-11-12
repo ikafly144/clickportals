@@ -172,6 +172,10 @@ public final class AetheryteDialogFactory {
         final List<ActionButton> buttons = new ArrayList<>(allDestinations.size() + 1);
         for (final Aetheryte destination : allDestinations) {
             final WarpEvaluation evaluation = service.evaluateWarp(player, current, destination);
+            // Exclude destinations with no connecting dimensional route (#9, #13)
+            if (evaluation.denyReasonCode() == WarpEvaluation.DenyReason.NO_ROUTE) {
+                continue;
+            }
             final Component label = evaluation.allowed()
                     ? messages.warpDestinationLabel(player, destination, evaluation.costDisplay())
                     : messages.warpDestinationUnavailableLabel(player, destination, evaluation.costDisplay());

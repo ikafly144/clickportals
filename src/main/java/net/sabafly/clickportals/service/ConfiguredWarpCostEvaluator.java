@@ -44,6 +44,7 @@ import net.sabafly.clickportals.route.DimensionRouter;
 import net.sabafly.clickportals.route.RoutePlan;
 import net.sabafly.clickportals.service.AetheryteService.WarpCostEvaluator;
 import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation;
+import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation.DenyReason;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.VariationRegistry;
 import org.bukkit.Bukkit;
@@ -110,7 +111,8 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             double hops,
             double dimensionCostAmount,
             List<CostEntry> effectiveEntries,
-            @Nullable Component blockReason
+            @Nullable Component blockReason,
+            @Nullable DenyReason blockReasonCode
     ) {
     }
 
@@ -125,7 +127,8 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         final EconomyProvider economy = economySupplier.get();
 
         if (ctx.blockReason() != null) {
-            return WarpEvaluation.denied(messages.freeCostLabel(player), ctx.blockReason());
+            final DenyReason code = ctx.blockReasonCode() != null ? ctx.blockReasonCode() : DenyReason.OTHER;
+            return WarpEvaluation.denied(messages.freeCostLabel(player), ctx.blockReason(), code);
         }
 
         final CostBundle bundle = new CostBundle(ctx.effectiveEntries());
@@ -135,7 +138,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
 
         if (!quote.affordable()) {
             final Component reason = CostFormatter.formatMissingRequirements(player, quote, economy, messages);
-            return WarpEvaluation.denied(costDisplay, reason);
+            return WarpEvaluation.denied(costDisplay, reason, WarpEvaluation.DenyReason.INSUFFICIENT_COST);
         }
 
         return WarpEvaluation.permitted(costDisplay);
@@ -241,23 +244,27 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         final World sourceWorld = source != null ? worldResolver.apply(source.worldId()) : player.getWorld();
 
         if (targetWorld == null) {
-            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(), messages.get(player, MessageKey.ERROR_NOT_FOUND));
+            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(),
+                    messages.get(player, MessageKey.ERROR_NOT_FOUND), WarpEvaluation.DenyReason.NOT_FOUND);
         }
 
         // Validate source reach and world match if source Aetheryte was provided (#40)
         if (source != null) {
             if (sourceWorld == null || !player.getWorld().getUID().equals(source.worldId())) {
-                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(), messages.get(player, MessageKey.ERROR_NOT_FOUND));
+                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(),
+                        messages.get(player, MessageKey.ERROR_NOT_FOUND), WarpEvaluation.DenyReason.NOT_FOUND);
             }
             final Location pLoc = player.getLocation();
             if (pLoc == null) {
-                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(), messages.get(player, MessageKey.ERROR_NOT_FOUND));
+                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(),
+                        messages.get(player, MessageKey.ERROR_NOT_FOUND), WarpEvaluation.DenyReason.NOT_FOUND);
             }
             final AetheryteVariation sourceVar = variationRegistry.getOrDefault(source.variation());
             final double hitboxAllowance = Math.max(sourceVar.hitbox().width(), sourceVar.hitbox().height());
             final double maxReach = BASE_INTERACT_REACH + hitboxAllowance;
             if (pLoc.distanceSquared(source.markerLocation(sourceWorld)) > maxReach * maxReach) {
-                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(), messages.get(player, MessageKey.ERROR_TOO_FAR));
+                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(),
+                        messages.get(player, MessageKey.ERROR_TOO_FAR), WarpEvaluation.DenyReason.TOO_FAR);
             }
         }
 
@@ -292,7 +299,8 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             dimCostAmt = 0.0;
         } else {
             if (sourceWorld == null) {
-                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(), messages.get(player, MessageKey.ERROR_NO_ROUTE));
+                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(),
+                        messages.get(player, MessageKey.ERROR_NO_ROUTE), WarpEvaluation.DenyReason.NO_ROUTE);
             }
             final Location srcLoc = source != null
                     ? new Location(sourceWorld, source.blockX(), source.blockY(), source.blockZ())
@@ -300,7 +308,8 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             final DimensionRouter router = routerSupplier.get();
             final Optional<RoutePlan> plan = router.findRoute(sourceWorld, targetWorld, srcLoc);
             if (plan.isEmpty()) {
-                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(), messages.get(player, MessageKey.ERROR_NO_ROUTE));
+                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(),
+                        messages.get(player, MessageKey.ERROR_NO_ROUTE), WarpEvaluation.DenyReason.NO_ROUTE);
             }
 
             final RoutePlan route = plan.get();
@@ -325,11 +334,11 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
 
         if (minDist > 0.0 && blockDist < minDist) {
             return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, List.of(),
-                    messages.get(player, MessageKey.ERROR_TOO_CLOSE));
+                    messages.get(player, MessageKey.ERROR_TOO_CLOSE), WarpEvaluation.DenyReason.TOO_CLOSE);
         }
         if (maxDist >= 0.0 && blockDist > maxDist) {
             return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, List.of(),
-                    messages.get(player, MessageKey.ERROR_TOO_FAR));
+                    messages.get(player, MessageKey.ERROR_TOO_FAR), WarpEvaluation.DenyReason.TOO_FAR);
         }
 
         // Resolve base cost entries
@@ -337,7 +346,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         final List<CostEntry> allEntries = new ArrayList<>(baseEntries);
         allEntries.addAll(extraEntries);
 
-        return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries, null);
+        return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries, null, null);
     }
 
     private DistanceSection resolveDistanceLimits(final @Nullable Aetheryte source, final PluginConfig config) {

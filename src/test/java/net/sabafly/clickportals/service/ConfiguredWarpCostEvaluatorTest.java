@@ -150,6 +150,7 @@ class ConfiguredWarpCostEvaluatorTest {
         final WarpEvaluation eval = evaluator.evaluate(player, src, dest);
         assertThat(eval.allowed()).isFalse();
         assertThat(eval.denyReason()).isNotNull();
+        assertThat(eval.denyReasonCode()).isEqualTo(WarpEvaluation.DenyReason.TOO_CLOSE);
 
         final String reason = PlainTextComponentSerializer.plainText().serialize(Objects.requireNonNull(eval.denyReason()));
         assertThat(reason).contains("too close");
@@ -166,6 +167,7 @@ class ConfiguredWarpCostEvaluatorTest {
         final WarpEvaluation eval = evaluator.evaluate(player, src, dest);
         assertThat(eval.allowed()).isFalse();
         assertThat(eval.denyReason()).isNotNull();
+        assertThat(eval.denyReasonCode()).isEqualTo(WarpEvaluation.DenyReason.TOO_FAR);
 
         final String reason = PlainTextComponentSerializer.plainText().serialize(Objects.requireNonNull(eval.denyReason()));
         assertThat(reason).contains("too far");
@@ -183,6 +185,7 @@ class ConfiguredWarpCostEvaluatorTest {
         final WarpEvaluation eval = evaluator.evaluate(player, src, dest);
         assertThat(eval.allowed()).isFalse();
         assertThat(eval.denyReason()).isNotNull();
+        assertThat(eval.denyReasonCode()).isEqualTo(WarpEvaluation.DenyReason.NO_ROUTE);
 
         final String reason = PlainTextComponentSerializer.plainText().serialize(Objects.requireNonNull(eval.denyReason()));
         assertThat(reason).contains("No route connects to this dimension");

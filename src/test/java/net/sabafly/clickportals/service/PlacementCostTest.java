@@ -313,4 +313,57 @@ class PlacementCostTest {
         service.processPendingRefunds(player);
         verify(economy, times(5)).deposit(eq(player), eq(100.0));
     }
+
+    @Test
+    void evaluateWarpBypassesCostOnlyWhenAffordabilityFails() {
+        final AetheryteService.WarpCostEvaluator mockEvaluator = mock(AetheryteService.WarpCostEvaluator.class);
+        final AetheryteService service = new AetheryteService(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                messages,
+                () -> -1,
+                () -> 0,
+                p -> 0L,
+                (p, t) -> {},
+                mockEvaluator
+        );
+
+        final UUID worldId = UUID.randomUUID();
+        final net.sabafly.clickportals.aetheryte.Aetheryte dest =
+                new net.sabafly.clickportals.aetheryte.Aetheryte(UUID.randomUUID(), "Dest", worldId, "world", 10, 64, 20, UUID.randomUUID(), 0L);
+
+        when(player.hasPermission(Permissions.USE)).thenReturn(true);
+
+        // When evaluator denies due to INSUFFICIENT_COST
+        when(mockEvaluator.evaluate(eq(player), any(), eq(dest)))
+                .thenReturn(AetheryteService.WarpEvaluation.denied(
+                        Component.text("100 G"),
+                        Component.text("Too poor"),
+                        AetheryteService.WarpEvaluation.DenyReason.INSUFFICIENT_COST
+                ));
+
+        // Without bypass, it is denied
+        when(player.hasPermission(Permissions.BYPASS_COST_WARP)).thenReturn(false);
+        final AetheryteService.WarpEvaluation deniedEval = service.evaluateWarp(player, null, dest);
+        assertThat(deniedEval.allowed()).isFalse();
+        assertThat(deniedEval.denyReasonCode()).isEqualTo(AetheryteService.WarpEvaluation.DenyReason.INSUFFICIENT_COST);
+
+        // With bypass, INSUFFICIENT_COST is overridden to permitted
+        when(player.hasPermission(Permissions.BYPASS_COST_WARP)).thenReturn(true);
+        final AetheryteService.WarpEvaluation permittedEval = service.evaluateWarp(player, null, dest);
+        assertThat(permittedEval.allowed()).isTrue();
+
+        // But NO_ROUTE or TOO_FAR is NOT bypassed even with BYPASS_COST_WARP
+        when(mockEvaluator.evaluate(eq(player), any(), eq(dest)))
+                .thenReturn(AetheryteService.WarpEvaluation.denied(
+                        Component.text("Free"),
+                        Component.text("No route"),
+                        AetheryteService.WarpEvaluation.DenyReason.NO_ROUTE
+                ));
+        final AetheryteService.WarpEvaluation unbypassedRoute = service.evaluateWarp(player, null, dest);
+        assertThat(unbypassedRoute.allowed()).isFalse();
+        assertThat(unbypassedRoute.denyReasonCode()).isEqualTo(AetheryteService.WarpEvaluation.DenyReason.NO_ROUTE);
+    }
 }
