@@ -142,7 +142,7 @@ public final class AetheryteRegistry {
     public synchronized void register(final World world, final Aetheryte aetheryte) {
         final Aetheryte existing = byId.put(aetheryte.id(), aetheryte);
         if (existing != null) {
-            byPos.remove(existing.posKey());
+            byPos.remove(existing.posKey(), existing);
             final ChunkPosKey oldChunkKey = new ChunkPosKey(existing.worldId(), existing.blockX() >> 4, existing.blockZ() >> 4);
             byChunk.computeIfPresent(oldChunkKey, (k, list) -> {
                 list.removeIf(a -> a.id().equals(existing.id()));
@@ -185,7 +185,7 @@ public final class AetheryteRegistry {
         }
         final Aetheryte existing = byId.put(aetheryte.id(), aetheryte);
         if (existing != null) {
-            byPos.remove(existing.posKey());
+            byPos.remove(existing.posKey(), existing);
             final ChunkPosKey oldChunkKey = new ChunkPosKey(existing.worldId(), existing.blockX() >> 4, existing.blockZ() >> 4);
             byChunk.computeIfPresent(oldChunkKey, (k, list) -> {
                 list.removeIf(a -> a.id().equals(existing.id()));

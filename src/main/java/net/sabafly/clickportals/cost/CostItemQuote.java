@@ -17,6 +17,7 @@
  */
 package net.sabafly.clickportals.cost;
 
+import java.util.UUID;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -28,6 +29,7 @@ import org.jspecify.annotations.Nullable;
  * @param affordable whether the player currently holds enough resources
  * @param currentResource the player's resource amount at the time of quotation
  * @param disabled whether this cost is disabled (e.g. Vault currency without Vault installed)
+ * @param transactionId unique identifier for idempotent pending refund tracking, or {@code null}
  */
 public record CostItemQuote(
         @Nullable CostType type,
@@ -35,8 +37,30 @@ public record CostItemQuote(
         boolean required,
         boolean affordable,
         double currentResource,
-        boolean disabled
+        boolean disabled,
+        @Nullable UUID transactionId
 ) {
+
+    /**
+     * Backwards-compatible constructor without a transaction ID.
+     */
+    public CostItemQuote(
+            final @Nullable CostType type,
+            final double amount,
+            final boolean required,
+            final boolean affordable,
+            final double currentResource,
+            final boolean disabled
+    ) {
+        this(type, amount, required, affordable, currentResource, disabled, null);
+    }
+
+    /**
+     * Returns a copy of this quote with the specified transaction ID.
+     */
+    public CostItemQuote withTransactionId(final UUID id) {
+        return new CostItemQuote(type, amount, required, affordable, currentResource, disabled, id);
+    }
 
     /**
      * Effective amount that will be deducted, capped by current resource if non-required.

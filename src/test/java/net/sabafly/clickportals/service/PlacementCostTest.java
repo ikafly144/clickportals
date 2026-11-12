@@ -41,6 +41,7 @@ import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.cost.CostBundle;
 import net.sabafly.clickportals.cost.CostEntry;
+import net.sabafly.clickportals.cost.CostItemQuote;
 import net.sabafly.clickportals.cost.CostQuote;
 import net.sabafly.clickportals.cost.CostType;
 import net.sabafly.clickportals.economy.EconomyProvider;
@@ -661,5 +662,85 @@ class PlacementCostTest {
         verify(economy, times(2)).deposit(eq(player), eq(75.0));
         // Storage file deleted upon clean refund
         assertThat(java.nio.file.Files.exists(storageFile)).isFalse();
+    }
+
+    @Test
+    void processPendingRefundsSkipsAlreadyProcessedTransactionIdInPdc(@org.junit.jupiter.api.io.TempDir final java.nio.file.Path tempDir) {
+        final java.nio.file.Path storageFile = tempDir.resolve("pending_refunds.yml");
+        final PendingRefundStorage storage = new PendingRefundStorage(storageFile, null);
+
+        final UUID txId = UUID.randomUUID();
+        final CostItemQuote quote = new CostItemQuote(CostType.VAULT, 120.0, true, true, 120.0, false, txId);
+        storage.save(Map.of(playerId, List.of(quote)));
+        assertThat(java.nio.file.Files.exists(storageFile)).isTrue();
+
+        // Player PDC already records txId as processed (e.g. crash occurred after deposit before disk cleanup)
+        final PersistentDataContainer pdc = mock(PersistentDataContainer.class);
+        when(player.getPersistentDataContainer()).thenReturn(pdc);
+        when(pdc.get(AetheryteService.PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings()))
+                .thenReturn(List.of(txId.toString()));
+
+        final AetheryteService restartedService = new AetheryteService(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                net.sabafly.clickportals.model.NoopAetheryteModelService.INSTANCE,
+                messages,
+                () -> -1,
+                () -> 0,
+                () -> 0.0,
+                p -> 0L,
+                (p, t) -> {},
+                (p, s, d) -> AetheryteService.WarpEvaluation.permitted(Component.empty()),
+                storage
+        );
+        restartedService.setEconomyProvider(economy);
+
+        restartedService.processPendingRefunds(player);
+
+        // Must NOT deposit again!
+        verify(economy, never()).deposit(any(), anyDouble());
+        // Must clean up the storage file
+        assertThat(java.nio.file.Files.exists(storageFile)).isFalse();
+    }
+
+    @Test
+    void recordPendingRefundSchedulesAsyncRetryWhenSaveFails() {
+        final PendingRefundStorage failingStorage = mock(PendingRefundStorage.class);
+        when(failingStorage.load()).thenReturn(Map.of());
+        when(failingStorage.save(any())).thenReturn(false);
+
+        final org.bukkit.Server server = mock(org.bukkit.Server.class);
+        final io.papermc.paper.threadedregions.scheduler.AsyncScheduler asyncScheduler =
+                mock(io.papermc.paper.threadedregions.scheduler.AsyncScheduler.class);
+        when(plugin.getServer()).thenReturn(server);
+        when(server.getAsyncScheduler()).thenReturn(asyncScheduler);
+
+        final AetheryteService customService = new AetheryteService(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                net.sabafly.clickportals.model.NoopAetheryteModelService.INSTANCE,
+                messages,
+                () -> -1,
+                () -> 0,
+                () -> 0.0,
+                p -> 0L,
+                (p, t) -> {},
+                (p, s, d) -> AetheryteService.WarpEvaluation.permitted(Component.empty()),
+                failingStorage
+        );
+        customService.setEconomyProvider(economy);
+
+        final CostBundle costBundle = new CostBundle(List.of(CostEntry.of(CostType.VAULT, "50")));
+        final CostQuote costQuote = costBundle.quote(player, Map.of(), economy);
+        when(economy.deposit(eq(player), anyDouble())).thenReturn(false);
+
+        customService.refundPlacement(player, new Location(world, 10, 64, 20), "costly", false, false, costBundle, costQuote);
+
+        verify(failingStorage, atLeastOnce()).save(any());
+        verify(asyncScheduler).runDelayed(eq(plugin), any(), eq(5L), eq(java.util.concurrent.TimeUnit.SECONDS));
     }
 }

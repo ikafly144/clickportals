@@ -123,4 +123,30 @@ class PendingRefundStorageTest {
         assertThat(loaded).isEmpty();
         org.mockito.Mockito.verify(logger).warn(org.mockito.ArgumentMatchers.contains("Failed to load pending refunds"), eq(storageFile), any());
     }
+
+    @Test
+    void saveReturnsFalseWhenWriteFailsAndPreservesTransactionIds() throws IOException {
+        final Path blockingFile = tempDir.resolve("not_a_directory");
+        Files.writeString(blockingFile, "blocking", StandardCharsets.UTF_8);
+        final Path invalidTarget = blockingFile.resolve("pending_refunds.yml");
+
+        final Logger logger = mock(Logger.class);
+        final PendingRefundStorage failingStorage = new PendingRefundStorage(invalidTarget, logger);
+        final Map<UUID, List<CostItemQuote>> map = new ConcurrentHashMap<>();
+        final UUID txId = UUID.randomUUID();
+        map.put(UUID.randomUUID(), new CopyOnWriteArrayList<>(List.of(
+                new CostItemQuote(CostType.VAULT, 25.0, true, true, 25.0, false, txId)
+        )));
+
+        assertThat(failingStorage.save(map)).isFalse();
+        org.mockito.Mockito.verify(logger).error(org.mockito.ArgumentMatchers.contains("Failed to save pending refunds"), eq(invalidTarget), any());
+
+        // Verify transactionId round-trip on valid storage
+        final Path validTarget = tempDir.resolve("valid_refunds.yml");
+        final PendingRefundStorage validStorage = new PendingRefundStorage(validTarget, logger);
+        assertThat(validStorage.save(map)).isTrue();
+        final Map<UUID, List<CostItemQuote>> loaded = validStorage.load();
+        final List<CostItemQuote> items = loaded.values().iterator().next();
+        assertThat(items.get(0).transactionId()).isEqualTo(txId);
+    }
 }

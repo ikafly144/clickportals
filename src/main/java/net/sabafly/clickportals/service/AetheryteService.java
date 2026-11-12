@@ -86,6 +86,13 @@ public final class AetheryteService {
     public static final NamespacedKey LAST_PLACE_TICK_KEY = new NamespacedKey("clickportals", "last_place_tick");
 
     /**
+     * Player {@link PersistentDataContainer} key storing recently processed pending refund transaction IDs for idempotency (#15).
+     */
+    public static final NamespacedKey PROCESSED_REFUNDS_KEY = new NamespacedKey("clickportals", "processed_refunds");
+
+    private static final int MAX_TRACKED_PROCESSED_REFUNDS = 100;
+
+    /**
      * Callback for sending client-side item cooldown packets when an Aetheryte placement cooldown is applied (#43).
      */
     @FunctionalInterface
@@ -625,17 +632,48 @@ public final class AetheryteService {
             if (currentItems == null || currentItems.isEmpty()) {
                 return;
             }
+            final PersistentDataContainer pdc = player.getPersistentDataContainer();
+            final List<String> existingProcessed = pdc != null
+                    ? pdc.get(PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings())
+                    : null;
+            final List<String> processedList = existingProcessed != null ? new ArrayList<>(existingProcessed) : new ArrayList<>();
+
             final List<CostItemQuote> snapshot = new ArrayList<>(currentItems);
-            final CostQuote quote = new CostQuote(snapshot, true);
-            final CostBundle.RefundResult result = new CostBundle(List.of()).refundWithResult(player, quote, economyProvider);
-            for (final CostItemQuote refundedItem : result.refundedItems()) {
-                currentItems.remove(refundedItem);
+            final List<CostItemQuote> toRefund = new ArrayList<>();
+            for (final CostItemQuote item : snapshot) {
+                final UUID txId = item.transactionId();
+                if (txId != null && processedList.contains(txId.toString())) {
+                    // Already deposited prior to a crash or storage save failure; remove without re-depositing
+                    currentItems.remove(item);
+                } else {
+                    toRefund.add(item);
+                }
+            }
+
+            boolean allSuccess = true;
+            if (!toRefund.isEmpty()) {
+                final CostQuote quote = new CostQuote(toRefund, true);
+                final CostBundle.RefundResult result = new CostBundle(List.of()).refundWithResult(player, quote, economyProvider);
+                allSuccess = result.success();
+                for (final CostItemQuote refundedItem : result.refundedItems()) {
+                    currentItems.remove(refundedItem);
+                    final UUID txId = refundedItem.transactionId();
+                    if (txId != null) {
+                        processedList.add(txId.toString());
+                    }
+                }
+                if (pdc != null && !result.refundedItems().isEmpty()) {
+                    while (processedList.size() > MAX_TRACKED_PROCESSED_REFUNDS) {
+                        processedList.removeFirst();
+                    }
+                    pdc.set(PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings(), processedList);
+                }
             }
             if (currentItems.isEmpty()) {
                 pendingRefunds.remove(player.getUniqueId(), currentItems);
             }
-            pendingRefundStorage.save(pendingRefunds);
-            if (result.success()) {
+            persistPendingRefundsWithRetry(0);
+            if (allSuccess) {
                 plugin.getSLF4JLogger().info("Processed pending placement cost refund for returning player {}", player.getName());
             } else {
                 plugin.getSLF4JLogger().warn("Partially or wholly failed to process pending cost refund for player {}", player.getName());
@@ -659,8 +697,27 @@ public final class AetheryteService {
         if (items == null || items.isEmpty()) {
             return;
         }
-        pendingRefunds.computeIfAbsent(playerId, k -> new CopyOnWriteArrayList<>()).addAll(items);
-        pendingRefundStorage.save(pendingRefunds);
+        final List<CostItemQuote> stamped = new ArrayList<>(items.size());
+        for (final CostItemQuote item : items) {
+            stamped.add(item.transactionId() != null ? item : item.withTransactionId(UUID.randomUUID()));
+        }
+        pendingRefunds.computeIfAbsent(playerId, k -> new CopyOnWriteArrayList<>()).addAll(stamped);
+        persistPendingRefundsWithRetry(0);
+    }
+
+    private void persistPendingRefundsWithRetry(final int attempt) {
+        if (pendingRefundStorage.save(pendingRefunds)) {
+            return;
+        }
+        final int maxRetries = 5;
+        if (attempt >= maxRetries) {
+            plugin.getSLF4JLogger().error("Exhausted retries ({}) persisting pending refunds to disk.", maxRetries);
+            return;
+        }
+        final org.bukkit.Server server = plugin.getServer();
+        if (server != null && server.getAsyncScheduler() != null) {
+            server.getAsyncScheduler().runDelayed(plugin, t -> persistPendingRefundsWithRetry(attempt + 1), 5L, java.util.concurrent.TimeUnit.SECONDS);
+        }
     }
 
     /**

@@ -330,4 +330,25 @@ class AetheryteRegistryTest {
         registry.unregister(world, aetheryteId);
         assertThat(registry.getByChunk(WORLD_ID, 2, 2)).isEmpty();
     }
+
+    @Test
+    void reRegisterAetheryteDoesNotRemoveDifferentAetheryteAtOldPosition() {
+        final UUID owner = UUID.randomUUID();
+        final UUID idA = UUID.randomUUID();
+        final UUID idB = UUID.randomUUID();
+        final Aetheryte aetheryteA = new Aetheryte(idA, "A", WORLD_ID, WORLD_NAME, 10, 64, 10, owner, 100L);
+        final Aetheryte aetheryteB = new Aetheryte(idB, "B", WORLD_ID, WORLD_NAME, 10, 64, 10, owner, 200L);
+
+        registry.register(world, aetheryteA);
+        // Another Aetheryte B is registered at the same position (10, 64, 10)
+        registry.register(world, aetheryteB);
+
+        // Now A is moved/re-registered to a new position (50, 64, 50)
+        final Aetheryte movedA = new Aetheryte(idA, "A", WORLD_ID, WORLD_NAME, 50, 64, 50, owner, 300L);
+        registry.register(world, movedA);
+
+        // B's position index at (10, 64, 10) must NOT be deleted when A moves
+        assertThat(registry.getByPosition(world, 10, 64, 10)).contains(aetheryteB);
+        assertThat(registry.getByPosition(world, 50, 64, 50)).contains(movedA);
+    }
 }

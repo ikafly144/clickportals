@@ -17,8 +17,10 @@
  */
 package net.sabafly.clickportals.service;
 
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -84,8 +86,19 @@ public class PendingRefundStorage {
                             final CostType type = CostType.fromString(rawType);
                             final double amount = itemNode.node("amount").getDouble(0.0);
                             final boolean required = itemNode.node("required").getBoolean(true);
+                            final String rawId = itemNode.node("id").getString();
+                            UUID txId = null;
+                            if (rawId != null && !rawId.isBlank()) {
+                                try {
+                                    txId = UUID.fromString(rawId);
+                                } catch (final IllegalArgumentException ignored) {
+                                    txId = UUID.randomUUID();
+                                }
+                            } else {
+                                txId = UUID.randomUUID();
+                            }
                             if (type != null && amount > 0.0 && Double.isFinite(amount)) {
-                                items.add(new CostItemQuote(type, amount, required, true, amount, false));
+                                items.add(new CostItemQuote(type, amount, required, true, amount, false, txId));
                             }
                         }
                         if (!items.isEmpty()) {
@@ -105,12 +118,15 @@ public class PendingRefundStorage {
     }
 
     /**
-     * Persists the given pending refunds map to disk. If the map is empty, deletes the storage file.
+     * Persists the given pending refunds map to disk atomically. If the map is empty, deletes the storage file.
+     *
+     * @return {@code true} if the persistence operation succeeded, {@code false} if an error occurred
      */
-    public synchronized void save(final Map<UUID, List<CostItemQuote>> pendingRefunds) {
+    public synchronized boolean save(final Map<UUID, List<CostItemQuote>> pendingRefunds) {
         if (storagePath == null) {
-            return;
+            return true;
         }
+        Path tempFile = null;
         try {
             boolean hasEntries = false;
             for (final List<CostItemQuote> list : pendingRefunds.values()) {
@@ -123,14 +139,15 @@ public class PendingRefundStorage {
                 if (Files.exists(storagePath)) {
                     Files.deleteIfExists(storagePath);
                 }
-                return;
+                return true;
             }
             final Path parent = storagePath.getParent();
             if (parent != null && !Files.exists(parent)) {
                 Files.createDirectories(parent);
             }
+            tempFile = storagePath.resolveSibling(storagePath.getFileName() + ".tmp");
             final YamlConfigurationLoader loader = YamlConfigurationLoader.builder()
-                    .path(storagePath)
+                    .path(tempFile)
                     .indent(2)
                     .nodeStyle(NodeStyle.BLOCK)
                     .build();
@@ -143,6 +160,9 @@ public class PendingRefundStorage {
                     for (final CostItemQuote quote : list) {
                         if (quote.type() != null && quote.effectiveDeduction() > 0.0) {
                             final ConfigurationNode itemNode = playerNode.appendListNode();
+                            if (quote.transactionId() != null) {
+                                itemNode.node("id").set(quote.transactionId().toString());
+                            }
                             itemNode.node("type").set(quote.type().name().toLowerCase(Locale.ROOT));
                             itemNode.node("amount").set(quote.effectiveDeduction());
                             itemNode.node("required").set(quote.required());
@@ -151,10 +171,24 @@ public class PendingRefundStorage {
                 }
             }
             loader.save(root);
+            try {
+                Files.move(tempFile, storagePath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (final AtomicMoveNotSupportedException ignored) {
+                Files.move(tempFile, storagePath, StandardCopyOption.REPLACE_EXISTING);
+            }
+            return true;
         } catch (final Exception e) {
+            if (tempFile != null) {
+                try {
+                    Files.deleteIfExists(tempFile);
+                } catch (final Exception ignored) {
+                    // ignore cleanup failure
+                }
+            }
             if (logger != null) {
                 logger.error("Failed to save pending refunds to {}: {}", storagePath, e.getMessage());
             }
+            return false;
         }
     }
 }
