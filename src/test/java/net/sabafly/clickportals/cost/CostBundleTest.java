@@ -227,4 +227,79 @@ class CostBundleTest {
 
         assertThat(refundSuccess).isFalse();
     }
+
+    @Test
+    void optionalCostDoesNotStarveSubsequentRequiredCost() {
+        final java.util.concurrent.atomic.AtomicInteger level = new java.util.concurrent.atomic.AtomicInteger(5);
+        when(player.getLevel()).thenAnswer(inv -> level.get());
+        org.mockito.Mockito.doAnswer(inv -> {
+            level.set((int) inv.getArgument(0));
+            return null;
+        }).when(player).setLevel(org.mockito.ArgumentMatchers.anyInt());
+
+        // Optional 4 followed by Required 4 with only 5 levels total
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.EXP_LEVELS, "4", false),
+                CostEntry.of(CostType.EXP_LEVELS, "4", true)
+        ));
+
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        assertThat(quote.affordable()).isTrue();
+        // Optional cost must reserve 4 levels for the required item, so it only gets 1
+        assertThat(quote.items().get(0).effectiveDeduction()).isEqualTo(1.0);
+        assertThat(quote.items().get(1).effectiveDeduction()).isEqualTo(4.0);
+
+        final CostBundle.ChargeResult result = bundle.chargeWithResult(player, quote, economy);
+        assertThat(result.success()).isTrue();
+        assertThat(level.get()).isEqualTo(0);
+
+        // Required item gets 4, optional item gets 1
+        assertThat(result.chargedQuote().items().get(0).amount()).isEqualTo(1.0);
+        assertThat(result.chargedQuote().items().get(1).amount()).isEqualTo(4.0);
+    }
+
+    @Test
+    void refundRestoresActualChargedAmountNotQuoted() {
+        final java.util.concurrent.atomic.AtomicInteger food = new java.util.concurrent.atomic.AtomicInteger(5);
+        when(player.getFoodLevel()).thenAnswer(inv -> food.get());
+        org.mockito.Mockito.doAnswer(inv -> {
+            food.set((int) inv.getArgument(0));
+            return null;
+        }).when(player).setFoodLevel(org.mockito.ArgumentMatchers.anyInt());
+
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.FOOD, "4", false)
+        ));
+
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        assertThat(quote.items().get(0).effectiveDeduction()).isEqualTo(4.0);
+
+        // Player's food drops to 1 before charge runs
+        food.set(1);
+
+        final CostBundle.ChargeResult result = bundle.chargeWithResult(player, quote, economy);
+        assertThat(result.success()).isTrue();
+        assertThat(food.get()).isEqualTo(0); // 1 was deducted
+        assertThat(result.chargedQuote().items().get(0).amount()).isEqualTo(1.0);
+
+        // Refund uses actual charged quote; player gets back 1 food, not 4
+        bundle.refund(player, result.chargedQuote(), economy);
+        assertThat(food.get()).isEqualTo(1);
+    }
+
+    @Test
+    void infiniteCostFormulaDisplaysConfigurationErrorNotInsufficientBalance() {
+        final Messages messages = Messages.defaults();
+        final CostBundle bundle = new CostBundle(List.of(
+                new CostEntry("vault", "$block_distance *", true)
+        ));
+
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        assertThat(quote.affordable()).isFalse();
+
+        final Component missing = CostFormatter.formatMissingRequirements(player, quote, economy, messages);
+        final String missingText = PlainTextComponentSerializer.plainText().serialize(missing);
+        // Should not say "---" or insufficient currency
+        assertThat(missingText).doesNotContain("---");
+    }
 }

@@ -148,7 +148,10 @@ public final class DimensionRouter {
                     ? edge.origin()
                     : OriginConfig.scale(1.0);
             final World hopWorld = v.equals(toName) ? toWorld : worldResolver.apply(v);
-            final Location nextLoc = origin.resolve(hopWorld != null ? hopWorld : toWorld, currX, currY, currZ);
+            if (hopWorld == null) {
+                return Optional.empty();
+            }
+            final Location nextLoc = origin.resolve(hopWorld, currX, currY, currZ);
             currX = nextLoc.getX();
             currY = nextLoc.getY();
             currZ = nextLoc.getZ();

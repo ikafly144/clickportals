@@ -95,7 +95,7 @@ public final class CostFormatter {
 
         final List<Component> reasons = new ArrayList<>(missing.size());
         for (final CostItemQuote item : missing) {
-            if (item.type() == null) {
+            if (item.type() == null || !Double.isFinite(item.amount())) {
                 reasons.add(messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET));
                 continue;
             }
@@ -123,7 +123,7 @@ public final class CostFormatter {
             final EconomyProvider economy,
             final Messages messages
     ) {
-        if (item.type() == null) {
+        if (item.type() == null || !Double.isFinite(item.amount())) {
             return messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET);
         }
         final String formattedAmount = formatAmountString(item, economy);

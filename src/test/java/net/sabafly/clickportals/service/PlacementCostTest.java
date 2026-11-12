@@ -23,16 +23,20 @@ import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.papermc.paper.threadedregions.scheduler.EntityScheduler;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.function.Consumer;
 import net.kyori.adventure.text.Component;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
+import net.sabafly.clickportals.cost.CostBundle;
 import net.sabafly.clickportals.cost.CostEntry;
+import net.sabafly.clickportals.cost.CostQuote;
 import net.sabafly.clickportals.cost.CostType;
 import net.sabafly.clickportals.economy.EconomyProvider;
 import net.sabafly.clickportals.message.Messages;
@@ -42,6 +46,7 @@ import net.sabafly.clickportals.variation.AetheryteVariation.PlacementSection;
 import net.sabafly.clickportals.variation.VariationRegistry;
 import net.sabafly.clickportals.visual.HologramService;
 import org.bukkit.GameMode;
+import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -99,11 +104,12 @@ class PlacementCostTest {
         when(player.getFoodLevel()).thenReturn(20);
 
         // Immediate scheduler execution for testing entity-thread steps
+        when(plugin.getSLF4JLogger()).thenReturn(org.slf4j.LoggerFactory.getLogger("PlacementCostTest"));
         when(scheduler.run(eq(plugin), any(), any())).thenAnswer(inv -> {
             @SuppressWarnings("unchecked")
             final Consumer<Object> consumer = (Consumer<Object>) inv.getArgument(1);
             consumer.accept(null);
-            return null;
+            return mock(io.papermc.paper.threadedregions.scheduler.ScheduledTask.class);
         });
     }
 
@@ -190,9 +196,29 @@ class PlacementCostTest {
         );
         service.setEconomyProvider(economy);
 
-        // When a player with pending refunds joins, processPendingRefunds refunds their costs
+        final CostBundle costBundle = new CostBundle(List.of(
+                CostEntry.of(CostType.VAULT, "100")
+        ));
+        final CostQuote costQuote = costBundle.quote(player, Map.of(), economy);
+
+        // Immediate deposit fails on initial refund
+        when(economy.deposit(eq(player), anyDouble())).thenReturn(false);
+
+        final Location targetLocation = new Location(world, 10, 64, 20);
+        service.refundPlacement(player, targetLocation, "costly", false, false, costBundle, costQuote);
+
+        // Deposit was attempted once during placement failure and failed, queuing into pendingRefunds
+        verify(economy, times(1)).deposit(eq(player), eq(100.0));
+
+        // When player reconnects and economy deposit succeeds
+        when(economy.deposit(eq(player), anyDouble())).thenReturn(true);
         service.processPendingRefunds(player);
-        // Initially empty, no exceptions thrown
-        verify(economy, never()).deposit(any(), anyDouble());
+
+        // Second deposit succeeds
+        verify(economy, times(2)).deposit(eq(player), eq(100.0));
+
+        // Calling processPendingRefunds again does not deposit a third time (record was cleared)
+        service.processPendingRefunds(player);
+        verify(economy, times(2)).deposit(eq(player), eq(100.0));
     }
 }

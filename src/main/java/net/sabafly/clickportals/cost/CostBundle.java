@@ -102,14 +102,16 @@ public final class CostBundle {
             }
         }
 
-        // Check aggregate affordability per CostType
+        // Check aggregate affordability per CostType and reserve required costs (#7)
         final Map<CostType, Boolean> aggregateAffordability = new EnumMap<>(CostType.class);
         final Map<CostType, Double> remainingByType = new EnumMap<>(CostType.class);
+        final Map<CostType, Double> remainingRequiredByType = new EnumMap<>(CostType.class);
         for (final CostType type : CostType.values()) {
             final double current = getCurrentResource(player, type, economy);
             remainingByType.put(type, current);
             final double required = totalRequiredByType.getOrDefault(type, 0.0);
             aggregateAffordability.put(type, current >= required);
+            remainingRequiredByType.put(type, required);
         }
 
         final List<CostItemQuote> quotes = new ArrayList<>(entries.size());
@@ -133,20 +135,39 @@ public final class CostBundle {
             final double remaining = remainingByType.getOrDefault(type, 0.0);
 
             final boolean affordable;
+            final double deductionForSubsequent;
             if (entry.required()) {
                 affordable = Boolean.TRUE.equals(aggregateAffordability.get(type));
+                quotes.add(new CostItemQuote(type, amount, true, affordable, remaining, false));
+                deductionForSubsequent = amount;
+                remainingRequiredByType.merge(type, -amount, (oldVal, change) -> Math.max(0.0, oldVal + change));
             } else {
                 affordable = true;
+                final double unreserved = Math.max(0.0, remaining - remainingRequiredByType.getOrDefault(type, 0.0));
+                quotes.add(new CostItemQuote(type, amount, false, true, unreserved, false));
+                deductionForSubsequent = Math.min(amount, unreserved);
             }
 
-            quotes.add(new CostItemQuote(type, amount, entry.required(), affordable, remaining, false));
-
-            // Decrement remaining resource for subsequent optional cost items
-            final double deductionForSubsequent = entry.required() ? amount : Math.min(amount, remaining);
             remainingByType.put(type, Math.max(0.0, remaining - deductionForSubsequent));
         }
 
         return new CostQuote(quotes);
+    }
+
+    /**
+     * Represents the outcome of an execution charge, capturing actual deductions for exact refunds (#7, #15).
+     *
+     * @param success whether the charge fully succeeded
+     * @param chargedQuote quote containing the actual deducted amounts per item
+     */
+    public record ChargeResult(boolean success, CostQuote chargedQuote) {
+        public static ChargeResult failure() {
+            return new ChargeResult(false, new CostQuote(List.of(), false));
+        }
+
+        public static ChargeResult success(final List<CostItemQuote> applied) {
+            return new ChargeResult(true, new CostQuote(applied, true));
+        }
     }
 
     /**
@@ -159,8 +180,20 @@ public final class CostBundle {
      * @return {@code true} if all charges succeeded, {@code false} if aborted and rolled back
      */
     public boolean charge(final Player player, final CostQuote quote, final EconomyProvider economy) {
+        return chargeWithResult(player, quote, economy).success();
+    }
+
+    /**
+     * Executes charge with a detailed result capturing actual deducted amounts (#7, #15).
+     *
+     * @param player player to charge
+     * @param quote assessed quote to execute
+     * @param economy active economy provider
+     * @return charge result containing success flag and charged quote
+     */
+    public ChargeResult chargeWithResult(final Player player, final CostQuote quote, final EconomyProvider economy) {
         if (!quote.affordable()) {
-            return false;
+            return ChargeResult.failure();
         }
 
         // Verify all mandatory requirements are still satisfied in aggregate on the live player (#7)
@@ -176,36 +209,55 @@ public final class CostBundle {
         for (final Map.Entry<CostType, Double> entry : liveRequiredSums.entrySet()) {
             final double current = getCurrentResource(player, entry.getKey(), economy);
             if (current < entry.getValue()) {
-                return false;
+                return ChargeResult.failure();
             }
         }
 
+        final Map<CostType, Double> remainingRequired = new EnumMap<>(liveRequiredSums);
         final List<CostItemQuote> applied = new ArrayList<>();
         for (final CostItemQuote item : quote.items()) {
             if (item.disabled() || item.type() == null || item.amount() <= 0.0) {
                 continue;
             }
-            final double toDeduct = item.effectiveDeduction();
+
+            final double current = getCurrentResource(player, item.type(), economy);
+            final double unreserved = Math.max(0.0, current - remainingRequired.getOrDefault(item.type(), 0.0));
+
+            final double toDeduct;
+            if (item.required()) {
+                toDeduct = item.amount();
+            } else {
+                toDeduct = Math.min(item.amount(), unreserved);
+            }
+
             if (toDeduct <= 0.0) {
                 continue;
             }
 
             final double actualDeducted = deductResource(player, item.type(), toDeduct, economy);
-            if (actualDeducted < 0.0) {
+            if (actualDeducted < 0.0 || (item.required() && actualDeducted < toDeduct)) {
+                if (actualDeducted > 0.0) {
+                    applied.add(new CostItemQuote(item.type(), actualDeducted, item.required(), true, actualDeducted, false));
+                }
                 // Rollback previously applied deductions
                 final boolean rollbackSuccess = rollback(player, applied, economy);
                 if (!rollbackSuccess) {
                     LOGGER.error("CRITICAL: Failed to rollback charges cleanly for player {} ({})",
                             player.getName(), player.getUniqueId());
                 }
-                return false;
+                return ChargeResult.failure();
             }
+
+            if (item.required()) {
+                remainingRequired.merge(item.type(), -actualDeducted, (oldVal, change) -> Math.max(0.0, oldVal + change));
+            }
+
             if (actualDeducted > 0.0) {
-                applied.add(new CostItemQuote(item.type(), actualDeducted, item.required(), true, 0.0, false));
+                applied.add(new CostItemQuote(item.type(), actualDeducted, item.required(), true, actualDeducted, false));
             }
         }
 
-        return true;
+        return ChargeResult.success(applied);
     }
 
     /**

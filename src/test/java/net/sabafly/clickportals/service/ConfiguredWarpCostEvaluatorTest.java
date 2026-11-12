@@ -84,6 +84,7 @@ class ConfiguredWarpCostEvaluatorTest {
         when(economy.getBalance(player)).thenReturn(1000.0);
         when(economy.has(eq(player), anyDouble())).thenAnswer(inv -> (double) inv.getArgument(1) <= 1000.0);
         when(economy.withdraw(eq(player), anyDouble())).thenReturn(true);
+        when(economy.deposit(eq(player), anyDouble())).thenReturn(true);
         when(economy.format(anyDouble())).thenAnswer(inv -> String.format("$%.2f", (double) inv.getArgument(0)));
 
         when(player.calculateTotalExperiencePoints()).thenReturn(100);
@@ -272,5 +273,69 @@ class ConfiguredWarpCostEvaluatorTest {
         assertThat(eval.denyReason()).isNotNull();
         final String reason = PlainTextComponentSerializer.plainText().serialize(Objects.requireNonNull(eval.denyReason()));
         assertThat(reason).contains("too close");
+    }
+
+    @Test
+    void effectiveMinGreaterThanMaxClampsToUnlimited() {
+        // Global min is 10, global max is 50
+        final ConfiguredWarpCostEvaluator evaluator = createEvaluator();
+
+        // Variation specifies min 100, but omits max (inherits global max 50)
+        final AetheryteVariation varWithConflictingLimits = new AetheryteVariation(
+                "Custom",
+                AetheryteVariation.ItemSection.defaults(),
+                AetheryteVariation.RecipeSection.defaults(),
+                AetheryteVariation.ModelSection.defaults(),
+                AetheryteVariation.HitboxSection.defaults(),
+                AetheryteVariation.TeleportSection.defaults(),
+                AetheryteVariation.PlacementSection.defaults(),
+                AetheryteVariation.LimitSection.defaults(),
+                new AetheryteVariation.WarpOverrideSection(new DistanceSection(100.0, null), null)
+        );
+        when(variationRegistry.getOrDefault("custom")).thenReturn(varWithConflictingLimits);
+
+        final Aetheryte src = new Aetheryte(UUID.randomUUID(), "Origin", worldId, "world", 0, 64, 0, UUID.randomUUID(), 0L, "custom");
+        // Distance is 150 blocks (would be > 50 if max wasn't clamped to -1.0)
+        final Aetheryte dest = new Aetheryte(UUID.randomUUID(), "Dest", worldId, "world", 150, 64, 0, UUID.randomUUID(), 0L);
+
+        final WarpEvaluation eval = evaluator.evaluate(player, src, dest);
+        assertThat(eval.allowed()).isTrue();
+    }
+
+    @Test
+    void concurrentWarpsToDifferentDestinationsDoNotOverwriteCharges() {
+        final ConfiguredWarpCostEvaluator evaluator = createEvaluator();
+
+        final Aetheryte src = new Aetheryte(UUID.randomUUID(), "Origin", worldId, "world", 0, 64, 0, UUID.randomUUID(), 0L);
+        final Aetheryte dest1 = new Aetheryte(UUID.randomUUID(), "Dest1", worldId, "world", 50, 64, 0, UUID.randomUUID(), 0L);
+        final Aetheryte dest2 = new Aetheryte(UUID.randomUUID(), "Dest2", worldId, "world", 100, 64, 0, UUID.randomUUID(), 0L);
+
+        // dest1 cost: 50 * 0.5 + 5 = 30
+        assertThat(evaluator.charge(player, src, dest1)).isTrue();
+        // dest2 cost: 100 * 0.5 + 5 = 55
+        assertThat(evaluator.charge(player, src, dest2)).isTrue();
+
+        // dest1 fails and refunds; must refund 30, not 55
+        final boolean refunded1 = evaluator.refund(player, src, dest1);
+        assertThat(refunded1).isTrue();
+        org.mockito.Mockito.verify(economy).deposit(player, 30.0);
+
+        // dest2 succeeds and commits; clears charge without refunding
+        evaluator.commit(player, src, dest2);
+        assertThat(evaluator.popPendingCharge(player, dest2)).isEmpty();
+    }
+
+    @Test
+    void successfulTeleportClearsChargedPaymentViaCommit() {
+        final ConfiguredWarpCostEvaluator evaluator = createEvaluator();
+
+        final Aetheryte src = new Aetheryte(UUID.randomUUID(), "Origin", worldId, "world", 0, 64, 0, UUID.randomUUID(), 0L);
+        final Aetheryte dest = new Aetheryte(UUID.randomUUID(), "Dest", worldId, "world", 50, 64, 0, UUID.randomUUID(), 0L);
+
+        assertThat(evaluator.charge(player, src, dest)).isTrue();
+        evaluator.commit(player, src, dest);
+
+        // Charge was committed and cleared; subsequent refund or popPendingCharge is a no-op
+        assertThat(evaluator.popPendingCharge(player, dest)).isEmpty();
     }
 }

@@ -18,12 +18,14 @@
 package net.sabafly.clickportals.service;
 
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import net.kyori.adventure.text.Component;
@@ -33,6 +35,7 @@ import net.sabafly.clickportals.config.PluginConfig;
 import net.sabafly.clickportals.cost.CostBundle;
 import net.sabafly.clickportals.cost.CostEntry;
 import net.sabafly.clickportals.cost.CostFormatter;
+import net.sabafly.clickportals.cost.CostItemQuote;
 import net.sabafly.clickportals.cost.CostQuote;
 import net.sabafly.clickportals.economy.EconomyProvider;
 import net.sabafly.clickportals.message.MessageKey;
@@ -67,7 +70,10 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
     private record ChargedPayment(CostBundle bundle, CostQuote quote, EconomyProvider economy) {
     }
 
-    private final Map<UUID, ChargedPayment> activeCharges = new ConcurrentHashMap<>();
+    private record WarpChargeKey(UUID playerId, UUID destinationId) {
+    }
+
+    private final Map<WarpChargeKey, Deque<ChargedPayment>> activeCharges = new ConcurrentHashMap<>();
 
     public ConfiguredWarpCostEvaluator(
             final Supplier<PluginConfig> configSupplier,
@@ -151,27 +157,77 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         final EconomyProvider economy = economySupplier.get();
         final CostQuote quote = bundle.quote(player, vars, economy);
 
-        final boolean charged = bundle.charge(player, quote, economy);
-        if (charged) {
-            activeCharges.put(player.getUniqueId(), new ChargedPayment(bundle, quote, economy));
+        final CostBundle.ChargeResult result = bundle.chargeWithResult(player, quote, economy);
+        if (result.success()) {
+            final WarpChargeKey key = new WarpChargeKey(player.getUniqueId(), destination.id());
+            activeCharges.computeIfAbsent(key, k -> new ConcurrentLinkedDeque<>())
+                    .push(new ChargedPayment(bundle, result.chargedQuote(), economy));
         }
-        return charged;
+        return result.success();
     }
 
     @Override
-    public void refund(
+    public boolean refund(
             final Player player,
             final @Nullable Aetheryte source,
             final Aetheryte destination
     ) {
-        final ChargedPayment payment = activeCharges.remove(player.getUniqueId());
-        if (payment != null) {
-            payment.bundle().refund(player, payment.quote(), payment.economy());
+        final WarpChargeKey key = new WarpChargeKey(player.getUniqueId(), destination.id());
+        final Deque<ChargedPayment> deque = activeCharges.get(key);
+        if (deque == null) {
+            return true;
+        }
+        final ChargedPayment payment = deque.poll();
+        if (payment == null) {
+            return true;
+        }
+        final boolean success = payment.bundle().refund(player, payment.quote(), payment.economy());
+        if (!success) {
+            deque.push(payment);
+            return false;
+        }
+        if (deque.isEmpty()) {
+            activeCharges.remove(key, deque);
+        }
+        return true;
+    }
+
+    @Override
+    public void commit(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination
+    ) {
+        final WarpChargeKey key = new WarpChargeKey(player.getUniqueId(), destination.id());
+        final Deque<ChargedPayment> deque = activeCharges.get(key);
+        if (deque != null) {
+            deque.poll();
+            if (deque.isEmpty()) {
+                activeCharges.remove(key, deque);
+            }
         }
     }
 
+    @Override
+    public List<CostItemQuote> popPendingCharge(final Player player, final Aetheryte destination) {
+        final WarpChargeKey key = new WarpChargeKey(player.getUniqueId(), destination.id());
+        final Deque<ChargedPayment> deque = activeCharges.get(key);
+        if (deque == null) {
+            return List.of();
+        }
+        final ChargedPayment payment = deque.poll();
+        if (payment == null) {
+            return List.of();
+        }
+        if (deque.isEmpty()) {
+            activeCharges.remove(key, deque);
+        }
+        return payment.quote().items();
+    }
+
     public void clearPayment(final Player player) {
-        activeCharges.remove(player.getUniqueId());
+        final UUID playerId = player.getUniqueId();
+        activeCharges.keySet().removeIf(k -> k.playerId().equals(playerId));
     }
 
     private EvaluationContext resolveContext(
@@ -288,7 +344,11 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             final AetheryteVariation var = variationRegistry.getOrDefault(source.variation());
             final DistanceSection override = var.warp().distance();
             final double min = override.minOrDefault(config.warpDistanceMin());
-            final double max = override.maxOrDefault(config.warpDistanceMax());
+            double max = override.maxOrDefault(config.warpDistanceMax());
+            if (min >= 0.0 && max >= 0.0 && min > max) {
+                // Effective min exceeds effective max, clamp max to unlimited (-1.0) to prevent deadlocks (#26)
+                max = -1.0;
+            }
             return new DistanceSection(min, max);
         }
         return new DistanceSection(config.warpDistanceMin(), config.warpDistanceMax());
