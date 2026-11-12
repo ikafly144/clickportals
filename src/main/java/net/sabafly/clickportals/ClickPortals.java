@@ -216,7 +216,12 @@ public final class ClickPortals extends JavaPlugin {
         }
         aetheryteListener = null;
         dialogFactory = null;
-        aetheryteService = null;
+        if (aetheryteService != null) {
+            if (!aetheryteService.flushPendingRefunds()) {
+                getSLF4JLogger().error("CRITICAL: Failed to flush pending refunds to disk during shutdown; unpersisted refunds may be lost.");
+            }
+            aetheryteService = null;
+        }
         variationRegistry = null;
         messages = null;
         configManager = null;

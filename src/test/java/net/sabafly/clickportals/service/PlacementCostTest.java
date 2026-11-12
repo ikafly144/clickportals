@@ -715,6 +715,7 @@ class PlacementCostTest {
         final io.papermc.paper.threadedregions.scheduler.AsyncScheduler asyncScheduler =
                 mock(io.papermc.paper.threadedregions.scheduler.AsyncScheduler.class);
         when(plugin.getServer()).thenReturn(server);
+        when(plugin.isEnabled()).thenReturn(true);
         when(server.getAsyncScheduler()).thenReturn(asyncScheduler);
 
         final AetheryteService customService = new AetheryteService(
@@ -742,5 +743,129 @@ class PlacementCostTest {
 
         verify(failingStorage, atLeastOnce()).save(any());
         verify(asyncScheduler).runDelayed(eq(plugin), any(), eq(5L), eq(java.util.concurrent.TimeUnit.SECONDS));
+    }
+
+    @Test
+    void processPendingRefundsDefersPdcTrimUntilStorageSaveSucceeds() {
+        final PendingRefundStorage storage = mock(PendingRefundStorage.class);
+        final UUID newTxId = UUID.randomUUID();
+        final CostItemQuote pendingItem = new CostItemQuote(CostType.VAULT, 50.0, true, true, 50.0, false, newTxId);
+        final Map<UUID, List<CostItemQuote>> initialMap = new java.util.concurrent.ConcurrentHashMap<>();
+        initialMap.put(playerId, new java.util.concurrent.CopyOnWriteArrayList<>(List.of(pendingItem)));
+        when(storage.load()).thenReturn(initialMap);
+        when(storage.save(any())).thenReturn(false);
+
+        final List<String> existing100 = new java.util.ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            existing100.add(UUID.randomUUID().toString());
+        }
+        final PersistentDataContainer pdc = mock(PersistentDataContainer.class);
+        final java.util.concurrent.atomic.AtomicReference<List<String>> pdcState = new java.util.concurrent.atomic.AtomicReference<>(existing100);
+        when(player.getPersistentDataContainer()).thenReturn(pdc);
+        when(pdc.get(AetheryteService.PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings()))
+                .thenAnswer(inv -> pdcState.get());
+        org.mockito.Mockito.doAnswer(inv -> {
+            pdcState.set(new java.util.ArrayList<>(inv.getArgument(2)));
+            return null;
+        }).when(pdc).set(eq(AetheryteService.PROCESSED_REFUNDS_KEY), eq(PersistentDataType.LIST.strings()), any());
+
+        final org.bukkit.Server server = mock(org.bukkit.Server.class);
+        when(plugin.getServer()).thenReturn(server);
+        when(server.getPlayer(playerId)).thenReturn(player);
+
+        final AetheryteService customService = new AetheryteService(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                net.sabafly.clickportals.model.NoopAetheryteModelService.INSTANCE,
+                messages,
+                () -> -1,
+                () -> 0,
+                () -> 0.0,
+                p -> 0L,
+                (p, t) -> {},
+                (p, s, d) -> AetheryteService.WarpEvaluation.permitted(Component.empty()),
+                storage
+        );
+        customService.setEconomyProvider(economy);
+        when(economy.deposit(eq(player), eq(50.0))).thenReturn(true);
+
+        customService.processPendingRefunds(player);
+
+        // Save failed: PDC must retain all 101 IDs (not trimmed yet)
+        assertThat(pdcState.get()).hasSize(101);
+        assertThat(pdcState.get()).contains(newTxId.toString());
+        assertThat(customService.flushPendingRefunds()).isFalse();
+
+        // Now disk recovers and flushPendingRefunds succeeds: PDC is trimmed to 100 keeping newest
+        when(storage.save(any())).thenReturn(true);
+        assertThat(customService.flushPendingRefunds()).isTrue();
+        assertThat(pdcState.get()).hasSize(100);
+        assertThat(pdcState.get()).contains(newTxId.toString());
+    }
+
+    @Test
+    void placeAetheryteRollbackStillRefundsAndClearsLockWhenCleanupThrows() throws Exception {
+        final org.bukkit.Server server = mock(org.bukkit.Server.class);
+        final java.lang.reflect.Field serverField = org.bukkit.Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            final io.papermc.paper.threadedregions.scheduler.RegionScheduler regionScheduler =
+                    mock(io.papermc.paper.threadedregions.scheduler.RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+            when(server.isOwnedByCurrentRegion(any(), any(int.class), any(int.class))).thenReturn(true);
+            org.mockito.Mockito.doAnswer(inv -> {
+                ((Runnable) inv.getArgument(2)).run();
+                return null;
+            }).when(regionScheduler).execute(eq(plugin), any(Location.class), any(Runnable.class));
+
+            final org.bukkit.block.Block originBlock = mock(org.bukkit.block.Block.class);
+            when(world.getBlockAt(anyInt(), anyInt(), anyInt())).thenReturn(originBlock);
+            when(world.getBlockAt(any(Location.class))).thenReturn(originBlock);
+            when(originBlock.getType()).thenReturn(Material.SHORT_GRASS);
+            when(originBlock.isReplaceable()).thenReturn(true);
+
+            final ItemStack mainHand = mock(ItemStack.class);
+            final PersistentDataContainer pdc = mock(PersistentDataContainer.class);
+            when(mainHand.isEmpty()).thenReturn(false);
+            when(mainHand.getAmount()).thenReturn(1);
+            when(mainHand.getPersistentDataContainer()).thenReturn(pdc);
+            when(pdc.get(AetheryteItemFactory.ITEM_MARKER_KEY, PersistentDataType.BYTE)).thenReturn((byte) 1);
+            when(pdc.get(AetheryteItemFactory.VARIATION_KEY, PersistentDataType.STRING)).thenReturn("costly");
+            when(inventory.getItemInMainHand()).thenReturn(mainHand);
+
+            // Throw during post-registration cleanup
+            org.mockito.Mockito.doThrow(new IllegalStateException("block update failed"))
+                    .when(originBlock).setType(Material.AIR, true);
+            org.mockito.Mockito.doThrow(new RuntimeException("hologram hide failed"))
+                    .when(hologramService).hideAetheryte(any());
+
+            final AetheryteVariation costlyVariation = new AetheryteVariation(
+                    "<aqua>Costly</aqua>",
+                    null, null, null, null, null,
+                    new PlacementSection(null, List.of(CostEntry.of(CostType.VAULT, "80"))),
+                    null
+            );
+            when(variationRegistry.getOrDefault("costly")).thenReturn(costlyVariation);
+            when(economy.getBalance(player)).thenReturn(200.0);
+            when(economy.has(eq(player), anyDouble())).thenReturn(true);
+            when(economy.withdraw(player, 80.0)).thenReturn(true);
+            when(economy.deposit(player, 80.0)).thenReturn(true);
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    service.placeAetheryte(player, world, 10, 64, 20, "TestName", "costly")
+            ).isInstanceOf(IllegalStateException.class);
+
+            // Refund must still be attempted even though hologram hide threw during rollback
+            verify(economy).deposit(player, 80.0);
+            // Lock must be released so subsequent placement is not blocked by pendingPlacements
+            org.mockito.Mockito.doNothing().when(originBlock).setType(Material.AIR, true);
+            service.placeAetheryte(player, world, 10, 64, 20, "TestName2", "costly");
+            verify(economy, times(2)).withdraw(player, 80.0);
+        } finally {
+            serverField.set(null, null);
+        }
     }
 }

@@ -27,6 +27,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.DoubleSupplier;
 import java.util.function.IntSupplier;
 import java.util.function.ToLongFunction;
@@ -214,6 +215,10 @@ public final class AetheryteService {
     private final Set<UUID> inFlightWarps = ConcurrentHashMap.newKeySet();
     private final Map<UUID, List<CostItemQuote>> pendingRefunds = new ConcurrentHashMap<>();
     private final PendingRefundStorage pendingRefundStorage;
+    private final Object refundPersistLock = new Object();
+    private final AtomicBoolean pendingRefundsDirty = new AtomicBoolean(false);
+    private final AtomicBoolean refundPersistScheduled = new AtomicBoolean(false);
+    private final Set<UUID> playersPendingPdcTrim = ConcurrentHashMap.newKeySet();
     private static final double BASE_INTERACT_REACH = 6.0;
 
     /**
@@ -659,20 +664,23 @@ public final class AetheryteService {
                     currentItems.remove(refundedItem);
                     final UUID txId = refundedItem.transactionId();
                     if (txId != null) {
-                        processedList.add(txId.toString());
+                        final String txIdStr = txId.toString();
+                        if (!processedList.contains(txIdStr)) {
+                            processedList.add(txIdStr);
+                        }
                     }
                 }
                 if (pdc != null && !result.refundedItems().isEmpty()) {
-                    while (processedList.size() > MAX_TRACKED_PROCESSED_REFUNDS) {
-                        processedList.removeFirst();
-                    }
                     pdc.set(PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings(), processedList);
+                    if (processedList.size() > MAX_TRACKED_PROCESSED_REFUNDS) {
+                        playersPendingPdcTrim.add(player.getUniqueId());
+                    }
                 }
             }
             if (currentItems.isEmpty()) {
                 pendingRefunds.remove(player.getUniqueId(), currentItems);
             }
-            persistPendingRefundsWithRetry(0);
+            markPendingRefundsDirtyAndPersist();
             if (allSuccess) {
                 plugin.getSLF4JLogger().info("Processed pending placement cost refund for returning player {}", player.getName());
             } else {
@@ -702,21 +710,111 @@ public final class AetheryteService {
             stamped.add(item.transactionId() != null ? item : item.withTransactionId(UUID.randomUUID()));
         }
         pendingRefunds.computeIfAbsent(playerId, k -> new CopyOnWriteArrayList<>()).addAll(stamped);
-        persistPendingRefundsWithRetry(0);
+        markPendingRefundsDirtyAndPersist();
     }
 
-    private void persistPendingRefundsWithRetry(final int attempt) {
-        if (pendingRefundStorage.save(pendingRefunds)) {
-            return;
+    /**
+     * Synchronously flushes any unpersisted pending refunds to disk, e.g., during plugin shutdown (#15).
+     *
+     * @return {@code true} if no pending refunds remain dirty or persistence succeeded, {@code false} otherwise
+     */
+    public boolean flushPendingRefunds() {
+        if (!pendingRefundsDirty.get()) {
+            return true;
         }
-        final int maxRetries = 5;
-        if (attempt >= maxRetries) {
-            plugin.getSLF4JLogger().error("Exhausted retries ({}) persisting pending refunds to disk.", maxRetries);
+        return savePendingRefundsLoop();
+    }
+
+    private void markPendingRefundsDirtyAndPersist() {
+        pendingRefundsDirty.set(true);
+        if (!savePendingRefundsLoop()) {
+            plugin.getSLF4JLogger().error("Failed to persist pending refunds to disk; scheduling background retries.");
+            schedulePendingRefundRetry(0);
+        }
+    }
+
+    private boolean savePendingRefundsLoop() {
+        synchronized (refundPersistLock) {
+            while (pendingRefundsDirty.getAndSet(false)) {
+                if (!pendingRefundStorage.save(pendingRefunds)) {
+                    pendingRefundsDirty.set(true);
+                    return false;
+                }
+            }
+            trimProcessedRefundsForPendingPlayers();
+            return true;
+        }
+    }
+
+    private void schedulePendingRefundRetry(final int attempt) {
+        if (!pendingRefundsDirty.get() || !refundPersistScheduled.compareAndSet(false, true)) {
             return;
         }
         final org.bukkit.Server server = plugin.getServer();
-        if (server != null && server.getAsyncScheduler() != null) {
-            server.getAsyncScheduler().runDelayed(plugin, t -> persistPendingRefundsWithRetry(attempt + 1), 5L, java.util.concurrent.TimeUnit.SECONDS);
+        if (server == null || server.getAsyncScheduler() == null || !plugin.isEnabled()) {
+            refundPersistScheduled.set(false);
+            return;
+        }
+        final long delaySeconds = Math.min(60L, 5L * (1L << Math.min(attempt, 4)));
+        try {
+            server.getAsyncScheduler().runDelayed(plugin, t -> {
+                refundPersistScheduled.set(false);
+                if (!pendingRefundsDirty.get()) {
+                    return;
+                }
+                if (savePendingRefundsLoop()) {
+                    plugin.getSLF4JLogger().info("Successfully persisted pending refunds after {} retry attempt(s).", attempt + 1);
+                    return;
+                }
+                final int nextAttempt = attempt + 1;
+                if (nextAttempt == 5 || nextAttempt % 10 == 0) {
+                    plugin.getSLF4JLogger().error(
+                            "Still unable to persist pending refunds to disk after {} attempts; continuing background retries.",
+                            nextAttempt
+                    );
+                }
+                schedulePendingRefundRetry(nextAttempt);
+            }, delaySeconds, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (final Throwable t) {
+            refundPersistScheduled.set(false);
+            plugin.getSLF4JLogger().error("Failed to schedule pending refund persistence retry.", t);
+        }
+    }
+
+    private void trimProcessedRefundsForPendingPlayers() {
+        if (playersPendingPdcTrim.isEmpty()) {
+            return;
+        }
+        final org.bukkit.Server server = plugin.getServer();
+        if (server == null) {
+            return;
+        }
+        final List<UUID> snapshot = new ArrayList<>(playersPendingPdcTrim);
+        for (final UUID playerId : snapshot) {
+            final Player player = server.getPlayer(playerId);
+            if (player == null || player.getScheduler() == null) {
+                continue;
+            }
+            player.getScheduler().run(plugin, t -> {
+                if (pendingRefundsDirty.get()) {
+                    return;
+                }
+                final PersistentDataContainer pdc = player.getPersistentDataContainer();
+                if (pdc == null) {
+                    playersPendingPdcTrim.remove(playerId);
+                    return;
+                }
+                final List<String> existing = pdc.get(PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings());
+                if (existing == null || existing.size() <= MAX_TRACKED_PROCESSED_REFUNDS) {
+                    playersPendingPdcTrim.remove(playerId);
+                    return;
+                }
+                final List<String> trimmed = new ArrayList<>(
+                        existing.subList(existing.size() - MAX_TRACKED_PROCESSED_REFUNDS, existing.size())
+                );
+                pdc.set(PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings(), trimmed);
+                playersPendingPdcTrim.remove(playerId);
+            }, null);
         }
     }
 
@@ -1123,18 +1221,34 @@ public final class AetheryteService {
                         }
                     }, null);
                 } catch (final Throwable t) {
-                    if (placedAetheryte != null) {
-                        registry.unregister(world, placedAetheryte.id());
-                        removeMarkerEntitiesAt(world, placedAetheryte);
-                        modelService.unregisterAetheryte(placedAetheryte.id());
-                        hologramService.hideAetheryte(placedAetheryte.id());
+                    try {
+                        if (placedAetheryte != null) {
+                            final Aetheryte rollbackTarget = placedAetheryte;
+                            runRollbackCleanup("unregister", rollbackTarget.id(), () -> registry.unregister(world, rollbackTarget.id()));
+                            runRollbackCleanup("removeMarkerEntitiesAt", rollbackTarget.id(), () -> removeMarkerEntitiesAt(world, rollbackTarget));
+                            runRollbackCleanup("unregisterModel", rollbackTarget.id(), () -> modelService.unregisterAetheryte(rollbackTarget.id()));
+                            runRollbackCleanup("hideHologram", rollbackTarget.id(), () -> hologramService.hideAetheryte(rollbackTarget.id()));
+                        }
+                        try {
+                            refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
+                        } catch (final Throwable refundEx) {
+                            plugin.getSLF4JLogger().error("Failed to refund placement cost during rollback for player {}", player.getName(), refundEx);
+                        }
+                    } finally {
+                        pendingPlacements.remove(ownerId);
                     }
-                    refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
-                    pendingPlacements.remove(ownerId);
                     throw t;
                 }
             });
         }, null);
+    }
+
+    private void runRollbackCleanup(final String step, final UUID aetheryteId, final Runnable action) {
+        try {
+            action.run();
+        } catch (final Throwable cleanupEx) {
+            plugin.getSLF4JLogger().warn("Rollback cleanup '{}' failed for Aetheryte {}", step, aetheryteId, cleanupEx);
+        }
     }
 
     void refundPlacement(
