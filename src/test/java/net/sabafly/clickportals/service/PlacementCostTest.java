@@ -269,4 +269,48 @@ class PlacementCostTest {
         service.processPendingRefunds(player);
         verify(economy, times(2)).deposit(eq(player), eq(200.0));
     }
+
+    @Test
+    void duplicateIdenticalPendingRefundsRemoveOnlySucceededInstance() {
+        final AetheryteService service = new AetheryteService(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                messages,
+                () -> -1,
+                () -> 0,
+                p -> 0L,
+                (p, t) -> {},
+                (p, s, d) -> AetheryteService.WarpEvaluation.permitted(Component.empty())
+        );
+        service.setEconomyProvider(economy);
+
+        final CostBundle bundle = new CostBundle(List.of(CostEntry.of(CostType.VAULT, "100")));
+        final CostQuote quote1 = bundle.quote(player, Map.of(), economy);
+        final CostQuote quote2 = bundle.quote(player, Map.of(), economy);
+        final Location targetLocation = new Location(world, 10, 64, 20);
+
+        // Initial deposit failures enqueue two identical items into pendingRefunds
+        when(economy.deposit(eq(player), anyDouble())).thenReturn(false);
+        service.refundPlacement(player, targetLocation, "costly", false, false, bundle, quote1);
+        service.refundPlacement(player, targetLocation, "costly", false, false, bundle, quote2);
+        verify(economy, times(2)).deposit(eq(player), eq(100.0));
+
+        // On first retry pass, 1st refund succeeds but 2nd refund fails
+        final java.util.concurrent.atomic.AtomicInteger retryCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        when(economy.deposit(eq(player), eq(100.0))).thenAnswer(inv -> retryCount.incrementAndGet() == 1);
+
+        service.processPendingRefunds(player);
+        verify(economy, times(4)).deposit(eq(player), eq(100.0));
+
+        // Exactly one duplicate item must remain in pendingRefunds; refund it on the second pass
+        when(economy.deposit(eq(player), eq(100.0))).thenReturn(true);
+        service.processPendingRefunds(player);
+        verify(economy, times(5)).deposit(eq(player), eq(100.0));
+
+        // Pending refunds queue is now empty; further processing performs no deposits
+        service.processPendingRefunds(player);
+        verify(economy, times(5)).deposit(eq(player), eq(100.0));
+    }
 }

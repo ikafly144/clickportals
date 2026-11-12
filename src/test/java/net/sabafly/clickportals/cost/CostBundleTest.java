@@ -338,22 +338,50 @@ class CostBundleTest {
             return null;
         }).when(player).setLevel(org.mockito.ArgumentMatchers.anyInt());
 
-        when(economy.deposit(eq(player), anyDouble())).thenReturn(false);
+        when(economy.withdraw(eq(player), anyDouble())).thenReturn(true);
 
         final CostBundle bundle = new CostBundle(List.of(
                 CostEntry.of(CostType.EXP_LEVELS, "2"),
                 CostEntry.of(CostType.VAULT, "100")
         ));
         final CostQuote quote = bundle.quote(player, Map.of(), economy);
-        final CostBundle.RefundResult refundResult = bundle.refundWithResult(player, quote, economy);
+        final CostBundle.ChargeResult chargeResult = bundle.chargeWithResult(player, quote, economy);
+        assertThat(chargeResult.success()).isTrue();
+        assertThat(level.get()).isEqualTo(3); // 5 - 2 = 3
+
+        // When refunding, Vault deposit fails while Exp restore succeeds
+        when(economy.deposit(eq(player), anyDouble())).thenReturn(false);
+
+        final CostBundle.RefundResult refundResult = bundle.refundWithResult(player, chargeResult.chargedQuote(), economy);
 
         assertThat(refundResult.success()).isFalse();
-        // Exp refund succeeded, so player's level increased back by 2
-        assertThat(level.get()).isEqualTo(7);
+        // Exp refund succeeded, so player's level restored back to original 5 (3 + 2 = 5)
+        assertThat(level.get()).isEqualTo(5);
+
+        // Refunded items contains the EXP_LEVELS item
+        assertThat(refundResult.refundedItems()).hasSize(1);
+        assertThat(refundResult.refundedItems().get(0).type()).isEqualTo(CostType.EXP_LEVELS);
 
         // Unrefunded items list must contain only the Vault cost item
         assertThat(refundResult.unrefundedItems()).hasSize(1);
         assertThat(refundResult.unrefundedItems().get(0).type()).isEqualTo(CostType.VAULT);
         assertThat(refundResult.unrefundedItems().get(0).amount()).isEqualTo(100.0);
+    }
+
+    @Test
+    void vaultDecimalAdditionAvoidsFloatingPointPrecisionLoss() {
+        // Player balance is exactly 0.3
+        when(economy.getBalance(player)).thenReturn(0.3);
+
+        // Two Vault costs: 0.1 and 0.2
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.VAULT, "0.1"),
+                CostEntry.of(CostType.VAULT, "0.2")
+        ));
+
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        // In IEEE 754 double, 0.1 + 0.2 = 0.30000000000000004 > 0.3
+        // With BigDecimal decimal aggregation, it evaluates to exactly 0.3 and is affordable
+        assertThat(quote.affordable()).isTrue();
     }
 }

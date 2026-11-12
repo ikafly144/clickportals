@@ -17,6 +17,8 @@
  */
 package net.sabafly.clickportals.cost;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Locale;
 import org.jspecify.annotations.Nullable;
 
@@ -70,13 +72,27 @@ public enum CostType {
 
     /**
      * Normalizes the assessed amount according to this cost type's precision rules (#7).
-     * Integer quantities are rounded to the nearest whole number.
+     * Integer quantities are rounded to whole numbers; Vault currency is rounded to 2 decimal places.
      */
     public double normalize(final double amount) {
         if (!Double.isFinite(amount) || amount < 0.0) {
             return amount;
         }
-        return isInteger() ? (double) Math.round(amount) : amount;
+        return isInteger()
+                ? (double) Math.round(amount)
+                : BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP).doubleValue();
+    }
+
+    /**
+     * Converts a normalized amount to a {@link BigDecimal} for exact decimal aggregation (#7).
+     */
+    public BigDecimal toBigDecimal(final double amount) {
+        if (!Double.isFinite(amount) || amount < 0.0) {
+            return BigDecimal.ZERO;
+        }
+        return isInteger()
+                ? BigDecimal.valueOf(Math.round(amount))
+                : BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP);
     }
 
     /**

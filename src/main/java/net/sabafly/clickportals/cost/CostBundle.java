@@ -17,6 +17,7 @@
  */
 package net.sabafly.clickportals.cost;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -78,7 +79,7 @@ public final class CostBundle {
 
         // First pass: evaluate raw amounts and aggregate required sums by CostType (#7)
         final double[] evaluatedAmounts = new double[entries.size()];
-        final Map<CostType, Double> totalRequiredByType = new EnumMap<>(CostType.class);
+        final Map<CostType, BigDecimal> totalRequiredByType = new EnumMap<>(CostType.class);
 
         for (int i = 0; i < entries.size(); i++) {
             final CostEntry entry = entries.get(i);
@@ -99,7 +100,7 @@ public final class CostBundle {
             final double normalizedAmount = type.normalize(rawAmount);
             evaluatedAmounts[i] = normalizedAmount;
             if (entry.required() && !(type == CostType.VAULT && !economy.isAvailable())) {
-                totalRequiredByType.merge(type, normalizedAmount, Double::sum);
+                totalRequiredByType.merge(type, type.toBigDecimal(normalizedAmount), BigDecimal::add);
             }
         }
 
@@ -110,8 +111,10 @@ public final class CostBundle {
         for (final CostType type : CostType.values()) {
             final double current = getCurrentResource(player, type, economy);
             remainingByType.put(type, current);
-            final double required = totalRequiredByType.getOrDefault(type, 0.0);
-            aggregateAffordability.put(type, current >= required);
+            final BigDecimal requiredBd = totalRequiredByType.getOrDefault(type, BigDecimal.ZERO);
+            final double required = requiredBd.doubleValue();
+            final BigDecimal currentBd = type.toBigDecimal(current);
+            aggregateAffordability.put(type, currentBd.compareTo(requiredBd) >= 0);
             remainingRequiredByType.put(type, required);
         }
 
@@ -198,23 +201,25 @@ public final class CostBundle {
         }
 
         // Verify all mandatory requirements are still satisfied in aggregate on the live player (#7)
-        final Map<CostType, Double> liveRequiredSums = new EnumMap<>(CostType.class);
+        final Map<CostType, BigDecimal> liveRequiredSums = new EnumMap<>(CostType.class);
         for (final CostItemQuote item : quote.items()) {
             if (item.disabled() || item.type() == null) {
                 continue;
             }
             if (item.required() && item.amount() > 0.0) {
-                liveRequiredSums.merge(item.type(), item.amount(), Double::sum);
+                liveRequiredSums.merge(item.type(), item.type().toBigDecimal(item.amount()), BigDecimal::add);
             }
         }
-        for (final Map.Entry<CostType, Double> entry : liveRequiredSums.entrySet()) {
+        for (final Map.Entry<CostType, BigDecimal> entry : liveRequiredSums.entrySet()) {
             final double current = getCurrentResource(player, entry.getKey(), economy);
-            if (current < entry.getValue()) {
+            final BigDecimal currentBd = entry.getKey().toBigDecimal(current);
+            if (currentBd.compareTo(entry.getValue()) < 0) {
                 return ChargeResult.failure();
             }
         }
 
-        final Map<CostType, Double> remainingRequired = new EnumMap<>(liveRequiredSums);
+        final Map<CostType, Double> remainingRequired = new EnumMap<>(CostType.class);
+        liveRequiredSums.forEach((k, v) -> remainingRequired.put(k, v.doubleValue()));
         final List<CostItemQuote> applied = new ArrayList<>();
         for (final CostItemQuote item : quote.items()) {
             if (item.disabled() || item.type() == null || item.amount() <= 0.0) {
@@ -236,7 +241,8 @@ public final class CostBundle {
             }
 
             final double actualDeducted = deductResource(player, item.type(), toDeduct, economy);
-            if (actualDeducted < 0.0 || (item.required() && actualDeducted < toDeduct)) {
+            if (actualDeducted < 0.0
+                    || (item.required() && item.type().toBigDecimal(actualDeducted).compareTo(item.type().toBigDecimal(toDeduct)) < 0)) {
                 if (actualDeducted > 0.0) {
                     applied.add(new CostItemQuote(item.type(), actualDeducted, item.required(), true, actualDeducted, false));
                 }
@@ -262,18 +268,23 @@ public final class CostBundle {
     }
 
     /**
-     * Outcome of a refund operation tracking whether all items were restored and any items that failed (#15).
+     * Outcome of a refund operation tracking whether all items were restored and itemized tracking of refunded/unrefunded items (#15).
      *
      * @param success whether all items were successfully refunded
+     * @param refundedItems list of items that were successfully refunded
      * @param unrefundedItems list of items that could not be refunded
      */
-    public record RefundResult(boolean success, List<CostItemQuote> unrefundedItems) {
-        public static RefundResult successful() {
-            return new RefundResult(true, List.of());
+    public record RefundResult(
+            boolean success,
+            List<CostItemQuote> refundedItems,
+            List<CostItemQuote> unrefundedItems
+    ) {
+        public static RefundResult successful(final List<CostItemQuote> refunded) {
+            return new RefundResult(true, List.copyOf(refunded), List.of());
         }
 
-        public static RefundResult failure(final List<CostItemQuote> unrefunded) {
-            return new RefundResult(false, List.copyOf(unrefunded));
+        public static RefundResult failure(final List<CostItemQuote> refunded, final List<CostItemQuote> unrefunded) {
+            return new RefundResult(false, List.copyOf(refunded), List.copyOf(unrefunded));
         }
     }
 
@@ -313,23 +324,28 @@ public final class CostBundle {
             final List<CostItemQuote> items,
             final EconomyProvider economy
     ) {
+        final List<CostItemQuote> refunded = new ArrayList<>();
         final List<CostItemQuote> unrefunded = new ArrayList<>();
         boolean allSuccess = true;
         for (final CostItemQuote item : items) {
             if (item.disabled() || item.type() == null) {
+                refunded.add(item);
                 continue;
             }
             final double amount = item.effectiveDeduction();
             if (amount <= 0.0) {
+                refunded.add(item);
                 continue;
             }
             final boolean success = refundResource(player, item.type(), amount, economy);
             if (!success) {
                 allSuccess = false;
                 unrefunded.add(item);
+            } else {
+                refunded.add(item);
             }
         }
-        return allSuccess ? RefundResult.successful() : RefundResult.failure(unrefunded);
+        return allSuccess ? RefundResult.successful(refunded) : RefundResult.failure(refunded, unrefunded);
     }
 
     private static void populatePlayerVariables(

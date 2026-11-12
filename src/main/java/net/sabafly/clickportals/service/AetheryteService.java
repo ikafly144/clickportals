@@ -466,9 +466,9 @@ public final class AetheryteService {
             final List<CostItemQuote> snapshot = new ArrayList<>(currentItems);
             final CostQuote quote = new CostQuote(snapshot, true);
             final CostBundle.RefundResult result = new CostBundle(List.of()).refundWithResult(player, quote, economyProvider);
-            final List<CostItemQuote> succeeded = new ArrayList<>(snapshot);
-            succeeded.removeAll(result.unrefundedItems());
-            currentItems.removeAll(succeeded);
+            for (final CostItemQuote refundedItem : result.refundedItems()) {
+                currentItems.remove(refundedItem);
+            }
             if (currentItems.isEmpty()) {
                 pendingRefunds.remove(player.getUniqueId(), currentItems);
             }
