@@ -91,6 +91,7 @@ class ConfiguredWarpCostEvaluatorTest {
         when(player.getFoodLevel()).thenReturn(20);
         when(player.getWorld()).thenReturn(world);
         when(player.getLocation()).thenReturn(new Location(world, 0, 64, 0));
+        when(player.getUniqueId()).thenReturn(UUID.randomUUID());
 
         final WarpSection warpSection = new WarpSection(
                 new DistanceSection(10.0, 1000.0), // min 10, max 1000
@@ -209,5 +210,67 @@ class ConfiguredWarpCostEvaluatorTest {
         final String costText = PlainTextComponentSerializer.plainText().serialize(eval.costDisplay());
         // Both entries combined (55 + 30) or formatted items
         assertThat(costText).contains("$55.00").contains("$30.00");
+    }
+
+    @Test
+    void rejectsWhenPlayerIsOutOfReachOfSourceAetheryte() {
+        final ConfiguredWarpCostEvaluator evaluator = createEvaluator();
+
+        // Player moved 30 blocks away from source Aetheryte
+        when(player.getLocation()).thenReturn(new Location(world, 30, 64, 0));
+        when(variationRegistry.getOrDefault(any())).thenReturn(AetheryteVariation.defaultVariation());
+
+        final Aetheryte src = new Aetheryte(UUID.randomUUID(), "Origin", worldId, "world", 0, 64, 0, UUID.randomUUID(), 0L);
+        final Aetheryte dest = new Aetheryte(UUID.randomUUID(), "Dest", worldId, "world", 50, 64, 0, UUID.randomUUID(), 0L);
+
+        final WarpEvaluation eval = evaluator.evaluate(player, src, dest);
+        assertThat(eval.allowed()).isFalse();
+        assertThat(eval.denyReason()).isNotNull();
+        final String reason = PlainTextComponentSerializer.plainText().serialize(Objects.requireNonNull(eval.denyReason()));
+        assertThat(reason).contains("too far");
+    }
+
+    @Test
+    void refundRestoresChargedAmountOnTeleportFailure() {
+        final ConfiguredWarpCostEvaluator evaluator = createEvaluator();
+        final Aetheryte src = new Aetheryte(UUID.randomUUID(), "Origin", worldId, "world", 0, 64, 0, UUID.randomUUID(), 0L);
+        final Aetheryte dest = new Aetheryte(UUID.randomUUID(), "Dest", worldId, "world", 50, 64, 0, UUID.randomUUID(), 0L);
+        when(variationRegistry.getOrDefault(any())).thenReturn(AetheryteVariation.defaultVariation());
+
+        // Charge 50 * 0.5 + 5 = 30
+        final boolean charged = evaluator.charge(player, src, dest);
+        assertThat(charged).isTrue();
+
+        evaluator.refund(player, src, dest);
+        org.mockito.Mockito.verify(economy).deposit(player, 30.0);
+    }
+
+    @Test
+    void variationDistanceOverrideInheritsGlobalMinWhenOnlyMaxIsSpecified() {
+        final ConfiguredWarpCostEvaluator evaluator = createEvaluator();
+
+        // Variation specifies max 500 but omits min (null). Global min is 10.
+        final AetheryteVariation varWithOmittedMin = new AetheryteVariation(
+                "Custom",
+                AetheryteVariation.ItemSection.defaults(),
+                AetheryteVariation.RecipeSection.defaults(),
+                AetheryteVariation.ModelSection.defaults(),
+                AetheryteVariation.HitboxSection.defaults(),
+                AetheryteVariation.TeleportSection.defaults(),
+                AetheryteVariation.PlacementSection.defaults(),
+                AetheryteVariation.LimitSection.defaults(),
+                new AetheryteVariation.WarpOverrideSection(new DistanceSection(null, 500.0), null)
+        );
+        when(variationRegistry.getOrDefault("custom")).thenReturn(varWithOmittedMin);
+
+        final Aetheryte src = new Aetheryte(UUID.randomUUID(), "Origin", worldId, "world", 0, 64, 0, UUID.randomUUID(), 0L, "custom");
+        final Aetheryte dest = new Aetheryte(UUID.randomUUID(), "Dest", worldId, "world", 5, 64, 0, UUID.randomUUID(), 0L);
+
+        // Distance is 5 blocks, which is less than inherited global min 10
+        final WarpEvaluation eval = evaluator.evaluate(player, src, dest);
+        assertThat(eval.allowed()).isFalse();
+        assertThat(eval.denyReason()).isNotNull();
+        final String reason = PlainTextComponentSerializer.plainText().serialize(Objects.requireNonNull(eval.denyReason()));
+        assertThat(reason).contains("too close");
     }
 }

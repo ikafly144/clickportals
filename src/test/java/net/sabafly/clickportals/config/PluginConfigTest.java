@@ -18,6 +18,7 @@
 package net.sabafly.clickportals.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 
 import java.io.IOException;
@@ -109,5 +110,28 @@ class PluginConfigTest {
         assertThat(config.hologramViewDistance()).isEqualTo(4.0);
         assertThat(config.maxAetherytesPerPlayer()).isEqualTo(-1);
         assertThat(config.placementCooldownTicks()).isEqualTo(0);
+    }
+
+    @Test
+    void minGreaterThanMaxAdjustsMaxToUnlimited() throws IOException {
+        final Path configFile = tempDir.resolve("config.yml");
+        Files.writeString(configFile, """
+                warp:
+                  distance:
+                    min: 100.0
+                    max: 50.0
+                """, StandardCharsets.UTF_8);
+
+        final Logger logger = mock(Logger.class);
+        final ConfigManager manager = new ConfigManager(configFile, logger);
+        final PluginConfig config = manager.load();
+
+        assertThat(config.warpDistanceMin()).isEqualTo(100.0);
+        assertThat(config.warpDistanceMax()).isEqualTo(-1.0);
+        org.mockito.Mockito.verify(logger).warn(
+                org.mockito.ArgumentMatchers.contains("greater than"),
+                eq(100.0),
+                eq(50.0)
+        );
     }
 }

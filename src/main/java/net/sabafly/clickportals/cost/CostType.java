@@ -18,6 +18,7 @@
 package net.sabafly.clickportals.cost;
 
 import java.util.Locale;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Supported cost types for Aetheryte warping and placement (#7, #15, #16).
@@ -61,18 +62,20 @@ public enum CostType {
     }
 
     /**
-     * Resolves a {@link CostType} from its config string representation, falling back to {@link #VAULT}.
+     * Resolves a {@link CostType} from its config string representation, returning {@code null} on unrecognized types.
+     * Null or blank input defaults to {@link #VAULT}.
      */
-    public static CostType fromString(final String raw) {
-        if (raw == null) {
+    public static @Nullable CostType fromString(final @Nullable String raw) {
+        if (raw == null || raw.isBlank()) {
             return VAULT;
         }
         final String normalized = raw.trim().toLowerCase(Locale.ROOT).replace('_', '-');
         return switch (normalized) {
+            case "vault", "money", "economy", "balance" -> VAULT;
             case "exp-points", "exppoints", "exp_points", "experience", "xp" -> EXP_POINTS;
             case "exp-levels", "explevels", "exp_levels", "levels", "level", "lv" -> EXP_LEVELS;
             case "food", "hunger" -> FOOD;
-            default -> VAULT;
+            default -> null;
         };
     }
 }

@@ -32,6 +32,11 @@ public interface Expression {
     Expression ZERO = variables -> 0.0;
 
     /**
+     * Constant invalid expression evaluating to positive infinity (#7).
+     */
+    Expression INVALID = variables -> Double.POSITIVE_INFINITY;
+
+    /**
      * Evaluates this expression using values from the given variable map.
      * Missing variables evaluate to {@code 0.0}.
      *

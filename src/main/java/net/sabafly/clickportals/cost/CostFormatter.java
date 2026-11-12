@@ -95,6 +95,10 @@ public final class CostFormatter {
 
         final List<Component> reasons = new ArrayList<>(missing.size());
         for (final CostItemQuote item : missing) {
+            if (item.type() == null) {
+                reasons.add(messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET));
+                continue;
+            }
             final String formattedAmount = formatAmountString(item, economy);
             final MessageKey key = switch (item.type()) {
                 case VAULT -> MessageKey.COST_INSUFFICIENT_VAULT;
@@ -119,6 +123,9 @@ public final class CostFormatter {
             final EconomyProvider economy,
             final Messages messages
     ) {
+        if (item.type() == null) {
+            return messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET);
+        }
         final String formattedAmount = formatAmountString(item, economy);
         final MessageKey key = switch (item.type()) {
             case VAULT -> MessageKey.COST_VAULT;
@@ -130,6 +137,9 @@ public final class CostFormatter {
     }
 
     private static String formatAmountString(final CostItemQuote item, final EconomyProvider economy) {
+        if (!Double.isFinite(item.amount())) {
+            return "---";
+        }
         if (item.type() == CostType.VAULT && economy.isAvailable()) {
             return economy.format(item.amount());
         }

@@ -25,6 +25,8 @@ import java.util.Map;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.config.DistanceSection;
 import net.sabafly.clickportals.cost.CostEntry;
+import net.sabafly.clickportals.cost.expr.ExpressionException;
+import net.sabafly.clickportals.cost.expr.ExpressionParser;
 import org.bukkit.Color;
 import org.bukkit.Material;
 import org.jspecify.annotations.Nullable;
@@ -721,6 +723,19 @@ public record AetheryteVariation(
                     validClearanceHeight, clamped, cleanId, MAX_CLEARANCE_HEIGHT);
             validClearanceHeight = clamped;
         }
+        if (placement.cost() != null) {
+            for (final CostEntry entry : placement.cost()) {
+                if (entry.type() == null) {
+                    logger.warn("Unknown cost type '{}' in placement.cost of variation '{}'", entry.rawType(), cleanId);
+                } else {
+                    try {
+                        ExpressionParser.parse(entry.amount(), entry.type().resourceVariable());
+                    } catch (final ExpressionException e) {
+                        logger.warn("Invalid placement cost expression '{}' in variation '{}': {}", entry.amount(), cleanId, e.getMessage());
+                    }
+                }
+            }
+        }
         final PlacementSection validatedPlacement = new PlacementSection(
                 new ClearanceSection(validClearanceRadius, validClearanceHeight),
                 placement.cost()
@@ -736,8 +751,27 @@ public record AetheryteVariation(
         // 8. Validate warp override section (#14, #26)
         final DistanceSection rawWarpDist = warp.distance();
         final double validWarpMin = rawWarpDist.min() == null || rawWarpDist.min() < -1.0 ? -1.0 : rawWarpDist.min();
-        final double validWarpMax = rawWarpDist.max() == null || rawWarpDist.max() < -1.0 ? -1.0 : rawWarpDist.max();
+        double validWarpMax = rawWarpDist.max() == null || rawWarpDist.max() < -1.0 ? -1.0 : rawWarpDist.max();
+        if (validWarpMin >= 0.0 && validWarpMax >= 0.0 && validWarpMin > validWarpMax) {
+            logger.warn("warp.distance.min ({}) is greater than warp.distance.max ({}) in variation '{}'. Disabling max distance (-1.0) to prevent deadlocks.",
+                    validWarpMin, validWarpMax, cleanId);
+            validWarpMax = -1.0;
+        }
         final DistanceSection validatedWarpDist = new DistanceSection(validWarpMin, validWarpMax);
+
+        if (warp.cost() != null) {
+            for (final CostEntry entry : warp.cost()) {
+                if (entry.type() == null) {
+                    logger.warn("Unknown cost type '{}' in warp.cost of variation '{}'", entry.rawType(), cleanId);
+                } else {
+                    try {
+                        ExpressionParser.parse(entry.amount(), entry.type().resourceVariable());
+                    } catch (final ExpressionException e) {
+                        logger.warn("Invalid warp cost expression '{}' in variation '{}': {}", entry.amount(), cleanId, e.getMessage());
+                    }
+                }
+            }
+        }
         final WarpOverrideSection validatedWarp = new WarpOverrideSection(validatedWarpDist, warp.cost());
 
         return new AetheryteVariation(

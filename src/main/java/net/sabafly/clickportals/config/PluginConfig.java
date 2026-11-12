@@ -20,6 +20,8 @@ package net.sabafly.clickportals.config;
 import java.util.List;
 import java.util.Locale;
 import net.sabafly.clickportals.cost.CostEntry;
+import net.sabafly.clickportals.cost.expr.ExpressionException;
+import net.sabafly.clickportals.cost.expr.ExpressionParser;
 import net.sabafly.clickportals.message.LanguageLoader;
 import net.sabafly.clickportals.route.DimensionRoutesConfig;
 import org.slf4j.Logger;
@@ -210,8 +212,27 @@ public record PluginConfig(
 
         final DistanceSection rawDist = warp.distance();
         final double validMinDist = rawDist.min() == null || rawDist.min() < 0.0 ? 0.0 : rawDist.min();
-        final double validMaxDist = rawDist.max() == null || rawDist.max() < -1.0 ? -1.0 : rawDist.max();
+        double validMaxDist = rawDist.max() == null || rawDist.max() < -1.0 ? -1.0 : rawDist.max();
+        if (validMaxDist >= 0.0 && validMinDist > validMaxDist) {
+            logger.warn("warp.distance.min ({}) is greater than warp.distance.max ({}). Disabling max distance (-1.0) to prevent deadlocks.",
+                    validMinDist, validMaxDist);
+            validMaxDist = -1.0;
+        }
         final DistanceSection validDist = new DistanceSection(validMinDist, validMaxDist);
+
+        if (warp.cost() != null) {
+            for (final CostEntry entry : warp.cost()) {
+                if (entry.type() == null) {
+                    logger.warn("Unknown cost type '{}' in warp.cost; this cost will fail affordability checks.", entry.rawType());
+                } else {
+                    try {
+                        ExpressionParser.parse(entry.amount(), entry.type().resourceVariable());
+                    } catch (final ExpressionException e) {
+                        logger.warn("Invalid cost amount expression '{}' in warp.cost: {}", entry.amount(), e.getMessage());
+                    }
+                }
+            }
+        }
 
         final WarpSection validWarp = new WarpSection(validDist, warp.cost(), warp.showOptionalCosts());
 
@@ -276,14 +297,14 @@ public record PluginConfig(
      * Returns the global minimum warp distance in blocks (0 for disabled) (#26).
      */
     public double warpDistanceMin() {
-        return warp.distance().min();
+        return warp.distance().minOrDefault(0.0);
     }
 
     /**
      * Returns the global maximum warp distance in blocks (-1 for unlimited) (#26).
      */
     public double warpDistanceMax() {
-        return warp.distance().max();
+        return warp.distance().maxOrDefault(-1.0);
     }
 
     /**

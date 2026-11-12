@@ -17,6 +17,8 @@
  */
 package net.sabafly.clickportals.cost;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * Assessed quote for an individual cost requirement (#7).
  *
@@ -28,7 +30,7 @@ package net.sabafly.clickportals.cost;
  * @param disabled whether this cost is disabled (e.g. Vault currency without Vault installed)
  */
 public record CostItemQuote(
-        CostType type,
+        @Nullable CostType type,
         double amount,
         boolean required,
         boolean affordable,
@@ -40,7 +42,7 @@ public record CostItemQuote(
      * Effective amount that will be deducted, capped by current resource if non-required.
      */
     public double effectiveDeduction() {
-        if (disabled || amount <= 0.0) {
+        if (disabled || type == null || amount <= 0.0 || !Double.isFinite(amount)) {
             return 0.0;
         }
         if (!required) {

@@ -29,16 +29,24 @@ import org.spongepowered.configurate.objectmapping.meta.Setting;
 public record DistanceSection(
         @Setting("min")
         @Comment("Minimum block distance required to warp (0 for no minimum, -1 to inherit global)")
-        Double min,
+        @Nullable Double min,
 
         @Setting("max")
         @Comment("Maximum block distance allowed to warp (-1 for unlimited / inherit global)")
-        Double max
+        @Nullable Double max
 ) {
 
     public DistanceSection(@Nullable final Double min, @Nullable final Double max) {
-        this.min = min == null ? 0.0 : min;
-        this.max = max == null ? -1.0 : max;
+        this.min = min;
+        this.max = max;
+    }
+
+    public double minOrDefault(final double fallback) {
+        return (min != null && min >= 0.0) ? min : fallback;
+    }
+
+    public double maxOrDefault(final double fallback) {
+        return (max != null && max >= 0.0) ? max : fallback;
     }
 
     public static DistanceSection defaults() {

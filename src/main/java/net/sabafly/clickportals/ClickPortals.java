@@ -19,7 +19,6 @@ package net.sabafly.clickportals;
 
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import java.util.List;
-import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.command.ClickPortalsCommand;
 import net.sabafly.clickportals.config.ConfigManager;
@@ -35,13 +34,11 @@ import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.route.DimensionRouter;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.ConfiguredWarpCostEvaluator;
-import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.VariationRegistry;
 import net.sabafly.clickportals.visual.HologramService;
 import net.sabafly.clickportals.visual.NoopHologramService;
 import net.sabafly.clickportals.visual.PacketEventsHologramService;
 import org.bukkit.Bukkit;
-import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
@@ -54,8 +51,6 @@ import org.jspecify.annotations.Nullable;
  */
 @SuppressWarnings("UnstableApiUsage")
 public final class ClickPortals extends JavaPlugin {
-
-    private static final double BASE_INTERACT_REACH = 6.0;
 
     private @Nullable ConfigManager configManager;
     private @Nullable VariationRegistry variationRegistry;
@@ -124,7 +119,7 @@ public final class ClickPortals extends JavaPlugin {
         final AetheryteDialogFactory dialogs = new AetheryteDialogFactory(service, msgService);
         this.dialogFactory = dialogs;
 
-        bindInteractionHandler(activeHologramService, aetheryteRegistry, variations, dialogs);
+        bindInteractionHandler(activeHologramService, aetheryteRegistry, dialogs);
 
         AetheryteItemFactory.registerRecipes(variations, msgService);
 
@@ -275,7 +270,7 @@ public final class ClickPortals extends JavaPlugin {
         }
         if (current == NoopHologramService.INSTANCE) {
             final HologramService created = createHologramService(reloadedConfig, variations, msgService);
-            bindInteractionHandler(created, aetheryteRegistry, variations, dialogs);
+            bindInteractionHandler(created, aetheryteRegistry, dialogs);
             this.hologramService = created;
             return created;
         }
@@ -289,15 +284,18 @@ public final class ClickPortals extends JavaPlugin {
     private void bindInteractionHandler(
             final HologramService targetService,
             final AetheryteRegistry aetheryteRegistry,
-            final VariationRegistry variations,
             final AetheryteDialogFactory dialogs
     ) {
         targetService.setInteractionHandler((player, aetheryteId) ->
-                player.getScheduler().run(this, task ->
-                        aetheryteRegistry.getById(aetheryteId)
-                                .filter(aetheryte -> isWithinReach(player, aetheryte, variations))
-                                .ifPresent(aetheryte -> dialogs.openWarpDialog(player, aetheryte)),
-                        null)
+                player.getScheduler().run(this, task -> {
+                    final AetheryteService service = this.aetheryteService;
+                    if (service == null) {
+                        return;
+                    }
+                    aetheryteRegistry.getById(aetheryteId)
+                            .filter(aetheryte -> service.isWithinReach(player, aetheryte))
+                            .ifPresent(aetheryte -> dialogs.openWarpDialog(player, aetheryte));
+                }, null)
         );
     }
 
@@ -320,29 +318,6 @@ public final class ClickPortals extends JavaPlugin {
      */
     public @Nullable Messages messages() {
         return messages;
-    }
-
-    /**
-     * Checks that the player is in the same world and within interaction reach of the target Aetheryte,
-     * scaling the reach allowance by the variation's hitbox size (#40).
-     */
-    private static boolean isWithinReach(
-            final Player player,
-            final Aetheryte aetheryte,
-            final VariationRegistry variations
-    ) {
-        final Location loc = player.getLocation();
-        if (loc == null) {
-            return false;
-        }
-        final World world = loc.getWorld();
-        if (world == null || !world.getUID().equals(aetheryte.worldId())) {
-            return false;
-        }
-        final AetheryteVariation variation = variations.getOrDefault(aetheryte.variation());
-        final double hitboxAllowance = Math.max(variation.hitbox().width(), variation.hitbox().height());
-        final double maxReach = BASE_INTERACT_REACH + hitboxAllowance;
-        return loc.distanceSquared(aetheryte.markerLocation(world)) <= maxReach * maxReach;
     }
 
     /**

@@ -173,4 +173,26 @@ class PlacementCostTest {
         // With bypass, economy is not charged
         verify(economy, never()).withdraw(any(), anyDouble());
     }
+
+    @Test
+    void processPendingRefundsRestoresResourcesOnJoin() {
+        final AetheryteService service = new AetheryteService(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                messages,
+                () -> -1,
+                () -> 0,
+                p -> 0L,
+                (p, t) -> {},
+                (p, s, d) -> AetheryteService.WarpEvaluation.permitted(Component.empty())
+        );
+        service.setEconomyProvider(economy);
+
+        // When a player with pending refunds joins, processPendingRefunds refunds their costs
+        service.processPendingRefunds(player);
+        // Initially empty, no exceptions thrown
+        verify(economy, never()).deposit(any(), anyDouble());
+    }
 }

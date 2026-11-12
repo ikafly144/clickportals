@@ -20,6 +20,7 @@ package net.sabafly.clickportals.cost;
 import net.sabafly.clickportals.cost.expr.Expression;
 import net.sabafly.clickportals.cost.expr.ExpressionException;
 import net.sabafly.clickportals.cost.expr.ExpressionParser;
+import org.jspecify.annotations.Nullable;
 import org.spongepowered.configurate.objectmapping.ConfigSerializable;
 import org.spongepowered.configurate.objectmapping.meta.Comment;
 import org.spongepowered.configurate.objectmapping.meta.Setting;
@@ -59,22 +60,26 @@ public record CostEntry(
     }
 
     /**
-     * Resolves the {@link CostType} of this entry.
+     * Resolves the {@link CostType} of this entry, or {@code null} if unknown.
      */
-    public CostType type() {
+    public @Nullable CostType type() {
         return CostType.fromString(rawType);
     }
 
     /**
      * Compiles the amount expression against this cost type's default percentage variable (#7).
      *
-     * @return compiled {@link Expression}, falling back to {@link Expression#ZERO} on syntax errors
+     * @return compiled {@link Expression}, falling back to {@link Expression#INVALID} on syntax errors or unknown type
      */
     public Expression compile() {
+        final CostType type = type();
+        if (type == null) {
+            return Expression.INVALID;
+        }
         try {
-            return ExpressionParser.parse(amount, type().resourceVariable());
+            return ExpressionParser.parse(amount, type.resourceVariable());
         } catch (final ExpressionException ignored) {
-            return Expression.ZERO;
+            return Expression.INVALID;
         }
     }
 

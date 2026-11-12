@@ -17,12 +17,14 @@
  */
 package net.sabafly.clickportals.service;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.IntSupplier;
 import java.util.function.ToLongFunction;
 import net.kyori.adventure.text.Component;
@@ -32,6 +34,7 @@ import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry.RegistrationOutcome;
 import net.sabafly.clickportals.cost.CostBundle;
 import net.sabafly.clickportals.cost.CostFormatter;
+import net.sabafly.clickportals.cost.CostItemQuote;
 import net.sabafly.clickportals.cost.CostQuote;
 import net.sabafly.clickportals.economy.EconomyProvider;
 import net.sabafly.clickportals.economy.NoopEconomyProvider;
@@ -127,6 +130,13 @@ public final class AetheryteService {
         default boolean charge(final Player player, final @Nullable Aetheryte source, final Aetheryte destination) {
             return evaluate(player, source, destination).allowed();
         }
+
+        /**
+         * Refunds previously charged costs if teleportation fails or is cancelled (#15).
+         * Must be called on the player's entity thread.
+         */
+        default void refund(final Player player, final @Nullable Aetheryte source, final Aetheryte destination) {
+        }
     }
 
     private final Plugin plugin;
@@ -141,6 +151,8 @@ public final class AetheryteService {
     private volatile WarpCostEvaluator costEvaluator;
     private volatile EconomyProvider economyProvider = NoopEconomyProvider.INSTANCE;
     private final Set<UUID> pendingPlacements = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, List<CostItemQuote>> pendingRefunds = new ConcurrentHashMap<>();
+    private static final double BASE_INTERACT_REACH = 6.0;
 
     /**
      * Creates a new {@link AetheryteService} with default variations, messages, and free cost evaluation.
@@ -347,6 +359,39 @@ public final class AetheryteService {
      */
     public void setEconomyProvider(final EconomyProvider economyProvider) {
         this.economyProvider = economyProvider;
+    }
+
+    /**
+     * Checks whether the player is in the same world and within interaction reach of the given Aetheryte,
+     * scaling the reach allowance by the variation hitbox dimensions (#40).
+     */
+    public boolean isWithinReach(final Player player, final Aetheryte aetheryte) {
+        final Location loc = player.getLocation();
+        if (loc == null) {
+            return false;
+        }
+        final World world = loc.getWorld();
+        if (world == null || !world.getUID().equals(aetheryte.worldId())) {
+            return false;
+        }
+        final AetheryteVariation variation = variationRegistry.getOrDefault(aetheryte.variation());
+        final double hitboxAllowance = Math.max(variation.hitbox().width(), variation.hitbox().height());
+        final double maxReach = BASE_INTERACT_REACH + hitboxAllowance;
+        return loc.distanceSquared(aetheryte.markerLocation(world)) <= maxReach * maxReach;
+    }
+
+    /**
+     * Processes any pending placement cost refunds for a reconnecting player (#15).
+     */
+    public void processPendingRefunds(final Player player) {
+        final List<CostItemQuote> items = pendingRefunds.remove(player.getUniqueId());
+        if (items != null && !items.isEmpty()) {
+            player.getScheduler().run(plugin, t -> {
+                final CostQuote quote = new CostQuote(items, true);
+                new CostBundle(List.of()).refund(player, quote, economyProvider);
+                plugin.getSLF4JLogger().info("Processed pending placement cost refund for returning player {}", player.getName());
+            }, null);
+        }
     }
 
     /**
@@ -623,6 +668,7 @@ public final class AetheryteService {
 
             // Step 2: Validate clearance, check limits atomically, and spawn the Marker entity on the region thread.
             Bukkit.getRegionScheduler().execute(plugin, targetLocation, () -> {
+                Aetheryte placedAetheryte = null;
                 try {
                     if (registry.getByPosition(world, blockX, blockY, blockZ).isPresent()) {
                         refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, placementQuote);
@@ -676,13 +722,19 @@ public final class AetheryteService {
                         return;
                     }
 
+                    placedAetheryte = aetheryte;
+
                     final Block originBlock = world.getBlockAt(blockX, blockY, blockZ);
                     if (!originBlock.getType().isAir()) {
                         originBlock.setType(Material.AIR, true);
                     }
 
                     spawnOrUpdateMarkerEntity(world, aetheryte);
-                    hologramService.showAetheryte(aetheryte);
+                    try {
+                        hologramService.showAetheryte(aetheryte);
+                    } catch (final Exception e) {
+                        plugin.getSLF4JLogger().warn("Failed to display hologram for newly placed Aetheryte {}", aetheryte.id(), e);
+                    }
 
                     world.playSound(
                             aetheryte.markerLocation(world),
@@ -699,6 +751,11 @@ public final class AetheryteService {
                         }
                     }, null);
                 } catch (final Throwable t) {
+                    if (placedAetheryte != null) {
+                        registry.unregister(world, placedAetheryte.id());
+                        removeMarkerEntitiesAt(world, placedAetheryte);
+                        hologramService.hideAetheryte(placedAetheryte.id());
+                    }
                     refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, placementQuote);
                     pendingPlacements.remove(ownerId);
                     throw t;
@@ -719,7 +776,24 @@ public final class AetheryteService {
         if (!creative) {
             refundItemToPlayer(player, targetLocation, normalizedVar);
             if (!bypassCost && !costBundle.isEmpty()) {
-                player.getScheduler().run(plugin, t -> costBundle.refund(player, costQuote, economyProvider), null);
+                final boolean scheduled = player.getScheduler().run(
+                        plugin,
+                        t -> costBundle.refund(player, costQuote, economyProvider),
+                        () -> {
+                            pendingRefunds.computeIfAbsent(player.getUniqueId(), k -> new CopyOnWriteArrayList<>())
+                                    .addAll(costQuote.items());
+                            plugin.getSLF4JLogger().warn(
+                                    "Player {} disconnected before placement refund could be applied directly. Queued for next login.",
+                                    player.getUniqueId());
+                        }
+                ) != null;
+                if (!scheduled) {
+                    pendingRefunds.computeIfAbsent(player.getUniqueId(), k -> new CopyOnWriteArrayList<>())
+                            .addAll(costQuote.items());
+                    plugin.getSLF4JLogger().warn(
+                            "Failed to schedule placement refund for player {}. Queued for next login.",
+                            player.getUniqueId());
+                }
             }
         }
     }
@@ -834,6 +908,11 @@ public final class AetheryteService {
         }
         final Aetheryte destination = opt.get();
 
+        if (source != null && !isWithinReach(player, source)) {
+            messages.send(player, MessageKey.ERROR_TOO_FAR);
+            return;
+        }
+
         final WarpEvaluation evaluation = evaluateWarp(player, source, destination);
         if (!evaluation.allowed()) {
             final Component reason = evaluation.denyReason() != null
@@ -871,6 +950,11 @@ public final class AetheryteService {
             final Location destinationLoc = safeLanding.get();
 
             player.getScheduler().run(plugin, task -> {
+                if (source != null && !isWithinReach(player, source)) {
+                    messages.send(player, MessageKey.ERROR_TOO_FAR);
+                    return;
+                }
+
                 if (!canUse(player)) {
                     final WarpEvaluation recheck = evaluateWarp(player, source, destination);
                     final Component reason = recheck.denyReason() != null
@@ -898,6 +982,13 @@ public final class AetheryteService {
                             player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
                             hologramService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
                         }, null);
+                    } else {
+                        player.getScheduler().run(plugin, t -> {
+                            if (!Permissions.canBypassWarpCost(player)) {
+                                costEvaluator.refund(player, source, destination);
+                            }
+                            messages.send(player, MessageKey.ERROR_DESTINATION_UNSAFE);
+                        }, null);
                     }
                 }).exceptionally(ex -> {
                     plugin.getSLF4JLogger().warn(
@@ -906,6 +997,12 @@ public final class AetheryteService {
                             destination.id(),
                             ex
                     );
+                    player.getScheduler().run(plugin, t -> {
+                        if (!Permissions.canBypassWarpCost(player)) {
+                            costEvaluator.refund(player, source, destination);
+                        }
+                        messages.send(player, MessageKey.ERROR_NOT_FOUND);
+                    }, null);
                     return null;
                 });
                 if (unused.isCancelled()) {

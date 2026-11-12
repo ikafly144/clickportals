@@ -79,7 +79,13 @@ class DimensionRouterTest {
                         )
                 )
         );
-        router = new DimensionRouter(config);
+        final Map<String, World> worlds = Map.of(
+                "world_a", worldA,
+                "world_b", worldB,
+                "world_c", worldC,
+                "world_isolated", worldUnconnected
+        );
+        router = new DimensionRouter(config, worlds::get);
     }
 
     @Test
@@ -117,5 +123,77 @@ class DimensionRouterTest {
     void unconnectedWorldReturnsEmpty() {
         final Location src = new Location(worldA, 0.0, 64.0, 0.0);
         assertThat(router.findRoute(worldA, worldUnconnected, src)).isEmpty();
+    }
+
+    @Test
+    void multiHopRouteResolvesIntermediateWorldSpawnOrigin() {
+        when(worldB.getSpawnLocation()).thenReturn(new Location(worldB, 50.0, 64.0, 75.0));
+
+        final DimensionRoutesConfig config = new DimensionRoutesConfig(
+                List.of(
+                        CostEntry.of(CostType.VAULT, "$amount"),
+                        CostEntry.of(CostType.EXP_LEVELS, "3", false)
+                ),
+                Map.of("world_a", 0.0, "world_b", 10.0, "world_c", 20.0),
+                List.of(
+                        new RouteEntryConfig(
+                                List.of("world_a", "world_b"),
+                                Map.of(
+                                        "world_a", OriginConfig.scale(1.0),
+                                        "world_b", OriginConfig.spawn()
+                                ),
+                                Map.of()
+                        ),
+                        new RouteEntryConfig(
+                                List.of("world_b", "world_c"),
+                                Map.of(
+                                        "world_b", OriginConfig.scale(1.0),
+                                        "world_c", OriginConfig.scale(2.0)
+                                ),
+                                Map.of()
+                        )
+                )
+        );
+        final Map<String, World> worlds = Map.of(
+                "world_a", worldA,
+                "world_b", worldB,
+                "world_c", worldC
+        );
+        final DimensionRouter customRouter = new DimensionRouter(config, worlds::get);
+
+        final Location src = new Location(worldA, 999.0, 64.0, 999.0);
+        final Optional<RoutePlan> plan = customRouter.findRoute(worldA, worldC, src);
+
+        assertThat(plan).isPresent();
+        // A -> B uses worldB spawn (50, 75). B -> C scales by 2.0 -> (100, 150)
+        assertThat(plan.get().targetOrigin().getX()).isEqualTo(100.0);
+        assertThat(plan.get().targetOrigin().getZ()).isEqualTo(150.0);
+
+        // Verify formulas: VAULT substituted $amount, EXP_LEVELS kept "3"
+        final List<CostEntry> entries = plan.get().dimensionCostEntries();
+        assertThat(entries).hasSize(4); // 2 hops * 2 entries
+        final List<CostEntry> expEntries = entries.stream()
+                .filter(e -> e.type() == CostType.EXP_LEVELS)
+                .toList();
+        assertThat(expEntries).allMatch(e -> e.amount().equals("3"));
+    }
+
+    @Test
+    void malformedCostOverrideDoesNotThrowException() {
+        final DimensionRoutesConfig config = new DimensionRoutesConfig(
+                List.of(CostEntry.of(CostType.VAULT, "$amount")),
+                Map.of("world_a", 0.0, "world_b", 10.0),
+                List.of(
+                        new RouteEntryConfig(
+                                List.of("world_a", "world_b"),
+                                Map.of(),
+                                Map.of("world_b", CostOverrideConfig.of("$default +"))
+                        )
+                )
+        );
+        final DimensionRouter customRouter = new DimensionRouter(config, name -> worldB);
+        final Optional<RoutePlan> plan = customRouter.findRoute(worldA, worldB, new Location(worldA, 0.0, 64.0, 0.0));
+        assertThat(plan).isPresent();
+        assertThat(plan.get().dimensionCostAmount()).isEqualTo(10.0);
     }
 }

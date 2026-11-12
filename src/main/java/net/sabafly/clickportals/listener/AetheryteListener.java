@@ -317,6 +317,7 @@ public final class AetheryteListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerJoin(final PlayerJoinEvent event) {
         scheduleHologramRefresh(event.getPlayer());
+        service.processPendingRefunds(event.getPlayer());
     }
 
     /**

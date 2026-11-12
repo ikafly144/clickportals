@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import net.kyori.adventure.text.Component;
@@ -54,12 +55,19 @@ import org.jspecify.annotations.Nullable;
  */
 public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
 
+    private static final double BASE_INTERACT_REACH = 6.0;
+
     private final Supplier<PluginConfig> configSupplier;
     private final VariationRegistry variationRegistry;
     private final Supplier<EconomyProvider> economySupplier;
     private final Supplier<DimensionRouter> routerSupplier;
     private final Messages messages;
     private final Function<UUID, @Nullable World> worldResolver;
+
+    private record ChargedPayment(CostBundle bundle, CostQuote quote, EconomyProvider economy) {
+    }
+
+    private final Map<UUID, ChargedPayment> activeCharges = new ConcurrentHashMap<>();
 
     public ConfiguredWarpCostEvaluator(
             final Supplier<PluginConfig> configSupplier,
@@ -143,7 +151,27 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         final EconomyProvider economy = economySupplier.get();
         final CostQuote quote = bundle.quote(player, vars, economy);
 
-        return bundle.charge(player, quote, economy);
+        final boolean charged = bundle.charge(player, quote, economy);
+        if (charged) {
+            activeCharges.put(player.getUniqueId(), new ChargedPayment(bundle, quote, economy));
+        }
+        return charged;
+    }
+
+    @Override
+    public void refund(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination
+    ) {
+        final ChargedPayment payment = activeCharges.remove(player.getUniqueId());
+        if (payment != null) {
+            payment.bundle().refund(player, payment.quote(), payment.economy());
+        }
+    }
+
+    public void clearPayment(final Player player) {
+        activeCharges.remove(player.getUniqueId());
     }
 
     private EvaluationContext resolveContext(
@@ -157,6 +185,23 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
 
         if (targetWorld == null) {
             return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(), messages.get(player, MessageKey.ERROR_NOT_FOUND));
+        }
+
+        // Validate source reach and world match if source Aetheryte was provided (#40)
+        if (source != null) {
+            if (sourceWorld == null || !player.getWorld().getUID().equals(source.worldId())) {
+                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(), messages.get(player, MessageKey.ERROR_NOT_FOUND));
+            }
+            final Location pLoc = player.getLocation();
+            if (pLoc == null) {
+                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(), messages.get(player, MessageKey.ERROR_NOT_FOUND));
+            }
+            final AetheryteVariation sourceVar = variationRegistry.getOrDefault(source.variation());
+            final double hitboxAllowance = Math.max(sourceVar.hitbox().width(), sourceVar.hitbox().height());
+            final double maxReach = BASE_INTERACT_REACH + hitboxAllowance;
+            if (pLoc.distanceSquared(source.markerLocation(sourceWorld)) > maxReach * maxReach) {
+                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, List.of(), messages.get(player, MessageKey.ERROR_TOO_FAR));
+            }
         }
 
         final boolean sameWorld = sourceWorld != null && sourceWorld.getUID().equals(targetWorld.getUID());
@@ -218,8 +263,8 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
 
         // Distance limits (#26)
         final DistanceSection effectiveDistanceLimits = resolveDistanceLimits(source, config);
-        final double minDist = effectiveDistanceLimits.min();
-        final double maxDist = effectiveDistanceLimits.max();
+        final double minDist = effectiveDistanceLimits.minOrDefault(0.0);
+        final double maxDist = effectiveDistanceLimits.maxOrDefault(-1.0);
 
         if (minDist > 0.0 && blockDist < minDist) {
             return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, List.of(),
@@ -242,8 +287,8 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         if (source != null) {
             final AetheryteVariation var = variationRegistry.getOrDefault(source.variation());
             final DistanceSection override = var.warp().distance();
-            final double min = override.min() >= 0.0 ? override.min() : config.warpDistanceMin();
-            final double max = override.max() >= 0.0 ? override.max() : config.warpDistanceMax();
+            final double min = override.minOrDefault(config.warpDistanceMin());
+            final double max = override.maxOrDefault(config.warpDistanceMax());
             return new DistanceSection(min, max);
         }
         return new DistanceSection(config.warpDistanceMin(), config.warpDistanceMax());
@@ -269,6 +314,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         map.put("cross_dimension", ctx.crossDimension());
         map.put("hops", ctx.hops());
         map.put("dimension_cost", ctx.dimensionCostAmount());
+        map.put("amount", ctx.dimensionCostAmount());
         return map;
     }
 }

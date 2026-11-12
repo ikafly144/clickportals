@@ -27,30 +27,47 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
+import java.util.function.Function;
 import net.sabafly.clickportals.cost.CostEntry;
 import net.sabafly.clickportals.cost.expr.Expression;
+import net.sabafly.clickportals.cost.expr.ExpressionException;
 import net.sabafly.clickportals.cost.expr.ExpressionParser;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Route calculation and origin resolution engine for cross-dimension warps (#9).
  */
 public final class DimensionRouter {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(DimensionRouter.class);
+
     private final DimensionRoutesConfig config;
+    private final Function<String, @Nullable World> worldResolver;
     private final Map<String, List<Edge>> adjacency = new HashMap<>();
 
     private record Edge(
             String targetWorld,
             @Nullable OriginConfig origin,
-            @Nullable CostOverrideConfig costOverride
+            @Nullable CostOverrideConfig costOverride,
+            @Nullable Expression compiledAmountOverride
     ) {
     }
 
     public DimensionRouter(final DimensionRoutesConfig config) {
+        this(config, Bukkit::getWorld);
+    }
+
+    public DimensionRouter(
+            final DimensionRoutesConfig config,
+            final Function<String, @Nullable World> worldResolver
+    ) {
         this.config = config;
+        this.worldResolver = worldResolver;
         buildGraph();
     }
 
@@ -68,8 +85,24 @@ public final class DimensionRouter {
             final CostOverrideConfig overrideA = route.costOverride().get(a);
             final CostOverrideConfig overrideB = route.costOverride().get(b);
 
-            adjacency.computeIfAbsent(a, k -> new ArrayList<>()).add(new Edge(b, originB, overrideB));
-            adjacency.computeIfAbsent(b, k -> new ArrayList<>()).add(new Edge(a, originA, overrideA));
+            final Expression compiledA = compileOverride(overrideA, a);
+            final Expression compiledB = compileOverride(overrideB, b);
+
+            adjacency.computeIfAbsent(a, k -> new ArrayList<>()).add(new Edge(b, originB, overrideB, compiledB));
+            adjacency.computeIfAbsent(b, k -> new ArrayList<>()).add(new Edge(a, originA, overrideA, compiledA));
+        }
+    }
+
+    private static @Nullable Expression compileOverride(final @Nullable CostOverrideConfig override, final String targetWorld) {
+        if (override == null || override.amount() == null || override.amount().isBlank()) {
+            return null;
+        }
+        try {
+            return ExpressionParser.parse(override.amount(), "default");
+        } catch (final ExpressionException e) {
+            LOGGER.warn("Invalid cost-override amount '{}' for dimension route to '{}'. Disabling override.",
+                    override.amount(), targetWorld, e);
+            return null;
         }
     }
 
@@ -110,11 +143,12 @@ public final class DimensionRouter {
             final String v = path.get(i + 1);
             final Edge edge = getEdge(u, v);
 
-            // Origin transformation
+            // Origin transformation resolved in intermediate hop world v (#9)
             final OriginConfig origin = edge != null && edge.origin() != null
                     ? edge.origin()
                     : OriginConfig.scale(1.0);
-            final Location nextLoc = origin.resolve(toWorld, currX, currY, currZ);
+            final World hopWorld = v.equals(toName) ? toWorld : worldResolver.apply(v);
+            final Location nextLoc = origin.resolve(hopWorld != null ? hopWorld : toWorld, currX, currY, currZ);
             currX = nextLoc.getX();
             currY = nextLoc.getY();
             currZ = nextLoc.getZ();
@@ -124,13 +158,13 @@ public final class DimensionRouter {
             final double vAmt = config.amounts().getOrDefault(v, 0.0);
             final double defaultEdgeAmount = uAmt + vAmt;
 
-            if (edge != null && edge.costOverride() != null) {
+            if (edge != null && edge.compiledAmountOverride() != null) {
                 final CostOverrideConfig override = edge.costOverride();
-                final Expression expr = ExpressionParser.parse(override.amount());
+                final Expression expr = edge.compiledAmountOverride();
                 final double edgeAmt = Math.max(0.0, expr.evaluate(Map.of("default", defaultEdgeAmount)));
                 totalCostAmount += edgeAmt;
 
-                if (override.cost() != null && !override.cost().isEmpty()) {
+                if (override != null && override.cost() != null && !override.cost().isEmpty()) {
                     for (final CostEntry ce : override.cost()) {
                         generatedEntries.add(scaleCostEntry(ce, edgeAmt));
                     }
@@ -194,6 +228,11 @@ public final class DimensionRouter {
     }
 
     private static CostEntry scaleCostEntry(final CostEntry template, final double amount) {
-        return new CostEntry(template.rawType(), Double.toString(amount), template.required());
+        final String raw = template.amount();
+        if (raw.contains("$amount")) {
+            final String replaced = raw.replace("$amount", Double.toString(amount));
+            return new CostEntry(template.rawType(), replaced, template.required());
+        }
+        return template;
     }
 }

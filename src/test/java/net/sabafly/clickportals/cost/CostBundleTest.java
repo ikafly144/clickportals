@@ -146,4 +146,85 @@ class CostBundleTest {
         final String textWithoutOpt = PlainTextComponentSerializer.plainText().serialize(withoutOpt);
         assertThat(textWithoutOpt).contains("$100.00").doesNotContain("3 Lv");
     }
+
+    @Test
+    void multipleEntriesOfSameTypeAggregateRequirement() {
+        when(player.getLevel()).thenReturn(5); // has 5 levels
+
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.EXP_LEVELS, "4"),
+                CostEntry.of(CostType.EXP_LEVELS, "4")
+        ));
+
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        assertThat(quote.affordable()).isFalse();
+        assertThat(bundle.charge(player, quote, economy)).isFalse();
+    }
+
+    @Test
+    void multipleEntriesDoNotOverdrawOrDuplicateRefund() {
+        final java.util.concurrent.atomic.AtomicInteger level = new java.util.concurrent.atomic.AtomicInteger(5);
+        when(player.getLevel()).thenAnswer(inv -> level.get());
+        org.mockito.Mockito.doAnswer(inv -> {
+            level.set((int) inv.getArgument(0));
+            return null;
+        }).when(player).setLevel(org.mockito.ArgumentMatchers.anyInt());
+
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.EXP_LEVELS, "3", true),
+                CostEntry.of(CostType.EXP_LEVELS, "4", false) // optional: asks for 4, but only 2 remain
+        ));
+
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        assertThat(quote.affordable()).isTrue();
+        assertThat(quote.items().get(0).effectiveDeduction()).isEqualTo(3.0);
+        assertThat(quote.items().get(1).effectiveDeduction()).isEqualTo(2.0);
+
+        // Required item gets 3, optional item gets remaining 2
+        final boolean charged = bundle.charge(player, quote, economy);
+        assertThat(charged).isTrue();
+        assertThat(level.get()).isEqualTo(0);
+
+        // Refund gives back exactly 3 + 2 = 5
+        bundle.refund(player, quote, economy);
+        assertThat(level.get()).isEqualTo(5);
+    }
+
+    @Test
+    void invalidExpressionRejectsWarpInsteadOfFree() {
+        final CostBundle bundle = new CostBundle(List.of(
+                new CostEntry("vault", "$block_distance *", true)
+        ));
+
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        assertThat(quote.affordable()).isFalse();
+        assertThat(quote.isFree()).isFalse();
+        assertThat(bundle.charge(player, quote, economy)).isFalse();
+    }
+
+    @Test
+    void unknownCostTypeIsRejected() {
+        assertThat(CostType.fromString("foobar_currency")).isNull();
+
+        final CostBundle bundle = new CostBundle(List.of(
+                new CostEntry("foobar_currency", "10", true)
+        ));
+
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        assertThat(quote.affordable()).isFalse();
+        assertThat(bundle.charge(player, quote, economy)).isFalse();
+    }
+
+    @Test
+    void rollbackLoggingFailureReturnsFalseWhenDepositFails() {
+        when(economy.deposit(eq(player), anyDouble())).thenReturn(false);
+
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.VAULT, "50")
+        ));
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        final boolean refundSuccess = bundle.refund(player, quote, economy);
+
+        assertThat(refundSuccess).isFalse();
+    }
 }
