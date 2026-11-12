@@ -28,6 +28,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.papermc.paper.event.packet.PlayerChunkLoadEvent;
+import io.papermc.paper.event.packet.PlayerChunkUnloadEvent;
 import io.papermc.paper.threadedregions.scheduler.EntityScheduler;
 import io.papermc.paper.threadedregions.scheduler.RegionScheduler;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
@@ -55,6 +57,7 @@ import net.sabafly.clickportals.variation.VariationRegistry;
 import net.sabafly.clickportals.visual.HologramService;
 import net.sabafly.clickportals.visual.NoopHologramService;
 import org.bukkit.Bukkit;
+import org.bukkit.Chunk;
 import org.bukkit.ExplosionResult;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -86,6 +89,7 @@ class AetheryteListenerTest {
 
     private Plugin plugin;
     private AetheryteRegistry registry;
+    private AetheryteService service;
     private AetheryteListener listener;
     private World world;
     private Block aetheryteBlock;
@@ -97,9 +101,9 @@ class AetheryteListenerTest {
         plugin = mock(Plugin.class);
         when(plugin.getSLF4JLogger()).thenReturn(mock(org.slf4j.Logger.class));
         registry = new AetheryteRegistry();
-        final AetheryteService service = new AetheryteService(plugin, registry, NoopHologramService.INSTANCE);
+        service = new AetheryteService(plugin, registry, NoopHologramService.INSTANCE);
         final AetheryteDialogFactory dialogFactory = new AetheryteDialogFactory(service);
-        listener = new AetheryteListener(plugin, registry, dialogFactory, NoopHologramService.INSTANCE);
+        listener = new AetheryteListener(plugin, registry, service, dialogFactory, NoopHologramService.INSTANCE, Messages.defaults());
 
         world = mock(World.class);
         when(world.getUID()).thenReturn(WORLD_ID);
@@ -575,5 +579,90 @@ class AetheryteListenerTest {
         customListener.onServerLoad(event);
 
         verify(clickPortals).syncAllAetheryteModels();
+    }
+
+    @Test
+    void playerChunkLoadSpawnsAetheryteHologramWhenChunkContainsAetheryte() {
+        final HologramService mockHolograms = mock(HologramService.class);
+        final net.sabafly.clickportals.model.AetheryteModelService mockModels = mock(net.sabafly.clickportals.model.AetheryteModelService.class);
+        service.setHologramService(mockHolograms);
+        service.setModelService(mockModels);
+        listener.setHologramService(mockHolograms);
+
+        final Chunk chunk = mock(Chunk.class);
+        when(chunk.getWorld()).thenReturn(world);
+        when(chunk.getX()).thenReturn(0);
+        when(chunk.getZ()).thenReturn(0);
+
+        final Player player = mock(Player.class);
+        when(player.isOnline()).thenReturn(true);
+        when(player.getWorld()).thenReturn(world);
+        final EntityScheduler entityScheduler = mock(EntityScheduler.class);
+        when(player.getScheduler()).thenReturn(entityScheduler);
+        doAnswer(inv -> {
+            @SuppressWarnings("unchecked")
+            final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+            consumer.accept(mock(ScheduledTask.class));
+            return mock(ScheduledTask.class);
+        }).when(entityScheduler).run(any(), any(), any());
+
+        // registeredAetheryte is at (0, 64, 0), which is in chunk (0, 0)
+        final PlayerChunkLoadEvent loadEvent = new PlayerChunkLoadEvent(chunk, player);
+        listener.onPlayerChunkLoad(loadEvent);
+
+        verify(mockHolograms).showAetheryteToPlayer(player, registeredAetheryte);
+        verify(mockModels).showAetheryteToPlayer(player, registeredAetheryte);
+    }
+
+    @Test
+    void playerChunkLoadIgnoredWhenChunkHasNoAetheryte() {
+        final HologramService mockHolograms = mock(HologramService.class);
+        service.setHologramService(mockHolograms);
+        listener.setHologramService(mockHolograms);
+
+        final Chunk emptyChunk = mock(Chunk.class);
+        when(emptyChunk.getWorld()).thenReturn(world);
+        when(emptyChunk.getX()).thenReturn(10);
+        when(emptyChunk.getZ()).thenReturn(10);
+
+        final Player player = mock(Player.class);
+        when(player.isOnline()).thenReturn(true);
+
+        final PlayerChunkLoadEvent loadEvent = new PlayerChunkLoadEvent(emptyChunk, player);
+        listener.onPlayerChunkLoad(loadEvent);
+
+        verify(mockHolograms, never()).showAetheryteToPlayer(any(), any());
+    }
+
+    @Test
+    void playerChunkUnloadHidesAetheryte() {
+        final HologramService mockHolograms = mock(HologramService.class);
+        final net.sabafly.clickportals.model.AetheryteModelService mockModels = mock(net.sabafly.clickportals.model.AetheryteModelService.class);
+        service.setHologramService(mockHolograms);
+        service.setModelService(mockModels);
+        listener.setHologramService(mockHolograms);
+
+        final Chunk chunk = mock(Chunk.class);
+        when(chunk.getWorld()).thenReturn(world);
+        when(chunk.getX()).thenReturn(0);
+        when(chunk.getZ()).thenReturn(0);
+
+        final Player player = mock(Player.class);
+        when(player.isOnline()).thenReturn(true);
+        when(player.getWorld()).thenReturn(world);
+        final EntityScheduler entityScheduler = mock(EntityScheduler.class);
+        when(player.getScheduler()).thenReturn(entityScheduler);
+        doAnswer(inv -> {
+            @SuppressWarnings("unchecked")
+            final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+            consumer.accept(mock(ScheduledTask.class));
+            return mock(ScheduledTask.class);
+        }).when(entityScheduler).run(any(), any(), any());
+
+        final PlayerChunkUnloadEvent unloadEvent = new PlayerChunkUnloadEvent(chunk, player);
+        listener.onPlayerChunkUnload(unloadEvent);
+
+        verify(mockHolograms).hideAetheryteFromPlayer(player, registeredAetheryte);
+        verify(mockModels).hideAetheryteFromPlayer(player, registeredAetheryte);
     }
 }

@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
@@ -51,12 +52,20 @@ public final class AetheryteRegistry {
     public enum RegistrationOutcome {
         REGISTERED,
         ALREADY_EXISTS,
+        TOO_CLOSE,
         GLOBAL_LIMIT_REACHED,
         VARIATION_LIMIT_REACHED
     }
 
+    /**
+     * Cache key for spatial chunk lookups.
+     */
+    public record ChunkPosKey(UUID worldId, int chunkX, int chunkZ) {
+    }
+
     private final Map<UUID, Aetheryte> byId = new ConcurrentHashMap<>();
     private final Map<BlockPosKey, Aetheryte> byPos = new ConcurrentHashMap<>();
+    private final Map<ChunkPosKey, List<Aetheryte>> byChunk = new ConcurrentHashMap<>();
 
     /**
      * Loads all Aetherytes stored in the given world's {@link PersistentDataContainer} into the in-memory index.
@@ -83,6 +92,8 @@ public final class AetheryteRegistry {
             );
             byId.put(normalized.id(), normalized);
             byPos.put(normalized.posKey(), normalized);
+            final ChunkPosKey chunkKey = new ChunkPosKey(world.getUID(), normalized.blockX() >> 4, normalized.blockZ() >> 4);
+            byChunk.computeIfAbsent(chunkKey, k -> new CopyOnWriteArrayList<>()).add(normalized);
             loaded.add(normalized);
         }
         return List.copyOf(loaded);
@@ -122,6 +133,7 @@ public final class AetheryteRegistry {
             }
             return false;
         });
+        byChunk.keySet().removeIf(k -> k.worldId().equals(worldId));
     }
 
     /**
@@ -130,7 +142,45 @@ public final class AetheryteRegistry {
     public synchronized void register(final World world, final Aetheryte aetheryte) {
         byId.put(aetheryte.id(), aetheryte);
         byPos.put(aetheryte.posKey(), aetheryte);
+        final ChunkPosKey chunkKey = new ChunkPosKey(world.getUID(), aetheryte.blockX() >> 4, aetheryte.blockZ() >> 4);
+        byChunk.computeIfAbsent(chunkKey, k -> new CopyOnWriteArrayList<>()).add(aetheryte);
         saveWorld(world);
+    }
+
+    /**
+     * Atomically verifies position uniqueness, distance to existing Aetherytes, and per-player placement limits
+     * before registering and persisting a new Aetheryte.
+     *
+     * @param maxGlobal    maximum total Aetherytes per player ({@code < 0} for unlimited)
+     * @param maxVariation maximum Aetherytes of this variation per player ({@code < 0} for unlimited)
+     * @param minDistance  minimum block distance to existing Aetherytes in the same world ({@code <= 0} to disable)
+     */
+    public synchronized RegistrationOutcome tryRegister(
+            final World world,
+            final Aetheryte aetheryte,
+            final int maxGlobal,
+            final int maxVariation,
+            final double minDistance
+    ) {
+        final BlockPosKey posKey = aetheryte.posKey();
+        if (byPos.containsKey(posKey)) {
+            return RegistrationOutcome.ALREADY_EXISTS;
+        }
+        if (minDistance > 0.0 && findWithinDistance(world.getUID(), aetheryte.blockX(), aetheryte.blockY(), aetheryte.blockZ(), minDistance).isPresent()) {
+            return RegistrationOutcome.TOO_CLOSE;
+        }
+        if (maxGlobal >= 0 && countByOwner(aetheryte.ownerId()) >= maxGlobal) {
+            return RegistrationOutcome.GLOBAL_LIMIT_REACHED;
+        }
+        if (maxVariation >= 0 && countByOwnerAndVariation(aetheryte.ownerId(), aetheryte.variation()) >= maxVariation) {
+            return RegistrationOutcome.VARIATION_LIMIT_REACHED;
+        }
+        byId.put(aetheryte.id(), aetheryte);
+        byPos.put(posKey, aetheryte);
+        final ChunkPosKey chunkKey = new ChunkPosKey(world.getUID(), aetheryte.blockX() >> 4, aetheryte.blockZ() >> 4);
+        byChunk.computeIfAbsent(chunkKey, k -> new CopyOnWriteArrayList<>()).add(aetheryte);
+        saveWorld(world);
+        return RegistrationOutcome.REGISTERED;
     }
 
     /**
@@ -146,20 +196,7 @@ public final class AetheryteRegistry {
             final int maxGlobal,
             final int maxVariation
     ) {
-        final BlockPosKey posKey = aetheryte.posKey();
-        if (byPos.containsKey(posKey)) {
-            return RegistrationOutcome.ALREADY_EXISTS;
-        }
-        if (maxGlobal >= 0 && countByOwner(aetheryte.ownerId()) >= maxGlobal) {
-            return RegistrationOutcome.GLOBAL_LIMIT_REACHED;
-        }
-        if (maxVariation >= 0 && countByOwnerAndVariation(aetheryte.ownerId(), aetheryte.variation()) >= maxVariation) {
-            return RegistrationOutcome.VARIATION_LIMIT_REACHED;
-        }
-        byId.put(aetheryte.id(), aetheryte);
-        byPos.put(posKey, aetheryte);
-        saveWorld(world);
-        return RegistrationOutcome.REGISTERED;
+        return tryRegister(world, aetheryte, maxGlobal, maxVariation, 0.0);
     }
 
     /**
@@ -171,6 +208,11 @@ public final class AetheryteRegistry {
             return Optional.empty();
         }
         byPos.remove(removed.posKey());
+        final ChunkPosKey chunkKey = new ChunkPosKey(world.getUID(), removed.blockX() >> 4, removed.blockZ() >> 4);
+        byChunk.computeIfPresent(chunkKey, (k, list) -> {
+            list.remove(removed);
+            return list.isEmpty() ? null : list;
+        });
         saveWorld(world);
         return Optional.of(removed);
     }
@@ -260,10 +302,62 @@ public final class AetheryteRegistry {
     }
 
     /**
+     * Looks up all Aetherytes located within the specified chunk in O(1) time.
+     */
+    public List<Aetheryte> getByChunk(final UUID worldId, final int chunkX, final int chunkZ) {
+        final List<Aetheryte> list = byChunk.get(new ChunkPosKey(worldId, chunkX, chunkZ));
+        return list == null ? List.of() : List.copyOf(list);
+    }
+
+    /**
+     * Looks up all Aetherytes located within the specified chunk in O(1) time.
+     */
+    public List<Aetheryte> getByChunk(final World world, final int chunkX, final int chunkZ) {
+        return getByChunk(world.getUID(), chunkX, chunkZ);
+    }
+
+    /**
+     * Finds an Aetheryte in the same world that is strictly within {@code distance} blocks (3D Euclidean distance)
+     * of the specified coordinates.
+     *
+     * @param worldId  world identifier
+     * @param x        target X coordinate
+     * @param y        target Y coordinate
+     * @param z        target Z coordinate
+     * @param distance maximum distance threshold (exclusive)
+     * @return the first found Aetheryte within the distance, or empty
+     */
+    public Optional<Aetheryte> findWithinDistance(
+            final UUID worldId,
+            final int x,
+            final int y,
+            final int z,
+            final double distance
+    ) {
+        if (distance <= 0.0) {
+            return Optional.empty();
+        }
+        final double distSq = distance * distance;
+        for (final Aetheryte aetheryte : byId.values()) {
+            if (!aetheryte.worldId().equals(worldId)) {
+                continue;
+            }
+            final double dx = aetheryte.blockX() - x;
+            final double dy = aetheryte.blockY() - y;
+            final double dz = aetheryte.blockZ() - z;
+            if ((dx * dx + dy * dy + dz * dz) < distSq) {
+                return Optional.of(aetheryte);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
      * Clears the in-memory index without modifying world PDC data.
      */
     public void clear() {
         byId.clear();
         byPos.clear();
+        byChunk.clear();
     }
 }

@@ -57,6 +57,11 @@ public final class Permissions {
     public static final String BYPASS_LIMIT = "clickportals.bypass.limit";
 
     /**
+     * Allows bypassing minimum distance restrictions between Aetherytes (default: {@code op}).
+     */
+    public static final String BYPASS_DISTANCE = "clickportals.bypass.distance";
+
+    /**
      * Allows bypassing Aetheryte warp costs (default: {@code op}).
      */
     public static final String BYPASS_COST_WARP = "clickportals.bypass.cost.warp";
@@ -122,6 +127,13 @@ public final class Permissions {
      */
     public static boolean canBypassLimit(final Permissible permissible) {
         return permissible.hasPermission(BYPASS_LIMIT);
+    }
+
+    /**
+     * Checks whether the given permissible bypasses minimum placement distance restrictions.
+     */
+    public static boolean canBypassPlacementDistance(final Permissible permissible) {
+        return permissible.hasPermission(BYPASS_LIMIT) || permissible.hasPermission(BYPASS_DISTANCE);
     }
 
     /**

@@ -179,6 +179,10 @@ paperPluginYaml {
             description = "Bypass per-player Aetheryte placement limits and placement cooldowns"
             default = Permission.Default.OP
         }
+        register("clickportals.bypass.distance") {
+            description = "Bypass minimum distance restrictions between Aetherytes"
+            default = Permission.Default.OP
+        }
         register("clickportals.bypass.cost.warp") {
             description = "Bypass Aetheryte warp costs"
             default = Permission.Default.OP
@@ -197,6 +201,7 @@ paperPluginYaml {
                 "clickportals.command.give",
                 "clickportals.command.reload",
                 "clickportals.bypass.limit",
+                "clickportals.bypass.distance",
                 "clickportals.bypass.cost.warp",
                 "clickportals.bypass.cost.place",
             )

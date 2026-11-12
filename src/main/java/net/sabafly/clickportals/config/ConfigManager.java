@@ -71,8 +71,9 @@ public final class ConfigManager {
                 Files.createDirectories(parent);
             }
             if (!Files.exists(configFile)) {
-                currentConfig = PluginConfig.defaultConfig();
-                save(currentConfig);
+                final PluginConfig defaultConfig = PluginConfig.defaultConfig();
+                save(defaultConfig);
+                currentConfig = defaultConfig;
                 lastLoadSuccessful = true;
                 return currentConfig;
             }

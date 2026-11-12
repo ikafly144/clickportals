@@ -135,6 +135,7 @@ public final class ClickPortals extends JavaPlugin {
                 msgService,
                 () -> cfgManager.config().maxAetherytesPerPlayer(),
                 () -> cfgManager.config().placementCooldownTicks(),
+                () -> cfgManager.config().minDistanceBetweenAetherytes(),
                 AetheryteService::resolveCurrentTick,
                 PacketEventsHologramService::sendPlacementCooldown,
                 (player, source, destination) -> AetheryteService.WarpEvaluation.permitted(msgService.freeCostLabel(player))

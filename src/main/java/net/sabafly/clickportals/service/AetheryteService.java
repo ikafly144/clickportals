@@ -27,6 +27,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.DoubleSupplier;
 import java.util.function.IntSupplier;
 import java.util.function.ToLongFunction;
 import net.kyori.adventure.text.Component;
@@ -197,6 +198,7 @@ public final class AetheryteService {
     private final Messages messages;
     private final IntSupplier globalMaxPerPlayerSupplier;
     private final IntSupplier globalCooldownTicksSupplier;
+    private volatile DoubleSupplier globalMinDistanceSupplier = () -> 0.0;
     private final ToLongFunction<Player> tickSupplier;
     private final CooldownPacketSender cooldownPacketSender;
     private volatile WarpCostEvaluator costEvaluator;
@@ -362,6 +364,39 @@ public final class AetheryteService {
             final CooldownPacketSender cooldownPacketSender,
             final WarpCostEvaluator costEvaluator
     ) {
+        this(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                modelService,
+                messages,
+                globalMaxPerPlayerSupplier,
+                globalCooldownTicksSupplier,
+                () -> 0.0,
+                tickSupplier,
+                cooldownPacketSender,
+                costEvaluator
+        );
+    }
+
+    /**
+     * Creates a new {@link AetheryteService} with full dependencies including minimum placement distance supplier.
+     */
+    public AetheryteService(
+            final Plugin plugin,
+            final AetheryteRegistry registry,
+            final VariationRegistry variationRegistry,
+            final HologramService hologramService,
+            final AetheryteModelService modelService,
+            final Messages messages,
+            final IntSupplier globalMaxPerPlayerSupplier,
+            final IntSupplier globalCooldownTicksSupplier,
+            final DoubleSupplier globalMinDistanceSupplier,
+            final ToLongFunction<Player> tickSupplier,
+            final CooldownPacketSender cooldownPacketSender,
+            final WarpCostEvaluator costEvaluator
+    ) {
         this.plugin = plugin;
         this.registry = registry;
         this.variationRegistry = variationRegistry;
@@ -370,9 +405,58 @@ public final class AetheryteService {
         this.messages = messages;
         this.globalMaxPerPlayerSupplier = globalMaxPerPlayerSupplier;
         this.globalCooldownTicksSupplier = globalCooldownTicksSupplier;
+        this.globalMinDistanceSupplier = globalMinDistanceSupplier != null ? globalMinDistanceSupplier : () -> 0.0;
         this.tickSupplier = tickSupplier;
         this.cooldownPacketSender = cooldownPacketSender;
         this.costEvaluator = costEvaluator;
+    }
+
+    /**
+     * Returns the global minimum placement distance supplier.
+     */
+    public DoubleSupplier globalMinDistanceSupplier() {
+        return globalMinDistanceSupplier;
+    }
+
+    /**
+     * Updates the global minimum placement distance supplier on reload.
+     */
+    public void setGlobalMinDistanceSupplier(final DoubleSupplier globalMinDistanceSupplier) {
+        this.globalMinDistanceSupplier = globalMinDistanceSupplier != null ? globalMinDistanceSupplier : () -> 0.0;
+    }
+
+    /**
+     * Returns the effective minimum placement distance for the given variation.
+     */
+    public double effectiveMinDistance(final String variationId) {
+        final AetheryteVariation var = variationRegistry.getOrDefault(variationId);
+        return var.placement().minDistanceOrDefault(globalMinDistanceSupplier.getAsDouble());
+    }
+
+    /**
+     * Checks whether an Aetheryte can be placed at the specified position without violating minimum distance constraints.
+     */
+    public Optional<Component> checkPlacementDistance(
+            final Player player,
+            final World world,
+            final int x,
+            final int y,
+            final int z,
+            final String variationId
+    ) {
+        if (Permissions.canBypassPlacementDistance(player)) {
+            return Optional.empty();
+        }
+        final double minDistance = effectiveMinDistance(variationId);
+        if (minDistance <= 0.0) {
+            return Optional.empty();
+        }
+        final Optional<Aetheryte> nearby = registry.findWithinDistance(world.getUID(), x, y, z, minDistance);
+        if (nearby.isPresent()) {
+            final Component distComp = Component.text(String.format(java.util.Locale.ROOT, "%.1f", minDistance));
+            return Optional.of(messages.get(player, MessageKey.ERROR_PLACEMENT_TOO_CLOSE, Placeholder.component("distance", distComp)));
+        }
+        return Optional.empty();
     }
 
     /**
@@ -764,6 +848,13 @@ public final class AetheryteService {
                 return;
             }
 
+            final Optional<Component> distanceError = checkPlacementDistance(player, world, blockX, blockY, blockZ, normalizedVar);
+            if (distanceError.isPresent()) {
+                pendingPlacements.remove(ownerId);
+                player.sendMessage(distanceError.get());
+                return;
+            }
+
             final boolean creative = player.getGameMode() == GameMode.CREATIVE;
             final boolean bypassCost = Permissions.canBypassPlaceCost(player);
             final CostBundle placementCostBundle = new CostBundle(variation.placement().cost());
@@ -796,6 +887,10 @@ public final class AetheryteService {
                 final CostBundle.ChargeResult chargeResult = placementCostBundle.chargeWithResult(player, placementQuote, activeEconomy);
                 if (!chargeResult.success()) {
                     refundItemToPlayer(player, targetLocation, normalizedVar);
+                    if (!chargeResult.unrefundedItems().isEmpty()) {
+                        pendingRefunds.computeIfAbsent(player.getUniqueId(), k -> new CopyOnWriteArrayList<>())
+                                .addAll(chargeResult.unrefundedItems());
+                    }
                     pendingPlacements.remove(ownerId);
                     final Component reason = CostFormatter.formatMissingRequirements(player, placementQuote, activeEconomy, messages);
                     player.sendMessage(messages.get(player, MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT, Placeholder.component("reason", reason)));
@@ -839,11 +934,13 @@ public final class AetheryteService {
 
                     final int effectiveMaxGlobal = bypassLimit ? -1 : globalMaxPerPlayerSupplier.getAsInt();
                     final int effectiveMaxVariation = bypassLimit ? -1 : variation.limit().maxPerPlayer();
+                    final double effectiveMinDist = Permissions.canBypassPlacementDistance(player) ? 0.0 : effectiveMinDistance(normalizedVar);
                     final RegistrationOutcome outcome = registry.tryRegister(
                             world,
                             aetheryte,
                             effectiveMaxGlobal,
-                            effectiveMaxVariation
+                            effectiveMaxVariation,
+                            effectiveMinDist
                     );
 
                     if (outcome != RegistrationOutcome.REGISTERED) {
@@ -851,6 +948,10 @@ public final class AetheryteService {
                         pendingPlacements.remove(ownerId);
                         switch (outcome) {
                             case ALREADY_EXISTS -> messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
+                            case TOO_CLOSE -> {
+                                final Component distComp = Component.text(String.format(java.util.Locale.ROOT, "%.1f", effectiveMinDist));
+                                player.sendMessage(messages.get(player, MessageKey.ERROR_PLACEMENT_TOO_CLOSE, Placeholder.component("distance", distComp)));
+                            }
                             case GLOBAL_LIMIT_REACHED ->
                                     player.sendMessage(messages.errorLimitReachedGlobal(player, effectiveMaxGlobal));
                             case VARIATION_LIMIT_REACHED -> player.sendMessage(
@@ -892,7 +993,7 @@ public final class AetheryteService {
                             recordPlacementCooldown(player, normalizedVar);
                             player.sendMessage(messages.aetheryteCreated(player, aetheryte));
                             if (!chargedPlacementQuote.isFree()) {
-                                final Component paidDisplay = CostFormatter.format(player, chargedPlacementQuote, activeEconomy, messages, false);
+                                final Component paidDisplay = CostFormatter.format(player, chargedPlacementQuote, activeEconomy, messages, true);
                                 player.sendMessage(messages.get(player, MessageKey.AETHERYTE_COST_PAID, Placeholder.component("cost", paidDisplay)));
                             }
                         } finally {
@@ -1159,29 +1260,29 @@ public final class AetheryteService {
                             return;
                         }
 
-                        if (!canUse(player)) {
+                        final WarpEvaluation finalEval = evaluateWarp(player, source, destination);
+                        if (!finalEval.allowed()) {
                             if (playerId != null) {
                                 inFlightWarps.remove(playerId);
                             }
-                            final WarpEvaluation recheck = evaluateWarp(player, source, destination);
-                            final Component reason = recheck.denyReason() != null
-                                    ? recheck.denyReason()
-                                    : messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION);
+                            final Component reason = finalEval.denyReason() != null
+                                    ? finalEval.denyReason()
+                                    : messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST);
                             player.sendMessage(messages.errorWarpDenied(player, reason));
                             return;
                         }
 
-                        paid = bypassCost || activeEvaluator.charge(player, source, destination);
-                        if (!paid) {
-                            if (playerId != null) {
-                                inFlightWarps.remove(playerId);
+                        if (!bypassCost) {
+                            paid = activeEvaluator.charge(player, source, destination);
+                            if (!paid) {
+                                if (playerId != null) {
+                                    inFlightWarps.remove(playerId);
+                                }
+                                player.sendMessage(messages.errorWarpDenied(player, messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST)));
+                                return;
                             }
-                            final WarpEvaluation recheck = evaluateWarp(player, source, destination);
-                            final Component reason = recheck.denyReason() != null
-                                    ? recheck.denyReason()
-                                    : messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST);
-                            player.sendMessage(messages.errorWarpDenied(player, reason));
-                            return;
+                        } else {
+                            paid = true;
                         }
 
                         if (source != null) {
@@ -1197,7 +1298,7 @@ public final class AetheryteService {
                                     activeEvaluator.commit(player, source, destination);
                                     final CostQuote paidQuote = new CostQuote(chargedItems);
                                     if (!paidQuote.isFree()) {
-                                        final Component paidDisplay = CostFormatter.format(player, paidQuote, this.economyProvider, messages, false);
+                                        final Component paidDisplay = CostFormatter.format(player, paidQuote, this.economyProvider, messages, true);
                                         player.sendMessage(messages.get(player, MessageKey.WARP_COST_PAID, Placeholder.component("cost", paidDisplay)));
                                     }
                                 }
@@ -1209,8 +1310,7 @@ public final class AetheryteService {
                                     } catch (final Throwable ignored) {
                                         // Sound playback is non-fatal if sound registry is unavailable in test environments
                                     }
-                                    hologramService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
-                                    modelService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
+                                    refreshPlayerVisuals(player, targetWorld);
                                 }, null);
                             } else {
                                 handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_DESTINATION_UNSAFE);
@@ -1424,5 +1524,27 @@ public final class AetheryteService {
         } catch (final Throwable t) {
             plugin.getSLF4JLogger().warn("Failed to refund Aetheryte item to player {} for variation {}", player.getName(), variationId, t);
         }
+    }
+
+    /**
+     * Refreshes client-side visuals for a player with staggered updates to ensure entities render
+     * cleanly across dimension loading screens.
+     */
+    public void refreshPlayerVisuals(final Player player, final World world) {
+        final UUID worldId = world.getUID();
+        hologramService.refreshPlayer(player, registry.getByWorld(worldId));
+        modelService.refreshPlayer(player, registry.getByWorld(worldId));
+        player.getScheduler().runDelayed(plugin, task -> {
+            if (player.getWorld().getUID().equals(worldId)) {
+                hologramService.refreshPlayer(player, registry.getByWorld(worldId));
+                modelService.refreshPlayer(player, registry.getByWorld(worldId));
+            }
+        }, null, 5L);
+        player.getScheduler().runDelayed(plugin, task -> {
+            if (player.getWorld().getUID().equals(worldId)) {
+                hologramService.refreshPlayer(player, registry.getByWorld(worldId));
+                modelService.refreshPlayer(player, registry.getByWorld(worldId));
+            }
+        }, null, 20L);
     }
 }

@@ -432,25 +432,42 @@ public record AetheryteVariation(
 
             @Setting("cost")
             @Comment("Placement cost specifications for this variation (#15)")
-            List<CostEntry> cost
+            List<CostEntry> cost,
+
+            @Setting("min-distance")
+            @Comment("Minimum block distance to another Aetheryte in the same world (-1 to inherit global, 0 to disable)")
+            @Nullable Double minDistance
     ) {
+        public PlacementSection(
+                @Nullable final ClearanceSection clearance,
+                @Nullable final List<CostEntry> cost,
+                @Nullable final Double minDistance
+        ) {
+            this.clearance = clearance == null ? ClearanceSection.defaults() : clearance;
+            this.cost = cost == null ? List.of() : List.copyOf(cost);
+            this.minDistance = minDistance;
+        }
+
         public PlacementSection(
                 @Nullable final ClearanceSection clearance,
                 @Nullable final List<CostEntry> cost
         ) {
-            this.clearance = clearance == null ? ClearanceSection.defaults() : clearance;
-            this.cost = cost == null ? List.of() : List.copyOf(cost);
+            this(clearance, cost, -1.0);
         }
 
         public PlacementSection(@Nullable final ClearanceSection clearance) {
-            this(clearance, List.of());
+            this(clearance, List.of(), -1.0);
+        }
+
+        public double minDistanceOrDefault(final double fallback) {
+            return (minDistance != null && minDistance >= 0.0) ? minDistance : fallback;
         }
 
         /**
          * Returns the default placement section.
          */
         public static PlacementSection defaults() {
-            return new PlacementSection(ClearanceSection.defaults(), List.of());
+            return new PlacementSection(ClearanceSection.defaults(), List.of(), -1.0);
         }
     }
 
@@ -926,9 +943,12 @@ public record AetheryteVariation(
                 }
             }
         }
+        final Double rawMinDistance = placement.minDistance();
+        final double validMinDistance = rawMinDistance == null || !Double.isFinite(rawMinDistance) || rawMinDistance < -1.0 ? -1.0 : rawMinDistance;
         final PlacementSection validatedPlacement = new PlacementSection(
                 new ClearanceSection(validClearanceRadius, validClearanceHeight),
-                placement.cost()
+                placement.cost(),
+                validMinDistance
         );
 
         // 7. Validate limit section (#43)
@@ -940,14 +960,15 @@ public record AetheryteVariation(
 
         // 8. Validate warp override section (#14, #26)
         final DistanceSection rawWarpDist = warp.distance();
-        final double validWarpMin = rawWarpDist.min() == null || rawWarpDist.min() < -1.0 ? -1.0 : rawWarpDist.min();
-        double validWarpMax = rawWarpDist.max() == null || rawWarpDist.max() < -1.0 ? -1.0 : rawWarpDist.max();
+        final double validWarpMin = rawWarpDist.min() == null || !Double.isFinite(rawWarpDist.min()) || rawWarpDist.min() < -1.0 ? -1.0 : rawWarpDist.min();
+        double validWarpMax = rawWarpDist.max() == null || !Double.isFinite(rawWarpDist.max()) || rawWarpDist.max() < -1.0 ? -1.0 : rawWarpDist.max();
         if (validWarpMin >= 0.0 && validWarpMax >= 0.0 && validWarpMin > validWarpMax) {
             logger.warn("warp.distance.min ({}) is greater than warp.distance.max ({}) in variation '{}'. Disabling max distance (-1.0) to prevent deadlocks.",
                     validWarpMin, validWarpMax, cleanId);
             validWarpMax = -1.0;
         }
-        final DistanceSection validatedWarpDist = new DistanceSection(validWarpMin, validWarpMax);
+        final Boolean validCrossDim = rawWarpDist.crossDimension();
+        final DistanceSection validatedWarpDist = new DistanceSection(validWarpMin, validWarpMax, validCrossDim);
 
         if (warp.cost() != null) {
             for (final CostEntry entry : warp.cost()) {

@@ -250,4 +250,60 @@ class AetheryteRegistryTest {
         assertThat(registry.tryRegister(world, a2, 2, -1))
                 .isEqualTo(AetheryteRegistry.RegistrationOutcome.GLOBAL_LIMIT_REACHED);
     }
+
+    @Test
+    void getByChunkReturnsAetherytesInTargetChunk() {
+        final Aetheryte a1 = new Aetheryte(UUID.randomUUID(), "Chunk0_0", WORLD_ID, WORLD_NAME, 5, 64, 5, UUID.randomUUID(), 100L);
+        final Aetheryte a2 = new Aetheryte(UUID.randomUUID(), "Chunk0_0_b", WORLD_ID, WORLD_NAME, 15, 64, 15, UUID.randomUUID(), 200L);
+        final Aetheryte a3 = new Aetheryte(UUID.randomUUID(), "Chunk1_0", WORLD_ID, WORLD_NAME, 20, 64, 5, UUID.randomUUID(), 300L);
+
+        registry.register(world, a1);
+        registry.register(world, a2);
+        registry.register(world, a3);
+
+        // Chunk (0, 0)
+        assertThat(registry.getByChunk(WORLD_ID, 0, 0)).containsExactlyInAnyOrder(a1, a2);
+        // Chunk (1, 0)
+        assertThat(registry.getByChunk(world, 1, 0)).containsExactly(a3);
+        // Empty chunk (2, 2)
+        assertThat(registry.getByChunk(WORLD_ID, 2, 2)).isEmpty();
+
+        // After unregister
+        registry.unregister(world, a1.id());
+        assertThat(registry.getByChunk(WORLD_ID, 0, 0)).containsExactly(a2);
+    }
+
+    @Test
+    void findWithinDistanceFindsClosestAetheryteInSameWorld() {
+        final Aetheryte a1 = new Aetheryte(UUID.randomUUID(), "Origin", WORLD_ID, WORLD_NAME, 100, 64, 100, UUID.randomUUID(), 100L);
+        registry.register(world, a1);
+
+        // Within 10 blocks (dx=3, dy=4, dz=0 -> dist=5.0)
+        assertThat(registry.findWithinDistance(WORLD_ID, 103, 68, 100, 10.0)).contains(a1);
+        // Exactly 5.0 blocks (distSq == 25, threshold 5.0 is exclusive)
+        assertThat(registry.findWithinDistance(WORLD_ID, 103, 68, 100, 5.0)).isEmpty();
+        // Outside 4.0 blocks
+        assertThat(registry.findWithinDistance(WORLD_ID, 103, 68, 100, 4.0)).isEmpty();
+
+        // Different world
+        final UUID otherWorldId = UUID.randomUUID();
+        assertThat(registry.findWithinDistance(otherWorldId, 100, 64, 100, 50.0)).isEmpty();
+    }
+
+    @Test
+    void tryRegisterEnforcesMinDistance() {
+        final UUID owner = UUID.randomUUID();
+        final Aetheryte existing = new Aetheryte(UUID.randomUUID(), "Existing", WORLD_ID, WORLD_NAME, 100, 64, 100, owner, 100L);
+        registry.register(world, existing);
+
+        // Attempt placement at distance 30 when minDistance is 50 -> TOO_CLOSE
+        final Aetheryte tooClose = new Aetheryte(UUID.randomUUID(), "TooClose", WORLD_ID, WORLD_NAME, 130, 64, 100, owner, 200L);
+        assertThat(registry.tryRegister(world, tooClose, -1, -1, 50.0))
+                .isEqualTo(AetheryteRegistry.RegistrationOutcome.TOO_CLOSE);
+
+        // Attempt placement at distance 60 when minDistance is 50 -> REGISTERED
+        final Aetheryte farEnough = new Aetheryte(UUID.randomUUID(), "FarEnough", WORLD_ID, WORLD_NAME, 160, 64, 100, owner, 300L);
+        assertThat(registry.tryRegister(world, farEnough, -1, -1, 50.0))
+                .isEqualTo(AetheryteRegistry.RegistrationOutcome.REGISTERED);
+    }
 }

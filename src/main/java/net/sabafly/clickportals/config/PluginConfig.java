@@ -17,6 +17,8 @@
  */
 package net.sabafly.clickportals.config;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -116,13 +118,21 @@ public record PluginConfig(
 
             @Setting("placement-cooldown-ticks")
             @Comment("Default cooldown in ticks after placing an Aetheryte before placing another (100 = 5 seconds, 0 to disable)")
-            int placementCooldownTicks
+            int placementCooldownTicks,
+
+            @Setting("min-distance-between-aetherytes")
+            @Comment("Minimum required block distance between Aetherytes in the same world (0 to disable)")
+            double minDistanceBetweenAetherytes
     ) {
+        public LimitsSection(final int maxAetherytesPerPlayer, final int placementCooldownTicks) {
+            this(maxAetherytesPerPlayer, placementCooldownTicks, 0.0);
+        }
+
         /**
-         * Returns the default limits section (-1 = unlimited, 100 ticks = 5s cooldown).
+         * Returns the default limits section (-1 = unlimited, 100 ticks = 5s cooldown, 0 min distance).
          */
         public static LimitsSection defaults() {
-            return new LimitsSection(-1, DEFAULT_PLACEMENT_COOLDOWN_TICKS);
+            return new LimitsSection(-1, DEFAULT_PLACEMENT_COOLDOWN_TICKS, 0.0);
         }
     }
 
@@ -232,13 +242,22 @@ public record PluginConfig(
             validCooldownTicks = rawCooldownTicks;
         }
 
+        final double rawMinDistBetween = limits.minDistanceBetweenAetherytes();
+        final double validMinDistBetween;
+        if (!Double.isFinite(rawMinDistBetween) || rawMinDistBetween < 0.0) {
+            logger.warn("Invalid limits.min-distance-between-aetherytes {} (must be >= 0.0 and finite); falling back to 0.0", rawMinDistBetween);
+            validMinDistBetween = 0.0;
+        } else {
+            validMinDistBetween = rawMinDistBetween;
+        }
+
         final DistanceSection rawDist = warp.distance();
         final double validMinDist;
         if (rawDist.min() == null) {
             logger.warn("warp.distance.min is missing; falling back to 0.0");
             validMinDist = 0.0;
-        } else if (rawDist.min() < 0.0) {
-            logger.warn("Invalid warp.distance.min {} (must be >= 0.0); falling back to 0.0", rawDist.min());
+        } else if (!Double.isFinite(rawDist.min()) || rawDist.min() < 0.0) {
+            logger.warn("Invalid warp.distance.min {} (must be >= 0.0 and finite); falling back to 0.0", rawDist.min());
             validMinDist = 0.0;
         } else {
             validMinDist = rawDist.min();
@@ -248,8 +267,8 @@ public record PluginConfig(
         if (rawDist.max() == null) {
             logger.warn("warp.distance.max is missing; falling back to -1.0 (unlimited)");
             validMaxDist = -1.0;
-        } else if (rawDist.max() < -1.0) {
-            logger.warn("Invalid warp.distance.max {} (must be >= -1.0); falling back to -1.0 (unlimited)", rawDist.max());
+        } else if (!Double.isFinite(rawDist.max()) || rawDist.max() < -1.0) {
+            logger.warn("Invalid warp.distance.max {} (must be >= -1.0 and finite); falling back to -1.0 (unlimited)", rawDist.max());
             validMaxDist = -1.0;
         } else {
             validMaxDist = rawDist.max();
@@ -260,7 +279,8 @@ public record PluginConfig(
                     validMinDist, validMaxDist);
             validMaxDist = -1.0;
         }
-        final DistanceSection validDist = new DistanceSection(validMinDist, validMaxDist);
+        final boolean validCrossDim = rawDist.crossDimensionOrDefault(true);
+        final DistanceSection validDist = new DistanceSection(validMinDist, validMaxDist, validCrossDim);
 
         if (warp.cost() != null) {
             for (final CostEntry entry : warp.cost()) {
@@ -295,13 +315,14 @@ public record PluginConfig(
                         hologram.enabled(),
                         validViewDistance
                 ),
-                new LimitsSection(validMaxPerPlayer, validCooldownTicks),
+                new LimitsSection(validMaxPerPlayer, validCooldownTicks, validMinDistBetween),
                 validWarp,
                 validDimensions
         );
     }
 
     private static DimensionRoutesConfig validateDimensions(final DimensionRoutesConfig config, final Logger logger) {
+        final List<CostEntry> validatedDefaultCost = new ArrayList<>();
         if (config.defaultCost() != null) {
             for (final CostEntry entry : config.defaultCost()) {
                 if (entry.type() == null) {
@@ -309,43 +330,55 @@ public record PluginConfig(
                 } else {
                     try {
                         ExpressionParser.parse(entry.amount(), "$amount");
+                        validatedDefaultCost.add(entry);
                     } catch (final ExpressionException e) {
                         logger.warn("Invalid cost expression '{}' in dimensions.default-cost: {}", entry.amount(), e.getMessage());
                     }
                 }
             }
         }
+        final Map<String, Double> sanitizedAmounts = new HashMap<>();
         if (config.amounts() != null) {
             for (final Map.Entry<String, Double> entry : config.amounts().entrySet()) {
                 final Double amount = entry.getValue();
                 if (amount == null || !Double.isFinite(amount) || amount < 0.0) {
-                    logger.warn("Invalid dimension amount {} for world '{}' in dimensions.amounts; must be >= 0.0",
+                    logger.warn("Invalid dimension amount {} for world '{}' in dimensions.amounts; must be >= 0.0. Clamping to 0.0",
                             amount, entry.getKey());
+                    sanitizedAmounts.put(entry.getKey(), 0.0);
+                } else {
+                    sanitizedAmounts.put(entry.getKey(), amount);
                 }
             }
         }
+        final List<RouteEntryConfig> sanitizedRoutes = new ArrayList<>();
         if (config.routes() != null) {
             for (final RouteEntryConfig route : config.routes()) {
                 if (route.between() == null || route.between().size() < 2) {
                     logger.warn("Invalid route in dimensions.routes: 'between' must contain at least 2 world names, got {}",
                             route.between());
+                    continue;
                 }
                 if (route.costOverride() != null) {
+                    final Map<String, CostOverrideConfig> sanitizedOverrides = new HashMap<>();
                     for (final Map.Entry<String, CostOverrideConfig> entry : route.costOverride().entrySet()) {
                         final String expr = entry.getValue().amount();
                         if (expr != null) {
                             try {
                                 ExpressionParser.parse(expr, "$default");
+                                sanitizedOverrides.put(entry.getKey(), entry.getValue());
                             } catch (final ExpressionException e) {
                                 logger.warn("Invalid cost-override expression '{}' for world '{}' in dimensions.routes: {}",
                                         expr, entry.getKey(), e.getMessage());
                             }
                         }
                     }
+                    sanitizedRoutes.add(new RouteEntryConfig(route.between(), route.origin(), sanitizedOverrides));
+                } else {
+                    sanitizedRoutes.add(route);
                 }
             }
         }
-        return config;
+        return new DimensionRoutesConfig(validatedDefaultCost, sanitizedAmounts, sanitizedRoutes);
     }
 
     /**
@@ -391,6 +424,13 @@ public record PluginConfig(
     }
 
     /**
+     * Returns the global minimum required distance in blocks between Aetherytes in the same world (0 for disabled).
+     */
+    public double minDistanceBetweenAetherytes() {
+        return limits.minDistanceBetweenAetherytes();
+    }
+
+    /**
      * Returns the global minimum warp distance in blocks (0 for disabled) (#26).
      */
     public double warpDistanceMin() {
@@ -402,6 +442,13 @@ public record PluginConfig(
      */
     public double warpDistanceMax() {
         return warp.distance().maxOrDefault(-1.0);
+    }
+
+    /**
+     * Returns whether distance limits (min/max) apply to cross-dimension warps.
+     */
+    public boolean warpDistanceCrossDimension() {
+        return warp.distance().crossDimensionOrDefault(true);
     }
 
     /**

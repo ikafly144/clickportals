@@ -74,6 +74,7 @@ error:
   limit-reached-global: "<prefix><red>設置可能なエーテライトの総数上限（<max> 基）に達しています。</red>"
   limit-reached-variation: "<prefix><red><variation> の設置数上限（<max> 基）に達しています。</red>"
   placement-cooldown: "<prefix><red>次のエーテライトを設置するまであと <white><seconds>秒</white> 待ってください。</red>"
+  placement-too-close: "<prefix><red>他のエーテライトに近すぎます！最低でも <distance> ブロック離す必要があります。</red>"
   missing-item: "<prefix><red>エーテライトアイテムを所持していません。</red>"
   not-found: "<prefix><red>対象のエーテライトが見つかりません。</red>"
   not-owner: "<prefix><red>このエーテライトを撤去する権限がありません（設置者のみ撤去可能）。</red>"

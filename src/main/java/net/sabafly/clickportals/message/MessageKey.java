@@ -87,6 +87,7 @@ public enum MessageKey {
     ERROR_LIMIT_REACHED_GLOBAL("error.limit-reached-global"),
     ERROR_LIMIT_REACHED_VARIATION("error.limit-reached-variation"),
     ERROR_PLACEMENT_COOLDOWN("error.placement-cooldown"),
+    ERROR_PLACEMENT_TOO_CLOSE("error.placement-too-close"),
     ERROR_MISSING_ITEM("error.missing-item"),
     ERROR_NOT_FOUND("error.not-found"),
     ERROR_NOT_OWNER("error.not-owner"),

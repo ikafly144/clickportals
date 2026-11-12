@@ -17,6 +17,8 @@
  */
 package net.sabafly.clickportals.listener;
 
+import io.papermc.paper.event.packet.PlayerChunkLoadEvent;
+import io.papermc.paper.event.packet.PlayerChunkUnloadEvent;
 import java.util.List;
 import java.util.Optional;
 import net.kyori.adventure.text.Component;
@@ -34,6 +36,7 @@ import net.sabafly.clickportals.service.ClearanceChecker;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.visual.HologramService;
 import org.bukkit.Bukkit;
+import org.bukkit.Chunk;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
@@ -261,6 +264,19 @@ public final class AetheryteListener implements Listener {
             return;
         }
 
+        final Optional<Component> distanceError = service.checkPlacementDistance(
+                player,
+                world,
+                targetBlock.getX(),
+                targetBlock.getY(),
+                targetBlock.getZ(),
+                variationId
+        );
+        if (distanceError.isPresent()) {
+            player.sendMessage(distanceError.get());
+            return;
+        }
+
         final AetheryteVariation variation = service.variationRegistry().getOrDefault(variationId);
         if (!ClearanceChecker.hasClearance(
                 world,
@@ -395,20 +411,83 @@ public final class AetheryteListener implements Listener {
     }
 
     /**
+     * Spawns client-side visuals for Aetherytes when chunks load on the client (#49).
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerChunkLoad(final PlayerChunkLoadEvent event) {
+        final Chunk chunk = event.getChunk();
+        if (chunk == null) {
+            return;
+        }
+        final World world = chunk.getWorld();
+        if (world == null) {
+            return;
+        }
+        final List<Aetheryte> aetherytes = registry.getByChunk(world.getUID(), chunk.getX(), chunk.getZ());
+        if (aetherytes.isEmpty()) {
+            return;
+        }
+        final Player player = event.getPlayer();
+        if (player == null || !player.isOnline()) {
+            return;
+        }
+        player.getScheduler().run(plugin, task -> {
+            if (!player.isOnline() || !player.getWorld().getUID().equals(world.getUID())) {
+                return;
+            }
+            for (final Aetheryte aetheryte : aetherytes) {
+                hologramService.showAetheryteToPlayer(player, aetheryte);
+                final AetheryteModelService models = service.modelService();
+                if (models != null) {
+                    models.showAetheryteToPlayer(player, aetheryte);
+                }
+            }
+        }, null);
+    }
+
+    /**
+     * Hides client-side visuals for Aetherytes when chunks unload on the client.
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerChunkUnload(final PlayerChunkUnloadEvent event) {
+        final Chunk chunk = event.getChunk();
+        if (chunk == null) {
+            return;
+        }
+        final World world = chunk.getWorld();
+        if (world == null) {
+            return;
+        }
+        final List<Aetheryte> aetherytes = registry.getByChunk(world.getUID(), chunk.getX(), chunk.getZ());
+        if (aetherytes.isEmpty()) {
+            return;
+        }
+        final Player player = event.getPlayer();
+        if (player == null || !player.isOnline()) {
+            return;
+        }
+        player.getScheduler().run(plugin, task -> {
+            for (final Aetheryte aetheryte : aetherytes) {
+                hologramService.hideAetheryteFromPlayer(player, aetheryte);
+                final AetheryteModelService models = service.modelService();
+                if (models != null) {
+                    models.hideAetheryteFromPlayer(player, aetheryte);
+                }
+            }
+        }, null);
+    }
+
+    /**
      * Schedules a delayed hologram and external model refresh on the player's entity scheduler.
      */
     private void scheduleHologramRefresh(final Player player) {
-        player.getScheduler().runDelayed(plugin, task -> {
-            if (player.isOnline()) {
-                final java.util.Collection<Aetheryte> worldAetherytes =
-                        registry.getByWorld(player.getWorld().getUID());
-                hologramService.refreshPlayer(player, worldAetherytes);
-                final AetheryteModelService models = service.modelService();
-                if (models != null) {
-                    models.refreshPlayer(player, worldAetherytes);
-                }
-            }
-        }, null, 5L);
+        if (!player.isOnline()) {
+            return;
+        }
+        final World world = player.getWorld();
+        if (world != null) {
+            service.refreshPlayerVisuals(player, world);
+        }
     }
 
     /**

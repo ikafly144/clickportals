@@ -334,16 +334,20 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
 
         // Distance limits (#26)
         final DistanceSection effectiveDistanceLimits = resolveDistanceLimits(source, config);
-        final double minDist = effectiveDistanceLimits.minOrDefault(0.0);
-        final double maxDist = effectiveDistanceLimits.maxOrDefault(-1.0);
+        final boolean applyDistanceLimits = crossDim <= 0.0 || effectiveDistanceLimits.crossDimensionOrDefault(true);
 
-        if (minDist > 0.0 && blockDist < minDist) {
-            return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries,
-                    messages.get(player, MessageKey.ERROR_TOO_CLOSE), WarpEvaluation.DenyReason.TOO_CLOSE);
-        }
-        if (maxDist >= 0.0 && blockDist > maxDist) {
-            return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries,
-                    messages.get(player, MessageKey.ERROR_TOO_FAR), WarpEvaluation.DenyReason.TOO_FAR);
+        if (applyDistanceLimits) {
+            final double minDist = effectiveDistanceLimits.minOrDefault(0.0);
+            final double maxDist = effectiveDistanceLimits.maxOrDefault(-1.0);
+
+            if (minDist > 0.0 && blockDist < minDist) {
+                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries,
+                        messages.get(player, MessageKey.ERROR_TOO_CLOSE), WarpEvaluation.DenyReason.TOO_CLOSE);
+            }
+            if (maxDist >= 0.0 && blockDist > maxDist) {
+                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries,
+                        messages.get(player, MessageKey.ERROR_TOO_FAR), WarpEvaluation.DenyReason.TOO_FAR);
+            }
         }
 
         return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries, null, null);
@@ -359,9 +363,10 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
                 // Effective min exceeds effective max, clamp max to unlimited (-1.0) to prevent deadlocks (#26)
                 max = -1.0;
             }
-            return new DistanceSection(min, max);
+            final boolean crossDim = override.crossDimensionOrDefault(config.warpDistanceCrossDimension());
+            return new DistanceSection(min, max, crossDim);
         }
-        return new DistanceSection(config.warpDistanceMin(), config.warpDistanceMax());
+        return new DistanceSection(config.warpDistanceMin(), config.warpDistanceMax(), config.warpDistanceCrossDimension());
     }
 
     private List<CostEntry> resolveBaseCostEntries(final @Nullable Aetheryte source, final PluginConfig config) {

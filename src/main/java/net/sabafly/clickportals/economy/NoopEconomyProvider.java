@@ -31,6 +31,11 @@ public final class NoopEconomyProvider implements EconomyProvider {
     }
 
     @Override
+    public boolean isSoftDisabled() {
+        return true;
+    }
+
+    @Override
     public boolean isAvailable() {
         return false;
     }

@@ -33,12 +33,25 @@ public record DistanceSection(
 
         @Setting("max")
         @Comment("Maximum block distance allowed to warp (-1 for unlimited; in variations: -1 to inherit global)")
-        @Nullable Double max
+        @Nullable Double max,
+
+        @Setting("cross-dimension")
+        @Comment("Whether distance limits (min/max) apply to cross-dimension warps (in variations: null to inherit global)")
+        @Nullable Boolean crossDimension
 ) {
 
     public DistanceSection(@Nullable final Double min, @Nullable final Double max) {
+        this(min, max, null);
+    }
+
+    public DistanceSection(
+            @Nullable final Double min,
+            @Nullable final Double max,
+            @Nullable final Boolean crossDimension
+    ) {
         this.min = min;
         this.max = max;
+        this.crossDimension = crossDimension;
     }
 
     public double minOrDefault(final double fallback) {
@@ -49,11 +62,15 @@ public record DistanceSection(
         return (max != null && max >= 0.0) ? max : fallback;
     }
 
+    public boolean crossDimensionOrDefault(final boolean fallback) {
+        return crossDimension != null ? crossDimension : fallback;
+    }
+
     public static DistanceSection defaults() {
-        return new DistanceSection(0.0, -1.0);
+        return new DistanceSection(0.0, -1.0, true);
     }
 
     public static DistanceSection inherit() {
-        return new DistanceSection(-1.0, -1.0);
+        return new DistanceSection(-1.0, -1.0, null);
     }
 }

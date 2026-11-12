@@ -33,9 +33,11 @@ import static org.mockito.Mockito.when;
 import io.papermc.paper.threadedregions.scheduler.EntityScheduler;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
 import net.kyori.adventure.text.Component;
+import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.cost.CostBundle;
 import net.sabafly.clickportals.cost.CostEntry;
@@ -73,9 +75,12 @@ class PlacementCostTest {
     private HologramService hologramService;
     private Messages messages;
     private EconomyProvider economy;
+    private AetheryteService service;
 
     private Player player;
     private World world;
+    private UUID worldId;
+    private UUID playerId;
     private PlayerInventory inventory;
     private EntityScheduler scheduler;
 
@@ -84,23 +89,26 @@ class PlacementCostTest {
         plugin = mock(Plugin.class);
         registry = new AetheryteRegistry();
         variationRegistry = mock(VariationRegistry.class);
+        when(variationRegistry.getOrDefault(any())).thenReturn(AetheryteVariation.defaultVariation());
         hologramService = mock(HologramService.class);
         messages = Messages.defaults();
         economy = mock(EconomyProvider.class);
 
         player = mock(Player.class);
         world = mock(World.class);
+        worldId = UUID.randomUUID();
+        playerId = UUID.randomUUID();
         inventory = mock(PlayerInventory.class);
         scheduler = mock(EntityScheduler.class);
 
-        when(player.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(player.getUniqueId()).thenReturn(playerId);
         when(player.getGameMode()).thenReturn(GameMode.SURVIVAL);
         when(player.getInventory()).thenReturn(inventory);
         when(player.getScheduler()).thenReturn(scheduler);
         when(player.getPersistentDataContainer()).thenReturn(mock(PersistentDataContainer.class));
         when(player.hasPermission(Permissions.PLACE)).thenReturn(true);
 
-        when(world.getUID()).thenReturn(UUID.randomUUID());
+        when(world.getUID()).thenReturn(worldId);
         when(world.getName()).thenReturn("world");
         when(world.getPersistentDataContainer()).thenReturn(mock(PersistentDataContainer.class));
 
@@ -122,6 +130,20 @@ class PlacementCostTest {
             consumer.accept(null);
             return mock(io.papermc.paper.threadedregions.scheduler.ScheduledTask.class);
         });
+
+        service = new AetheryteService(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                messages,
+                () -> -1,
+                () -> 0,
+                p -> 0L,
+                (p, t) -> {},
+                (p, s, d) -> AetheryteService.WarpEvaluation.permitted(Component.empty())
+        );
+        service.setEconomyProvider(economy);
     }
 
     @Test
@@ -522,5 +544,60 @@ class PlacementCostTest {
         } finally {
             serverField.set(null, null);
         }
+    }
+
+    @Test
+    void placementIsRejectedWhenCloserThanGlobalMinDistance() {
+        service.setGlobalMinDistanceSupplier(() -> 50.0);
+        registry.register(world, new Aetheryte(UUID.randomUUID(), "Existing", worldId, "world", 100, 64, 100, playerId, 0L));
+
+        final Optional<Component> err = service.checkPlacementDistance(player, world, 120, 64, 100, Aetheryte.DEFAULT_VARIATION);
+        assertThat(err).isPresent();
+        final String text = PlainTextComponentSerializer.plainText().serialize(err.get());
+        assertThat(text).contains("too close");
+        assertThat(text).contains("50.0");
+    }
+
+    @Test
+    void placementSucceedsWhenBeyondGlobalMinDistance() {
+        service.setGlobalMinDistanceSupplier(() -> 50.0);
+        registry.register(world, new Aetheryte(UUID.randomUUID(), "Existing", worldId, "world", 100, 64, 100, playerId, 0L));
+
+        final Optional<Component> err = service.checkPlacementDistance(player, world, 160, 64, 100, Aetheryte.DEFAULT_VARIATION);
+        assertThat(err).isEmpty();
+    }
+
+    @Test
+    void variationMinDistanceOverridesGlobalMinDistance() {
+        service.setGlobalMinDistanceSupplier(() -> 100.0);
+        final AetheryteVariation customVar = new AetheryteVariation(
+                "<aqua>Custom</aqua>",
+                null, null, null, null, null,
+                new PlacementSection(null, List.of(), 20.0),
+                null
+        );
+        when(variationRegistry.getOrDefault("custom")).thenReturn(customVar);
+        registry.register(world, new Aetheryte(UUID.randomUUID(), "Existing", worldId, "world", 100, 64, 100, playerId, 0L));
+
+        // Distance is 30 blocks: passes variation's 20.0 limit despite global 100.0
+        assertThat(service.checkPlacementDistance(player, world, 130, 64, 100, "custom")).isEmpty();
+
+        // Distance is 10 blocks: fails variation's 20.0 limit
+        final Optional<Component> err = service.checkPlacementDistance(player, world, 110, 64, 100, "custom");
+        assertThat(err).isPresent();
+        assertThat(PlainTextComponentSerializer.plainText().serialize(err.get())).contains("20.0");
+    }
+
+    @Test
+    void bypassPermissionAllowsPlacementCloserThanMinDistance() {
+        service.setGlobalMinDistanceSupplier(() -> 50.0);
+        registry.register(world, new Aetheryte(UUID.randomUUID(), "Existing", worldId, "world", 100, 64, 100, playerId, 0L));
+
+        when(player.hasPermission("clickportals.bypass.distance")).thenReturn(true);
+        assertThat(service.checkPlacementDistance(player, world, 110, 64, 100, Aetheryte.DEFAULT_VARIATION)).isEmpty();
+
+        when(player.hasPermission("clickportals.bypass.distance")).thenReturn(false);
+        when(player.hasPermission("clickportals.bypass.limit")).thenReturn(true);
+        assertThat(service.checkPlacementDistance(player, world, 110, 64, 100, Aetheryte.DEFAULT_VARIATION)).isEmpty();
     }
 }

@@ -418,4 +418,130 @@ class ConfiguredWarpCostEvaluatorTest {
         // Charge was committed and cleared; subsequent refund or popPendingCharge is a no-op
         assertThat(evaluator.popPendingCharge(player, dest)).isEmpty();
     }
+
+    @Test
+    void crossDimensionWarpAppliesDistanceLimitsWhenCrossDimensionTrue() {
+        final ConfiguredWarpCostEvaluator evaluator = createEvaluator();
+
+        final Location targetOrigin = new Location(otherWorld, 0, 64, 0);
+        final RoutePlan plan = new RoutePlan(
+                List.of("world", "world_nether"),
+                30.0,
+                List.of(CostEntry.of(CostType.VAULT, "30")),
+                targetOrigin
+        );
+        when(router.findRoute(any(), any(), any())).thenReturn(Optional.of(plan));
+
+        // Distance is 5 blocks (min is 10)
+        final Aetheryte src = new Aetheryte(UUID.randomUUID(), "Origin", worldId, "world", 0, 64, 0, UUID.randomUUID(), 0L);
+        final Aetheryte dest = new Aetheryte(UUID.randomUUID(), "Dest", otherWorldId, "world_nether", 5, 64, 0, UUID.randomUUID(), 0L);
+
+        final WarpEvaluation eval = evaluator.evaluate(player, src, dest);
+        assertThat(eval.allowed()).isFalse();
+        assertThat(eval.denyReasonCode()).isEqualTo(WarpEvaluation.DenyReason.TOO_CLOSE);
+    }
+
+    @Test
+    void crossDimensionWarpIgnoresDistanceLimitsWhenCrossDimensionFalse() {
+        final WarpSection warpSection = new WarpSection(
+                new DistanceSection(10.0, 1000.0, false), // cross-dimension = false
+                List.of(CostEntry.of(CostType.VAULT, "$block_distance * 0.5 + 5")),
+                true
+        );
+        pluginConfig = new PluginConfig(
+                PluginConfig.LanguageSection.defaults(),
+                PluginConfig.HologramSection.defaults(),
+                PluginConfig.LimitsSection.defaults(),
+                warpSection,
+                net.sabafly.clickportals.route.DimensionRoutesConfig.defaults()
+        );
+        final ConfiguredWarpCostEvaluator evaluator = createEvaluator();
+
+        final Location targetOrigin = new Location(otherWorld, 0, 64, 0);
+        final RoutePlan plan = new RoutePlan(
+                List.of("world", "world_nether"),
+                30.0,
+                List.of(CostEntry.of(CostType.VAULT, "30")),
+                targetOrigin
+        );
+        when(router.findRoute(any(), any(), any())).thenReturn(Optional.of(plan));
+
+        // Distance is 5 blocks (would violate min 10, but distance limits skipped for cross-dimension)
+        final Aetheryte src = new Aetheryte(UUID.randomUUID(), "Origin", worldId, "world", 0, 64, 0, UUID.randomUUID(), 0L);
+        final Aetheryte dest = new Aetheryte(UUID.randomUUID(), "Dest", otherWorldId, "world_nether", 5, 64, 0, UUID.randomUUID(), 0L);
+
+        final WarpEvaluation eval = evaluator.evaluate(player, src, dest);
+        assertThat(eval.allowed()).isTrue();
+        // Cost: 5 * 0.5 + 5 = 7.50 + 30 = 37.50
+        final String costText = PlainTextComponentSerializer.plainText().serialize(eval.costDisplay());
+        assertThat(costText).contains("$37.50");
+    }
+
+    @Test
+    void sameWorldWarpAlwaysEnforcesDistanceLimitsRegardlessOfCrossDimensionToggle() {
+        final WarpSection warpSection = new WarpSection(
+                new DistanceSection(10.0, 1000.0, false), // cross-dimension = false
+                List.of(CostEntry.of(CostType.VAULT, "$block_distance * 0.5 + 5")),
+                true
+        );
+        pluginConfig = new PluginConfig(
+                PluginConfig.LanguageSection.defaults(),
+                PluginConfig.HologramSection.defaults(),
+                PluginConfig.LimitsSection.defaults(),
+                warpSection,
+                net.sabafly.clickportals.route.DimensionRoutesConfig.defaults()
+        );
+        final ConfiguredWarpCostEvaluator evaluator = createEvaluator();
+
+        // Same-world distance 5 blocks (min is 10)
+        final Aetheryte src = new Aetheryte(UUID.randomUUID(), "Origin", worldId, "world", 0, 64, 0, UUID.randomUUID(), 0L);
+        final Aetheryte dest = new Aetheryte(UUID.randomUUID(), "Dest", worldId, "world", 5, 64, 0, UUID.randomUUID(), 0L);
+
+        final WarpEvaluation eval = evaluator.evaluate(player, src, dest);
+        assertThat(eval.allowed()).isFalse();
+        assertThat(eval.denyReasonCode()).isEqualTo(WarpEvaluation.DenyReason.TOO_CLOSE);
+    }
+
+    @Test
+    void variationOverrideCrossDimensionOverridesGlobal() {
+        // Global has cross-dimension: true
+        final WarpSection warpSection = new WarpSection(
+                new DistanceSection(10.0, 1000.0, true),
+                List.of(CostEntry.of(CostType.VAULT, "$block_distance * 0.5 + 5")),
+                true
+        );
+        pluginConfig = new PluginConfig(
+                PluginConfig.LanguageSection.defaults(),
+                PluginConfig.HologramSection.defaults(),
+                PluginConfig.LimitsSection.defaults(),
+                warpSection,
+                net.sabafly.clickportals.route.DimensionRoutesConfig.defaults()
+        );
+
+        // Variation overrides cross-dimension to false
+        final AetheryteVariation overrideVar = new AetheryteVariation(
+                "<aqua>Override</aqua>",
+                null, null, null, null, null, null, null,
+                new AetheryteVariation.WarpOverrideSection(new DistanceSection(-1.0, -1.0, false), null)
+        );
+        when(variationRegistry.getOrDefault("override")).thenReturn(overrideVar);
+
+        final ConfiguredWarpCostEvaluator evaluator = createEvaluator();
+
+        final Location targetOrigin = new Location(otherWorld, 0, 64, 0);
+        final RoutePlan plan = new RoutePlan(
+                List.of("world", "world_nether"),
+                30.0,
+                List.of(CostEntry.of(CostType.VAULT, "30")),
+                targetOrigin
+        );
+        when(router.findRoute(any(), any(), any())).thenReturn(Optional.of(plan));
+
+        // Distance 5 blocks from variation "override"
+        final Aetheryte src = new Aetheryte(UUID.randomUUID(), "Origin", worldId, "world", 0, 64, 0, UUID.randomUUID(), 0L, "override");
+        final Aetheryte dest = new Aetheryte(UUID.randomUUID(), "Dest", otherWorldId, "world_nether", 5, 64, 0, UUID.randomUUID(), 0L);
+
+        final WarpEvaluation eval = evaluator.evaluate(player, src, dest);
+        assertThat(eval.allowed()).isTrue();
+    }
 }

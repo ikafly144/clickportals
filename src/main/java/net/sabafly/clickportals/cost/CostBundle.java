@@ -99,7 +99,7 @@ public final class CostBundle {
 
             final double normalizedAmount = type.normalize(rawAmount);
             evaluatedAmounts[i] = normalizedAmount;
-            if (entry.required() && !(type == CostType.VAULT && !economy.isAvailable())) {
+            if (entry.required() && !(type == CostType.VAULT && (economy == null || economy.isSoftDisabled()))) {
                 totalRequiredByType.merge(type, type.toBigDecimal(normalizedAmount), BigDecimal::add);
             }
         }
@@ -114,7 +114,8 @@ public final class CostBundle {
             final BigDecimal requiredBd = totalRequiredByType.getOrDefault(type, BigDecimal.ZERO);
             final double required = requiredBd.doubleValue();
             final BigDecimal currentBd = type.toBigDecimal(current);
-            aggregateAffordability.put(type, currentBd.compareTo(requiredBd) >= 0);
+            final boolean available = (type != CostType.VAULT || (economy != null && economy.isAvailable()));
+            aggregateAffordability.put(type, available && currentBd.compareTo(requiredBd) >= 0);
             remainingRequiredByType.put(type, required);
         }
 
@@ -130,7 +131,7 @@ public final class CostBundle {
                 continue;
             }
 
-            if (type == CostType.VAULT && !economy.isAvailable()) {
+            if (type == CostType.VAULT && (economy == null || economy.isSoftDisabled())) {
                 // Soft depend: currency costs are disabled when Vault is missing (#16)
                 quotes.add(new CostItemQuote(type, 0.0, entry.required(), true, 0.0, true));
                 continue;
@@ -163,14 +164,19 @@ public final class CostBundle {
      *
      * @param success whether the charge fully succeeded
      * @param chargedQuote quote containing the actual deducted amounts per item
+     * @param unrefundedItems list of items that could not be rolled back if the transaction failed
      */
-    public record ChargeResult(boolean success, CostQuote chargedQuote) {
+    public record ChargeResult(boolean success, CostQuote chargedQuote, List<CostItemQuote> unrefundedItems) {
         public static ChargeResult failure() {
-            return new ChargeResult(false, new CostQuote(List.of(), false));
+            return failure(List.of());
+        }
+
+        public static ChargeResult failure(final List<CostItemQuote> unrefunded) {
+            return new ChargeResult(false, new CostQuote(List.of(), false), List.copyOf(unrefunded));
         }
 
         public static ChargeResult success(final List<CostItemQuote> applied) {
-            return new ChargeResult(true, new CostQuote(applied, true));
+            return new ChargeResult(true, new CostQuote(applied, true), List.of());
         }
     }
 
@@ -247,12 +253,12 @@ public final class CostBundle {
                     applied.add(new CostItemQuote(item.type(), actualDeducted, item.required(), true, actualDeducted, false));
                 }
                 // Rollback previously applied deductions
-                final boolean rollbackSuccess = rollback(player, applied, economy);
-                if (!rollbackSuccess) {
+                final RefundResult rollbackResult = rollbackWithResult(player, applied, economy);
+                if (!rollbackResult.success()) {
                     LOGGER.error("CRITICAL: Failed to rollback charges cleanly for player {} ({})",
                             player.getName(), player.getUniqueId());
                 }
-                return ChargeResult.failure();
+                return ChargeResult.failure(rollbackResult.unrefundedItems());
             }
 
             if (item.required()) {
@@ -309,14 +315,6 @@ public final class CostBundle {
      */
     public boolean refund(final Player player, final CostQuote quote, final EconomyProvider economy) {
         return refundWithResult(player, quote, economy).success();
-    }
-
-    private static boolean rollback(
-            final Player player,
-            final List<CostItemQuote> items,
-            final EconomyProvider economy
-    ) {
-        return rollbackWithResult(player, items, economy).success();
     }
 
     private static RefundResult rollbackWithResult(

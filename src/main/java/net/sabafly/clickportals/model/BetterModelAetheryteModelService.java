@@ -290,6 +290,39 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
         }
     }
 
+    @Override
+    public void showAetheryteToPlayer(final Player player, final Aetheryte aetheryte) {
+        final ActiveModel active = activeModels.get(aetheryte.id());
+        if (active == null || active.tracker.isClosed()) {
+            return;
+        }
+        if (player.getWorld().getUID().equals(active.worldId)) {
+            try {
+                if (active.tracker.isSpawned(player)) {
+                    active.tracker.remove(player);
+                }
+                spawnSafely(active.tracker, player, aetheryte.id());
+            } catch (final Throwable t) {
+                logger.debug("Failed to spawn BetterModel for Aetheryte {}", aetheryte.id(), t);
+            }
+        }
+    }
+
+    @Override
+    public void hideAetheryteFromPlayer(final Player player, final Aetheryte aetheryte) {
+        final ActiveModel active = activeModels.get(aetheryte.id());
+        if (active == null || active.tracker.isClosed()) {
+            return;
+        }
+        try {
+            if (active.tracker.isSpawned(player)) {
+                active.tracker.remove(player);
+            }
+        } catch (final Throwable t) {
+            logger.debug("Failed to hide BetterModel for Aetheryte {}", aetheryte.id(), t);
+        }
+    }
+
     /**
      * Spawns the model for a player, logging instead of propagating failures.
      */

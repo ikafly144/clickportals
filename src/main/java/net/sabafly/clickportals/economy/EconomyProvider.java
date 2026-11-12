@@ -25,6 +25,14 @@ import org.bukkit.entity.Player;
 public interface EconomyProvider {
 
     /**
+     * Returns whether this economy provider represents a soft-dependency absence of Vault (#16).
+     * When {@code true}, currency costs are waived.
+     */
+    default boolean isSoftDisabled() {
+        return false;
+    }
+
+    /**
      * Checks whether an economy plugin is active and available.
      */
     boolean isAvailable();

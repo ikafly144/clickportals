@@ -262,4 +262,25 @@ class AetheryteVariationTest {
         assertThat(validated.warp().distance().min()).isEqualTo(-1.0);
         assertThat(validated.warp().distance().max()).isEqualTo(500.0);
     }
+
+    @Test
+    void nonFiniteDistanceAndMinDistanceFallBackToInherit() {
+        final AetheryteVariation raw = new AetheryteVariation(
+                "Custom",
+                ItemSection.defaults(),
+                RecipeSection.defaults(),
+                ModelSection.defaults(),
+                HitboxSection.defaults(),
+                TeleportSection.defaults(),
+                new PlacementSection(null, null, Double.POSITIVE_INFINITY),
+                LimitSection.defaults(),
+                new WarpOverrideSection(new net.sabafly.clickportals.config.DistanceSection(Double.POSITIVE_INFINITY, Double.NaN), null)
+        );
+
+        final AetheryteVariation validated = raw.validated("custom", mock(Logger.class));
+
+        assertThat(validated.placement().minDistance()).isEqualTo(-1.0);
+        assertThat(validated.warp().distance().min()).isEqualTo(-1.0);
+        assertThat(validated.warp().distance().max()).isEqualTo(-1.0);
+    }
 }

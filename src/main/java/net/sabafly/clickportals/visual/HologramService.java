@@ -54,6 +54,18 @@ public interface HologramService {
     void refreshPlayer(Player player, Collection<Aetheryte> worldAetherytes);
 
     /**
+     * Spawns or updates client-side visual and interaction entities for the given Aetheryte for a single player.
+     */
+    default void showAetheryteToPlayer(final Player player, final Aetheryte aetheryte) {
+    }
+
+    /**
+     * Destroys client-side visual and interaction entities for the given Aetheryte for a single player.
+     */
+    default void hideAetheryteFromPlayer(final Player player, final Aetheryte aetheryte) {
+    }
+
+    /**
      * Resolves a client-side virtual entity ID to the corresponding {@link Aetheryte} UUID in O(1) time (#6, #20).
      */
     default Optional<UUID> resolveInteractionTarget(final int entityId) {

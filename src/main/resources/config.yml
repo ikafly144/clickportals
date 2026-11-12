@@ -20,6 +20,8 @@ limits:
   max-aetherytes-per-player: -1
   # Default cooldown in ticks after placing an Aetheryte before placing another (100 = 5 seconds, 0 to disable)
   placement-cooldown-ticks: 100
+  # Minimum required block distance between Aetherytes in the same world (0 to disable)
+  min-distance-between-aetherytes: 0.0
 
 # Global warping settings: distance boundaries, costs, and display (#14, #26)
 warp:
@@ -29,6 +31,8 @@ warp:
     min: 0.0
     # Maximum allowed distance between Aetherytes to warp (-1 for unlimited)
     max: -1.0
+    # Whether distance limits (min/max) apply to cross-dimension warps (true by default)
+    cross-dimension: true
   # Base warp cost specifications (all entries must be satisfied; $block_distance, $chunk_distance, $balance, etc. available)
   cost: []
   # Whether non-mandatory costs (required: false) are shown in destination menus and tooltips

@@ -199,5 +199,74 @@ class PluginConfigTest {
         org.mockito.Mockito.verify(logger).warn(org.mockito.ArgumentMatchers.contains("Invalid dimension amount"), eq(-5.0), eq("world_bad"));
         org.mockito.Mockito.verify(logger).warn(org.mockito.ArgumentMatchers.contains("between' must contain at least 2"), any(Object.class));
         org.mockito.Mockito.verify(logger).warn(org.mockito.ArgumentMatchers.contains("Invalid cost-override expression"), eq("invalid syntax ++"), eq("world_b"), any());
+
+        // Sanitized amounts and routes
+        assertThat(manager.config().dimensions().amounts().get("world_bad")).isEqualTo(0.0);
+        assertThat(manager.config().dimensions().routes()).hasSize(1);
+        assertThat(manager.config().dimensions().routes().get(0).between()).containsExactly("world_a", "world_b");
+    }
+
+    @Test
+    void minDistanceBetweenAetherytesAndCrossDimensionLoadedAndValidated() throws IOException {
+        final Path configFile = tempDir.resolve("config.yml");
+        Files.writeString(configFile, """
+                limits:
+                  min-distance-between-aetherytes: 25.5
+                warp:
+                  distance:
+                    min: 5.0
+                    max: 500.0
+                    cross-dimension: false
+                """, StandardCharsets.UTF_8);
+
+        final Logger logger = mock(Logger.class);
+        final ConfigManager manager = new ConfigManager(configFile, logger);
+        final PluginConfig config = manager.load();
+
+        assertThat(config.minDistanceBetweenAetherytes()).isEqualTo(25.5);
+        assertThat(config.warpDistanceMin()).isEqualTo(5.0);
+        assertThat(config.warpDistanceMax()).isEqualTo(500.0);
+        assertThat(config.warpDistanceCrossDimension()).isFalse();
+
+        // Invalid negative or non-finite min-distance-between-aetherytes falls back to 0.0
+        Files.writeString(configFile, """
+                limits:
+                  min-distance-between-aetherytes: -10.0
+                warp:
+                  distance:
+                    cross-dimension: true
+                """, StandardCharsets.UTF_8);
+        final PluginConfig config2 = manager.load();
+        assertThat(config2.minDistanceBetweenAetherytes()).isEqualTo(0.0);
+        assertThat(config2.warpDistanceCrossDimension()).isTrue();
+    }
+
+    @Test
+    void initialDefaultSaveFailurePreservesConfigWithoutOverwriting() throws IOException {
+        final Path readOnlyDir = tempDir.resolve("readonly");
+        Files.createDirectories(readOnlyDir);
+        final Path configFile = readOnlyDir.resolve("config.yml");
+
+        // Write a valid initial configuration and load it
+        Files.writeString(configFile, """
+                limits:
+                  max-aetherytes-per-player: 77
+                """, StandardCharsets.UTF_8);
+        final Logger logger = mock(Logger.class);
+        final ConfigManager manager = new ConfigManager(configFile, logger);
+        final PluginConfig initial = manager.load();
+        assertThat(initial.maxAetherytesPerPlayer()).isEqualTo(77);
+
+        // Delete the file and make the directory read-only so saving defaultConfig fails
+        Files.delete(configFile);
+        readOnlyDir.toFile().setWritable(false);
+        try {
+            final PluginConfig afterFailure = manager.load();
+            assertThat(manager.lastLoadSuccessful()).isFalse();
+            // Retains previous configuration
+            assertThat(afterFailure.maxAetherytesPerPlayer()).isEqualTo(77);
+        } finally {
+            readOnlyDir.toFile().setWritable(true);
+        }
     }
 }
