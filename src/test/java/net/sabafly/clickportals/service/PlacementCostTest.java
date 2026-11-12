@@ -253,6 +253,7 @@ class PlacementCostTest {
             service.placeAetheryte(player, world, 10, 64, 20, "CostlyPortal", "costly");
 
             verify(economy, never()).withdraw(any(), anyDouble());
+            verify(regionScheduler).execute(eq(plugin), any(Location.class), any(Runnable.class));
         } finally {
             serverField.set(null, null);
         }
