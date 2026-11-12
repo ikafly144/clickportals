@@ -20,16 +20,20 @@ package net.sabafly.clickportals.listener;
 import java.util.List;
 import java.util.Optional;
 import net.kyori.adventure.text.Component;
+import net.sabafly.clickportals.ClickPortals;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.dialog.AetheryteDialogFactory;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
+import net.sabafly.clickportals.model.AetheryteModelService;
+import net.sabafly.clickportals.model.ModelAnimationTrigger;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.ClearanceChecker;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.visual.HologramService;
+import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
@@ -49,6 +53,7 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerLocaleChangeEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
+import org.bukkit.event.server.ServerLoadEvent;
 import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
 import org.bukkit.inventory.EquipmentSlot;
@@ -133,18 +138,45 @@ public final class AetheryteListener implements Listener {
     }
 
     /**
-     * Loads Aetherytes from the world's PDC when a world is loaded.
+     * Re-syncs external models when the server finishes loading all plugins and worlds (#46).
      */
-    @EventHandler(priority = EventPriority.NORMAL)
-    public void onWorldLoad(final WorldLoadEvent event) {
-        registry.loadWorld(event.getWorld());
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onServerLoad(final ServerLoadEvent event) {
+        if (plugin instanceof ClickPortals clickPortals) {
+            try {
+                Bukkit.getGlobalRegionScheduler().runDelayed(plugin, task -> {
+                    if (clickPortals.isEnabled()) {
+                        clickPortals.syncAllAetheryteModels();
+                    }
+                }, 1L);
+            } catch (final Throwable t) {
+                if (clickPortals.isEnabled()) {
+                    clickPortals.syncAllAetheryteModels();
+                }
+            }
+        }
     }
 
     /**
-     * Unloads Aetherytes from the in-memory index when a world is unloaded.
+     * Loads Aetherytes from the world's PDC and registers external models when a world is loaded (#46).
+     */
+    @EventHandler(priority = EventPriority.NORMAL)
+    public void onWorldLoad(final WorldLoadEvent event) {
+        final List<Aetheryte> loaded = registry.loadWorld(event.getWorld());
+        for (final Aetheryte aetheryte : loaded) {
+            final AetheryteVariation var = service.variationRegistry().getOrDefault(aetheryte.variation());
+            service.modelService().registerAetheryte(aetheryte, var, event.getWorld());
+        }
+    }
+
+    /**
+     * Unloads Aetherytes and cleans up model trackers when a world is unloaded (#46).
      */
     @EventHandler(priority = EventPriority.NORMAL)
     public void onWorldUnload(final WorldUnloadEvent event) {
+        for (final Aetheryte aetheryte : registry.getByWorld(event.getWorld().getUID())) {
+            service.modelService().unregisterAetheryte(aetheryte.id());
+        }
         registry.unloadWorld(event.getWorld().getUID());
     }
 
@@ -169,7 +201,9 @@ public final class AetheryteListener implements Listener {
         if (existingDirect.isPresent()) {
             event.setCancelled(true);
             if (event.getHand() == EquipmentSlot.HAND) {
-                dialogFactory.openWarpDialog(player, existingDirect.get());
+                final Aetheryte aetheryte = existingDirect.get();
+                service.modelService().triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
+                dialogFactory.openWarpDialog(player, aetheryte);
             }
             return;
         }
@@ -187,7 +221,9 @@ public final class AetheryteListener implements Listener {
                 && itemVariationOpt.isEmpty()) {
             event.setCancelled(true);
             if (event.getHand() == EquipmentSlot.HAND) {
-                dialogFactory.openWarpDialog(player, existingRelative.get());
+                final Aetheryte aetheryte = existingRelative.get();
+                service.modelService().triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
+                dialogFactory.openWarpDialog(player, aetheryte);
             }
             return;
         }
@@ -352,15 +388,25 @@ public final class AetheryteListener implements Listener {
         final java.util.UUID playerId = event.getPlayer().getUniqueId();
         hologramService.removePlayer(playerId);
         service.removePlayer(playerId);
+        final AetheryteModelService models = service.modelService();
+        if (models != null) {
+            models.removePlayer(event.getPlayer());
+        }
     }
 
     /**
-     * Schedules a delayed hologram refresh on the player's entity scheduler.
+     * Schedules a delayed hologram and external model refresh on the player's entity scheduler.
      */
     private void scheduleHologramRefresh(final Player player) {
         player.getScheduler().runDelayed(plugin, task -> {
             if (player.isOnline()) {
-                hologramService.refreshPlayer(player, registry.getByWorld(player.getWorld().getUID()));
+                final java.util.Collection<Aetheryte> worldAetherytes =
+                        registry.getByWorld(player.getWorld().getUID());
+                hologramService.refreshPlayer(player, worldAetherytes);
+                final AetheryteModelService models = service.modelService();
+                if (models != null) {
+                    models.refreshPlayer(player, worldAetherytes);
+                }
             }
         }, null, 5L);
     }

@@ -113,7 +113,7 @@ class PlacementCostTest {
                 "<aqua>Costly</aqua>",
                 null, null, null, null, null,
                 new PlacementSection(null, List.of(CostEntry.of(CostType.VAULT, "1000"))), // costs 1000, has 500
-                null, null
+                null
         );
         when(variationRegistry.getOrDefault("costly")).thenReturn(expensiveVariation);
 
@@ -150,7 +150,7 @@ class PlacementCostTest {
                 "<aqua>Costly</aqua>",
                 null, null, null, null, null,
                 new PlacementSection(null, List.of(CostEntry.of(CostType.VAULT, "1000"))),
-                null, null
+                null
         );
         when(variationRegistry.getOrDefault("costly")).thenReturn(expensiveVariation);
 

@@ -41,6 +41,9 @@ import net.sabafly.clickportals.economy.NoopEconomyProvider;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
+import net.sabafly.clickportals.model.AetheryteModelService;
+import net.sabafly.clickportals.model.ModelAnimationTrigger;
+import net.sabafly.clickportals.model.NoopAetheryteModelService;
 import net.sabafly.clickportals.permission.Permissions;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.AetheryteVariation.ClearanceSection;
@@ -143,6 +146,7 @@ public final class AetheryteService {
     private final AetheryteRegistry registry;
     private final VariationRegistry variationRegistry;
     private volatile HologramService hologramService;
+    private volatile AetheryteModelService modelService;
     private final Messages messages;
     private final IntSupplier globalMaxPerPlayerSupplier;
     private final IntSupplier globalCooldownTicksSupplier;
@@ -279,10 +283,42 @@ public final class AetheryteService {
             final CooldownPacketSender cooldownPacketSender,
             final WarpCostEvaluator costEvaluator
     ) {
+        this(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                NoopAetheryteModelService.INSTANCE,
+                messages,
+                globalMaxPerPlayerSupplier,
+                globalCooldownTicksSupplier,
+                tickSupplier,
+                cooldownPacketSender,
+                costEvaluator
+        );
+    }
+
+    /**
+     * Creates a new {@link AetheryteService} with full dependencies including {@link AetheryteModelService} (#46).
+     */
+    public AetheryteService(
+            final Plugin plugin,
+            final AetheryteRegistry registry,
+            final VariationRegistry variationRegistry,
+            final HologramService hologramService,
+            final AetheryteModelService modelService,
+            final Messages messages,
+            final IntSupplier globalMaxPerPlayerSupplier,
+            final IntSupplier globalCooldownTicksSupplier,
+            final ToLongFunction<Player> tickSupplier,
+            final CooldownPacketSender cooldownPacketSender,
+            final WarpCostEvaluator costEvaluator
+    ) {
         this.plugin = plugin;
         this.registry = registry;
         this.variationRegistry = variationRegistry;
         this.hologramService = hologramService;
+        this.modelService = modelService;
         this.messages = messages;
         this.globalMaxPerPlayerSupplier = globalMaxPerPlayerSupplier;
         this.globalCooldownTicksSupplier = globalCooldownTicksSupplier;
@@ -331,6 +367,20 @@ public final class AetheryteService {
      */
     public void setHologramService(final HologramService hologramService) {
         this.hologramService = hologramService;
+    }
+
+    /**
+     * Returns the active {@link AetheryteModelService} (#46).
+     */
+    public AetheryteModelService modelService() {
+        return modelService;
+    }
+
+    /**
+     * Updates the active {@link AetheryteModelService} reference on reload (#46).
+     */
+    public void setModelService(final AetheryteModelService modelService) {
+        this.modelService = modelService;
     }
 
     /**
@@ -730,6 +780,7 @@ public final class AetheryteService {
                     }
 
                     spawnOrUpdateMarkerEntity(world, aetheryte);
+                    modelService.registerAetheryte(aetheryte, variation, world);
                     try {
                         hologramService.showAetheryte(aetheryte);
                     } catch (final Exception e) {
@@ -754,6 +805,7 @@ public final class AetheryteService {
                     if (placedAetheryte != null) {
                         registry.unregister(world, placedAetheryte.id());
                         removeMarkerEntitiesAt(world, placedAetheryte);
+                        modelService.unregisterAetheryte(placedAetheryte.id());
                         hologramService.hideAetheryte(placedAetheryte.id());
                     }
                     refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, placementQuote);
@@ -859,6 +911,7 @@ public final class AetheryteService {
                 block.setType(Material.AIR, true);
             }
 
+            modelService.unregisterAetheryte(aetheryte.id());
             hologramService.hideAetheryte(aetheryte.id());
             world.playSound(blockLoc, Sound.BLOCK_LODESTONE_BREAK, 1.0f, 1.0f);
 
@@ -975,12 +1028,17 @@ public final class AetheryteService {
                     return;
                 }
 
+                if (source != null) {
+                    modelService.triggerAnimation(source.id(), ModelAnimationTrigger.ON_WARP_DEPART);
+                }
                 final CompletableFuture<Void> unused = player.teleportAsync(destinationLoc).thenAccept(success -> {
                     if (Boolean.TRUE.equals(success)) {
+                        modelService.triggerAnimation(destination.id(), ModelAnimationTrigger.ON_WARP_ARRIVE);
                         player.sendMessage(messages.warpedTo(player, destination));
                         player.getScheduler().run(plugin, postTask -> {
                             player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
                             hologramService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
+                            modelService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
                         }, null);
                     } else {
                         player.getScheduler().run(plugin, t -> {

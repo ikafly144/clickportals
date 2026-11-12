@@ -62,6 +62,7 @@ dependencies {
     compileOnly(libs.vault.api) {
         exclude(group = "org.bukkit")
     }
+    compileOnly(libs.bettermodel.bukkit.api)
     compileOnly(libs.jspecify)
     testCompileOnly(libs.jspecify)
 
@@ -151,6 +152,7 @@ paperPluginYaml {
     dependencies {
         server("packetevents", PaperPluginYaml.Load.BEFORE, false)
         server("Vault", PaperPluginYaml.Load.BEFORE, false)
+        server("BetterModel", PaperPluginYaml.Load.BEFORE, false)
     }
     permissions {
         register("clickportals.use") {
@@ -233,6 +235,7 @@ testing {
                 implementation(libs.vault.api) {
                     exclude(group = "org.bukkit")
                 }
+                implementation(libs.bettermodel.bukkit.api)
             }
             targets {
                 all {
@@ -292,6 +295,7 @@ tasks.named<RunServer>("runServer") {
 
     downloadPlugins {
         modrinth("packetevents", "${libs.versions.packetevents.get()}+spigot")
+        github("toxicity188", "BetterModel", libs.versions.bettermodel.get(), "bettermodel-${libs.versions.bettermodel.get()}-paper.jar")
     }
 }
 
@@ -301,5 +305,6 @@ runPaper.folia.registerTask {
 
     downloadPlugins {
         modrinth("packetevents", "${libs.versions.packetevents.get()}+spigot")
+        github("toxicity188", "BetterModel", libs.versions.bettermodel.get(), "bettermodel-${libs.versions.bettermodel.get()}-paper.jar")
     }
 }
