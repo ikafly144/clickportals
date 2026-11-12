@@ -106,17 +106,16 @@ public final class CostBundle {
 
         // Check aggregate affordability per CostType and reserve required costs (#7)
         final Map<CostType, Boolean> aggregateAffordability = new EnumMap<>(CostType.class);
-        final Map<CostType, Double> remainingByType = new EnumMap<>(CostType.class);
-        final Map<CostType, Double> remainingRequiredByType = new EnumMap<>(CostType.class);
+        final Map<CostType, BigDecimal> remainingByType = new EnumMap<>(CostType.class);
+        final Map<CostType, BigDecimal> remainingRequiredByType = new EnumMap<>(CostType.class);
         for (final CostType type : CostType.values()) {
             final double current = getCurrentResource(player, type, economy);
-            remainingByType.put(type, current);
-            final BigDecimal requiredBd = totalRequiredByType.getOrDefault(type, BigDecimal.ZERO);
-            final double required = requiredBd.doubleValue();
             final BigDecimal currentBd = type.toBigDecimal(current);
+            remainingByType.put(type, currentBd);
+            final BigDecimal requiredBd = totalRequiredByType.getOrDefault(type, BigDecimal.ZERO);
             final boolean available = (type != CostType.VAULT || (economy != null && economy.isAvailable()));
             aggregateAffordability.put(type, available && currentBd.compareTo(requiredBd) >= 0);
-            remainingRequiredByType.put(type, required);
+            remainingRequiredByType.put(type, requiredBd);
         }
 
         final List<CostItemQuote> quotes = new ArrayList<>(entries.size());
@@ -137,23 +136,25 @@ public final class CostBundle {
                 continue;
             }
 
-            final double remaining = remainingByType.getOrDefault(type, 0.0);
+            final BigDecimal remainingBd = remainingByType.getOrDefault(type, BigDecimal.ZERO);
+            final BigDecimal amountBd = type.toBigDecimal(amount);
 
             final boolean affordable;
-            final double deductionForSubsequent;
+            final BigDecimal deductionForSubsequentBd;
             if (entry.required()) {
                 affordable = Boolean.TRUE.equals(aggregateAffordability.get(type));
-                quotes.add(new CostItemQuote(type, amount, true, affordable, remaining, false));
-                deductionForSubsequent = amount;
-                remainingRequiredByType.merge(type, -amount, (oldVal, change) -> Math.max(0.0, oldVal + change));
+                quotes.add(new CostItemQuote(type, amount, true, affordable, remainingBd.doubleValue(), false));
+                deductionForSubsequentBd = amountBd;
+                remainingRequiredByType.merge(type, amountBd, (oldVal, sub) -> BigDecimal.ZERO.max(oldVal.subtract(sub)));
             } else {
                 affordable = true;
-                final double unreserved = Math.max(0.0, remaining - remainingRequiredByType.getOrDefault(type, 0.0));
-                quotes.add(new CostItemQuote(type, amount, false, true, unreserved, false));
-                deductionForSubsequent = Math.min(amount, unreserved);
+                final BigDecimal reservedBd = remainingRequiredByType.getOrDefault(type, BigDecimal.ZERO);
+                final BigDecimal unreservedBd = BigDecimal.ZERO.max(remainingBd.subtract(reservedBd));
+                quotes.add(new CostItemQuote(type, amount, false, true, unreservedBd.doubleValue(), false));
+                deductionForSubsequentBd = amountBd.min(unreservedBd);
             }
 
-            remainingByType.put(type, Math.max(0.0, remaining - deductionForSubsequent));
+            remainingByType.put(type, BigDecimal.ZERO.max(remainingBd.subtract(deductionForSubsequentBd)));
         }
 
         return new CostQuote(quotes);
@@ -224,22 +225,23 @@ public final class CostBundle {
             }
         }
 
-        final Map<CostType, Double> remainingRequired = new EnumMap<>(CostType.class);
-        liveRequiredSums.forEach((k, v) -> remainingRequired.put(k, v.doubleValue()));
+        final Map<CostType, BigDecimal> remainingRequired = new EnumMap<>(liveRequiredSums);
         final List<CostItemQuote> applied = new ArrayList<>();
         for (final CostItemQuote item : quote.items()) {
             if (item.disabled() || item.type() == null || item.amount() <= 0.0) {
                 continue;
             }
 
-            final double current = getCurrentResource(player, item.type(), economy);
-            final double unreserved = Math.max(0.0, current - remainingRequired.getOrDefault(item.type(), 0.0));
+            final BigDecimal currentBd = item.type().toBigDecimal(getCurrentResource(player, item.type(), economy));
+            final BigDecimal reservedBd = remainingRequired.getOrDefault(item.type(), BigDecimal.ZERO);
+            final BigDecimal unreservedBd = BigDecimal.ZERO.max(currentBd.subtract(reservedBd));
+            final BigDecimal itemAmountBd = item.type().toBigDecimal(item.amount());
 
             final double toDeduct;
             if (item.required()) {
-                toDeduct = item.amount();
+                toDeduct = itemAmountBd.doubleValue();
             } else {
-                toDeduct = Math.min(item.amount(), unreserved);
+                toDeduct = itemAmountBd.min(unreservedBd).doubleValue();
             }
 
             if (toDeduct <= 0.0) {
@@ -262,7 +264,8 @@ public final class CostBundle {
             }
 
             if (item.required()) {
-                remainingRequired.merge(item.type(), -actualDeducted, (oldVal, change) -> Math.max(0.0, oldVal + change));
+                final BigDecimal deductedBd = item.type().toBigDecimal(actualDeducted);
+                remainingRequired.merge(item.type(), deductedBd, (oldVal, sub) -> BigDecimal.ZERO.max(oldVal.subtract(sub)));
             }
 
             if (actualDeducted > 0.0) {

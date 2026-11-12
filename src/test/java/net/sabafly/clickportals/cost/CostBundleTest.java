@@ -414,4 +414,28 @@ class CostBundleTest {
         final String text = PlainTextComponentSerializer.plainText().serialize(missing);
         assertThat(text).contains("$85.00");
     }
+
+    @Test
+    void requiredAndOptionalVaultCombinationAvoidsPrecisionDrift() {
+        final java.util.concurrent.atomic.AtomicReference<Double> balance = new java.util.concurrent.atomic.AtomicReference<>(0.30);
+        when(economy.getBalance(player)).thenAnswer(inv -> balance.get());
+        when(economy.withdraw(eq(player), anyDouble())).thenAnswer(inv -> {
+            final double amount = inv.getArgument(1);
+            balance.set(balance.get() - amount);
+            return true;
+        });
+
+        final CostBundle bundle = new CostBundle(List.of(
+                CostEntry.of(CostType.VAULT, "0.20", true),
+                CostEntry.of(CostType.VAULT, "0.10", false)
+        ));
+        final CostQuote quote = bundle.quote(player, Map.of(), economy);
+        assertThat(quote.affordable()).isTrue();
+        assertThat(quote.items().get(1).currentResource()).isEqualTo(0.10);
+
+        final CostBundle.ChargeResult result = bundle.chargeWithResult(player, quote, economy);
+        assertThat(result.success()).isTrue();
+        verify(economy).withdraw(player, 0.20);
+        verify(economy).withdraw(player, 0.10);
+    }
 }

@@ -677,9 +677,7 @@ public final class AetheryteService {
                     }
                 }
             }
-            if (currentItems.isEmpty()) {
-                pendingRefunds.remove(player.getUniqueId(), currentItems);
-            }
+            pendingRefunds.computeIfPresent(player.getUniqueId(), (k, list) -> list.isEmpty() ? null : list);
             markPendingRefundsDirtyAndPersist();
             if (allSuccess) {
                 plugin.getSLF4JLogger().info("Processed pending placement cost refund for returning player {}", player.getName());
@@ -709,7 +707,11 @@ public final class AetheryteService {
         for (final CostItemQuote item : items) {
             stamped.add(item.transactionId() != null ? item : item.withTransactionId(UUID.randomUUID()));
         }
-        pendingRefunds.computeIfAbsent(playerId, k -> new CopyOnWriteArrayList<>()).addAll(stamped);
+        pendingRefunds.compute(playerId, (k, existing) -> {
+            final List<CostItemQuote> list = existing != null ? existing : new CopyOnWriteArrayList<>();
+            list.addAll(stamped);
+            return list;
+        });
         markPendingRefundsDirtyAndPersist();
     }
 
@@ -719,10 +721,27 @@ public final class AetheryteService {
      * @return {@code true} if no pending refunds remain dirty or persistence succeeded, {@code false} otherwise
      */
     public boolean flushPendingRefunds() {
-        if (!pendingRefundsDirty.get()) {
-            return true;
-        }
         return savePendingRefundsLoop();
+    }
+
+    /**
+     * Returns the number of players currently awaiting a pending refund.
+     */
+    public int pendingRefundPlayerCount() {
+        return pendingRefunds.size();
+    }
+
+    /**
+     * Returns the total number of unrefunded cost items across all players.
+     */
+    public int pendingRefundItemCount() {
+        int total = 0;
+        for (final List<CostItemQuote> list : pendingRefunds.values()) {
+            if (list != null) {
+                total += list.size();
+            }
+        }
+        return total;
     }
 
     private void markPendingRefundsDirtyAndPersist() {
@@ -782,7 +801,7 @@ public final class AetheryteService {
     }
 
     private void trimProcessedRefundsForPendingPlayers() {
-        if (playersPendingPdcTrim.isEmpty()) {
+        if (playersPendingPdcTrim.isEmpty() || !plugin.isEnabled()) {
             return;
         }
         final org.bukkit.Server server = plugin.getServer();
@@ -795,26 +814,30 @@ public final class AetheryteService {
             if (player == null || player.getScheduler() == null) {
                 continue;
             }
-            player.getScheduler().run(plugin, t -> {
-                if (pendingRefundsDirty.get()) {
-                    return;
-                }
-                final PersistentDataContainer pdc = player.getPersistentDataContainer();
-                if (pdc == null) {
+            try {
+                player.getScheduler().run(plugin, t -> {
+                    if (pendingRefundsDirty.get()) {
+                        return;
+                    }
+                    final PersistentDataContainer pdc = player.getPersistentDataContainer();
+                    if (pdc == null) {
+                        playersPendingPdcTrim.remove(playerId);
+                        return;
+                    }
+                    final List<String> existing = pdc.get(PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings());
+                    if (existing == null || existing.size() <= MAX_TRACKED_PROCESSED_REFUNDS) {
+                        playersPendingPdcTrim.remove(playerId);
+                        return;
+                    }
+                    final List<String> trimmed = new ArrayList<>(
+                            existing.subList(existing.size() - MAX_TRACKED_PROCESSED_REFUNDS, existing.size())
+                    );
+                    pdc.set(PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings(), trimmed);
                     playersPendingPdcTrim.remove(playerId);
-                    return;
-                }
-                final List<String> existing = pdc.get(PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings());
-                if (existing == null || existing.size() <= MAX_TRACKED_PROCESSED_REFUNDS) {
-                    playersPendingPdcTrim.remove(playerId);
-                    return;
-                }
-                final List<String> trimmed = new ArrayList<>(
-                        existing.subList(existing.size() - MAX_TRACKED_PROCESSED_REFUNDS, existing.size())
-                );
-                pdc.set(PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings(), trimmed);
-                playersPendingPdcTrim.remove(playerId);
-            }, null);
+                }, null);
+            } catch (final Throwable ignored) {
+                // Plugin may be shutting down between isEnabled() check and task registration
+            }
         }
     }
 
@@ -1122,9 +1145,12 @@ public final class AetheryteService {
             }
 
             // Step 2: Validate clearance, check limits atomically, and spawn the Marker entity on the region thread.
-            Bukkit.getRegionScheduler().execute(plugin, targetLocation, () -> {
-                Aetheryte placedAetheryte = null;
-                try {
+            final AtomicBoolean regionTaskEntered = new AtomicBoolean(false);
+            try {
+                Bukkit.getRegionScheduler().execute(plugin, targetLocation, () -> {
+                    regionTaskEntered.set(true);
+                    Aetheryte placedAetheryte = null;
+                    try {
                     if (registry.getByPosition(world, blockX, blockY, blockZ).isPresent()) {
                         refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
                         pendingPlacements.remove(ownerId);
@@ -1208,7 +1234,7 @@ public final class AetheryteService {
                     } catch (final Throwable ignored) {
                         // Sound playback is non-fatal if sound registry is unavailable in test environments
                     }
-                    player.getScheduler().run(plugin, postPlaceTask -> {
+                    final ScheduledTask postPlaceScheduled = player.getScheduler().run(plugin, postPlaceTask -> {
                         try {
                             recordPlacementCooldown(player, normalizedVar);
                             player.sendMessage(messages.aetheryteCreated(player, aetheryte));
@@ -1219,7 +1245,10 @@ public final class AetheryteService {
                         } finally {
                             pendingPlacements.remove(ownerId);
                         }
-                    }, null);
+                    }, () -> pendingPlacements.remove(ownerId));
+                    if (postPlaceScheduled == null) {
+                        pendingPlacements.remove(ownerId);
+                    }
                 } catch (final Throwable t) {
                     try {
                         if (placedAetheryte != null) {
@@ -1239,7 +1268,17 @@ public final class AetheryteService {
                     }
                     throw t;
                 }
-            });
+                });
+            } catch (final Throwable t) {
+                if (!regionTaskEntered.get()) {
+                    try {
+                        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
+                    } finally {
+                        pendingPlacements.remove(ownerId);
+                    }
+                }
+                throw t;
+            }
         }, null);
     }
 
@@ -1460,8 +1499,11 @@ public final class AetheryteService {
         final float pitch = player.getPitch();
         final AetheryteVariation destVariation = variationRegistry.getOrDefault(destination.variation());
 
-        Bukkit.getRegionScheduler().execute(plugin, checkLoc, () -> {
-            try {
+        final AtomicBoolean regionTaskEntered = new AtomicBoolean(false);
+        try {
+            Bukkit.getRegionScheduler().execute(plugin, checkLoc, () -> {
+                regionTaskEntered.set(true);
+                try {
                 final Optional<Location> safeLanding = LandingResolver.resolveForVariation(
                         targetWorld,
                         destination.blockX(),
@@ -1480,7 +1522,7 @@ public final class AetheryteService {
                 }
                 final Location destinationLoc = safeLanding.get();
 
-                player.getScheduler().run(plugin, task -> {
+                final ScheduledTask warpTask = player.getScheduler().run(plugin, task -> {
                     final WarpCostEvaluator activeEvaluator = this.costEvaluator;
                     final boolean bypassCost = Permissions.canBypassWarpCost(player);
                     boolean paid = false;
@@ -1588,6 +1630,9 @@ public final class AetheryteService {
                         inFlightWarps.remove(playerId);
                     }
                 });
+                if (warpTask == null && playerId != null) {
+                    inFlightWarps.remove(playerId);
+                }
             } catch (final Throwable t) {
                 if (playerId != null) {
                     inFlightWarps.remove(playerId);
@@ -1600,7 +1645,21 @@ public final class AetheryteService {
                 );
                 messages.send(player, MessageKey.ERROR_NOT_FOUND);
             }
-        });
+            });
+        } catch (final Throwable t) {
+            if (playerId != null) {
+                inFlightWarps.remove(playerId);
+            }
+            if (!regionTaskEntered.get()) {
+                plugin.getSLF4JLogger().error(
+                        "Failed to schedule warp landing resolution for player {} to {}",
+                        player.getName(),
+                        destination.id(),
+                        t
+                );
+                messages.send(player, MessageKey.ERROR_NOT_FOUND);
+            }
+        }
     }
 
     private void handleWarpFailure(

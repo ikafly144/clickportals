@@ -771,6 +771,7 @@ class PlacementCostTest {
 
         final org.bukkit.Server server = mock(org.bukkit.Server.class);
         when(plugin.getServer()).thenReturn(server);
+        when(plugin.isEnabled()).thenReturn(true);
         when(server.getPlayer(playerId)).thenReturn(player);
 
         final AetheryteService customService = new AetheryteService(
@@ -863,6 +864,168 @@ class PlacementCostTest {
             // Lock must be released so subsequent placement is not blocked by pendingPlacements
             org.mockito.Mockito.doNothing().when(originBlock).setType(Material.AIR, true);
             service.placeAetheryte(player, world, 10, 64, 20, "TestName2", "costly");
+            verify(economy, times(2)).withdraw(player, 80.0);
+        } finally {
+            serverField.set(null, null);
+        }
+    }
+
+    @Test
+    void flushPendingRefundsWaitsForInFlightSaveAndDetectsPriorFailure() throws Exception {
+        final PendingRefundStorage storage = mock(PendingRefundStorage.class);
+        when(storage.load()).thenReturn(Map.of());
+
+        final java.util.concurrent.CountDownLatch saveStarted = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.CountDownLatch releaseFirstSave = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicInteger saveCalls = new java.util.concurrent.atomic.AtomicInteger(0);
+        when(storage.save(any())).thenAnswer(inv -> {
+            final int call = saveCalls.incrementAndGet();
+            if (call == 1) {
+                saveStarted.countDown();
+                releaseFirstSave.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                return false; // in-flight save fails after clearing dirty flag
+            }
+            return call >= 3; // call 2 fails, call 3 succeeds
+        });
+
+        final AetheryteService customService = new AetheryteService(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                net.sabafly.clickportals.model.NoopAetheryteModelService.INSTANCE,
+                messages,
+                () -> -1,
+                () -> 0,
+                () -> 0.0,
+                p -> 0L,
+                (p, t) -> {},
+                (p, s, d) -> AetheryteService.WarpEvaluation.permitted(Component.empty()),
+                storage
+        );
+        customService.setEconomyProvider(economy);
+        when(economy.deposit(eq(player), anyDouble())).thenReturn(false);
+
+        final CostBundle costBundle = new CostBundle(List.of(CostEntry.of(CostType.VAULT, "60")));
+        final CostQuote costQuote = costBundle.quote(player, Map.of(), economy);
+
+        final Thread writer = new Thread(() ->
+                customService.refundPlacement(player, new Location(world, 10, 64, 20), "costly", false, false, costBundle, costQuote)
+        );
+        writer.start();
+        assertThat(saveStarted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        // In-flight save cleared dirty flag before failing; flushPendingRefunds must wait for lock,
+        // detect the failure, attempt a retry (call 2 fails -> returns false), and succeed on next flush (call 3 -> returns true)
+        final java.util.concurrent.CompletableFuture<Boolean> flushResult =
+                java.util.concurrent.CompletableFuture.supplyAsync(customService::flushPendingRefunds);
+        // Ensure flush cannot return early while first save is still holding lock
+        Thread.sleep(50);
+        assertThat(flushResult.isDone()).isFalse();
+
+        releaseFirstSave.countDown();
+        writer.join(5000);
+        assertThat(flushResult.get(5, java.util.concurrent.TimeUnit.SECONDS)).isFalse();
+        assertThat(customService.flushPendingRefunds()).isTrue();
+        assertThat(saveCalls.get()).isEqualTo(3);
+    }
+
+    @Test
+    void flushPendingRefundsWhenPluginDisabledDoesNotSchedulePdcTrim() {
+        final PendingRefundStorage storage = mock(PendingRefundStorage.class);
+        final UUID newTxId = UUID.randomUUID();
+        final Map<UUID, List<CostItemQuote>> initialMap = new java.util.concurrent.ConcurrentHashMap<>();
+        initialMap.put(playerId, new java.util.concurrent.CopyOnWriteArrayList<>(
+                List.of(new CostItemQuote(CostType.VAULT, 40.0, true, true, 40.0, false, newTxId))
+        ));
+        when(storage.load()).thenReturn(initialMap);
+        when(storage.save(any())).thenReturn(false, true);
+
+        final List<String> existing100 = new java.util.ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            existing100.add(UUID.randomUUID().toString());
+        }
+        final PersistentDataContainer pdc = mock(PersistentDataContainer.class);
+        when(player.getPersistentDataContainer()).thenReturn(pdc);
+        when(pdc.get(AetheryteService.PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings())).thenReturn(existing100);
+
+        final org.bukkit.Server server = mock(org.bukkit.Server.class);
+        when(plugin.getServer()).thenReturn(server);
+        when(plugin.isEnabled()).thenReturn(true);
+        when(server.getPlayer(playerId)).thenReturn(player);
+
+        final AetheryteService customService = new AetheryteService(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                net.sabafly.clickportals.model.NoopAetheryteModelService.INSTANCE,
+                messages,
+                () -> -1,
+                () -> 0,
+                () -> 0.0,
+                p -> 0L,
+                (p, t) -> {},
+                (p, s, d) -> AetheryteService.WarpEvaluation.permitted(Component.empty()),
+                storage
+        );
+        customService.setEconomyProvider(economy);
+        when(economy.deposit(eq(player), eq(40.0))).thenReturn(true);
+
+        // Enabled when player is online so processPendingRefunds runs; first save fails
+        when(plugin.isEnabled()).thenReturn(true);
+        customService.processPendingRefunds(player);
+        org.mockito.Mockito.reset(scheduler);
+
+        // Plugin disables during onDisable(); flushPendingRefunds must succeed without calling player scheduler
+        when(plugin.isEnabled()).thenReturn(false);
+        assertThat(customService.flushPendingRefunds()).isTrue();
+        verify(scheduler, never()).run(eq(plugin), any(), any());
+    }
+
+    @Test
+    void placeAetheryteRefundsAndReleasesLockWhenRegionSchedulerThrows() throws Exception {
+        final org.bukkit.Server server = mock(org.bukkit.Server.class);
+        final java.lang.reflect.Field serverField = org.bukkit.Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            final io.papermc.paper.threadedregions.scheduler.RegionScheduler regionScheduler =
+                    mock(io.papermc.paper.threadedregions.scheduler.RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+            org.mockito.Mockito.doThrow(new IllegalStateException("scheduler unavailable"))
+                    .when(regionScheduler).execute(eq(plugin), any(Location.class), any(Runnable.class));
+
+            final ItemStack mainHand = mock(ItemStack.class);
+            final PersistentDataContainer pdc = mock(PersistentDataContainer.class);
+            when(mainHand.isEmpty()).thenReturn(false);
+            when(mainHand.getAmount()).thenReturn(1);
+            when(mainHand.getPersistentDataContainer()).thenReturn(pdc);
+            when(pdc.get(AetheryteItemFactory.ITEM_MARKER_KEY, PersistentDataType.BYTE)).thenReturn((byte) 1);
+            when(pdc.get(AetheryteItemFactory.VARIATION_KEY, PersistentDataType.STRING)).thenReturn("costly");
+            when(inventory.getItemInMainHand()).thenReturn(mainHand);
+
+            final AetheryteVariation costlyVariation = new AetheryteVariation(
+                    "<aqua>Costly</aqua>",
+                    null, null, null, null, null,
+                    new PlacementSection(null, List.of(CostEntry.of(CostType.VAULT, "80"))),
+                    null
+            );
+            when(variationRegistry.getOrDefault("costly")).thenReturn(costlyVariation);
+            when(economy.getBalance(player)).thenReturn(200.0);
+            when(economy.has(eq(player), anyDouble())).thenReturn(true);
+            when(economy.withdraw(player, 80.0)).thenReturn(true);
+            when(economy.deposit(player, 80.0)).thenReturn(true);
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    service.placeAetheryte(player, world, 10, 64, 20, "TestName", "costly")
+            ).isInstanceOf(IllegalStateException.class);
+
+            // Refunded once and lock released so a subsequent placement attempt reaches withdraw again
+            verify(economy, times(1)).deposit(player, 80.0);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    service.placeAetheryte(player, world, 10, 64, 20, "TestName2", "costly")
+            ).isInstanceOf(IllegalStateException.class);
             verify(economy, times(2)).withdraw(player, 80.0);
         } finally {
             serverField.set(null, null);
