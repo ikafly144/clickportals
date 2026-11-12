@@ -675,12 +675,20 @@ public final class AetheryteService {
             );
         }
         if (Permissions.canBypassWarpCost(player)) {
+            final Component originalCost = evaluation.costDisplay();
+            final String plainCost = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(originalCost);
+            final String plainFree = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(messages.freeCostLabel(player));
+            final Component bypassedCostDisplay = plainCost.equals(plainFree)
+                    ? originalCost
+                    : messages.get(player, MessageKey.COST_BYPASSED, Placeholder.component("cost", originalCost));
+
             if (evaluation.denyReasonCode() == WarpEvaluation.DenyReason.INSUFFICIENT_COST) {
-                return WarpEvaluation.permitted(messages.freeCostLabel(player));
+                return WarpEvaluation.permitted(bypassedCostDisplay);
             }
             if (evaluation.allowed()) {
-                return WarpEvaluation.permitted(messages.freeCostLabel(player));
+                return WarpEvaluation.permitted(bypassedCostDisplay);
             }
+            return new WarpEvaluation(false, bypassedCostDisplay, evaluation.denyReason(), evaluation.denyReasonCode());
         }
         return evaluation;
     }
@@ -760,15 +768,16 @@ public final class AetheryteService {
             final boolean bypassCost = Permissions.canBypassPlaceCost(player);
             final CostBundle placementCostBundle = new CostBundle(variation.placement().cost());
             final CostQuote placementQuote;
-            if (!bypassCost && !placementCostBundle.isEmpty()) {
+            final EconomyProvider activeEconomy = this.economyProvider;
+            if (!creative && !bypassCost && !placementCostBundle.isEmpty()) {
                 final Map<String, Double> costVars = Map.of(
                         "owned_count", (double) registry.countByOwner(ownerId),
                         "variation_count", (double) registry.countByOwnerAndVariation(ownerId, normalizedVar)
                 );
-                placementQuote = placementCostBundle.quote(player, costVars, economyProvider);
+                placementQuote = placementCostBundle.quote(player, costVars, activeEconomy);
                 if (!placementQuote.affordable()) {
                     pendingPlacements.remove(ownerId);
-                    final Component reason = CostFormatter.formatMissingRequirements(player, placementQuote, economyProvider, messages);
+                    final Component reason = CostFormatter.formatMissingRequirements(player, placementQuote, activeEconomy, messages);
                     player.sendMessage(messages.get(player, MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT, Placeholder.component("reason", reason)));
                     return;
                 }
@@ -784,11 +793,11 @@ public final class AetheryteService {
 
             final CostQuote chargedPlacementQuote;
             if (!creative && !bypassCost && !placementCostBundle.isEmpty()) {
-                final CostBundle.ChargeResult chargeResult = placementCostBundle.chargeWithResult(player, placementQuote, economyProvider);
+                final CostBundle.ChargeResult chargeResult = placementCostBundle.chargeWithResult(player, placementQuote, activeEconomy);
                 if (!chargeResult.success()) {
                     refundItemToPlayer(player, targetLocation, normalizedVar);
                     pendingPlacements.remove(ownerId);
-                    final Component reason = CostFormatter.formatMissingRequirements(player, placementQuote, economyProvider, messages);
+                    final Component reason = CostFormatter.formatMissingRequirements(player, placementQuote, activeEconomy, messages);
                     player.sendMessage(messages.get(player, MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT, Placeholder.component("reason", reason)));
                     return;
                 }
@@ -802,14 +811,14 @@ public final class AetheryteService {
                 Aetheryte placedAetheryte = null;
                 try {
                     if (registry.getByPosition(world, blockX, blockY, blockZ).isPresent()) {
-                        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote);
+                        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
                         pendingPlacements.remove(ownerId);
                         messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
                         return;
                     }
 
                     if (!ClearanceChecker.hasClearance(world, blockX, blockY, blockZ, variation)) {
-                        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote);
+                        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
                         pendingPlacements.remove(ownerId);
                         sendClearanceError(player, variation);
                         return;
@@ -838,7 +847,7 @@ public final class AetheryteService {
                     );
 
                     if (outcome != RegistrationOutcome.REGISTERED) {
-                        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote);
+                        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
                         pendingPlacements.remove(ownerId);
                         switch (outcome) {
                             case ALREADY_EXISTS -> messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
@@ -856,7 +865,7 @@ public final class AetheryteService {
                     placedAetheryte = aetheryte;
 
                     final Block originBlock = world.getBlockAt(blockX, blockY, blockZ);
-                    if (!originBlock.getType().isAir()) {
+                    if (!AetheryteVariation.isAirMaterial(originBlock.getType())) {
                         originBlock.setType(Material.AIR, true);
                     }
 
@@ -868,16 +877,24 @@ public final class AetheryteService {
                         plugin.getSLF4JLogger().warn("Failed to display hologram for newly placed Aetheryte {}", aetheryte.id(), e);
                     }
 
-                    world.playSound(
-                            aetheryte.markerLocation(world),
-                            Sound.BLOCK_LODESTONE_PLACE,
-                            1.0f,
-                            1.0f
-                    );
+                    try {
+                        world.playSound(
+                                aetheryte.markerLocation(world),
+                                Sound.BLOCK_LODESTONE_PLACE,
+                                1.0f,
+                                1.0f
+                        );
+                    } catch (final Throwable ignored) {
+                        // Sound playback is non-fatal if sound registry is unavailable in test environments
+                    }
                     player.getScheduler().run(plugin, postPlaceTask -> {
                         try {
                             recordPlacementCooldown(player, normalizedVar);
                             player.sendMessage(messages.aetheryteCreated(player, aetheryte));
+                            if (!chargedPlacementQuote.isFree()) {
+                                final Component paidDisplay = CostFormatter.format(player, chargedPlacementQuote, activeEconomy, messages, false);
+                                player.sendMessage(messages.get(player, MessageKey.AETHERYTE_COST_PAID, Placeholder.component("cost", paidDisplay)));
+                            }
                         } finally {
                             pendingPlacements.remove(ownerId);
                         }
@@ -889,7 +906,7 @@ public final class AetheryteService {
                         modelService.unregisterAetheryte(placedAetheryte.id());
                         hologramService.hideAetheryte(placedAetheryte.id());
                     }
-                    refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote);
+                    refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
                     pendingPlacements.remove(ownerId);
                     throw t;
                 }
@@ -906,13 +923,26 @@ public final class AetheryteService {
             final CostBundle costBundle,
             final CostQuote costQuote
     ) {
+        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, costBundle, costQuote, this.economyProvider);
+    }
+
+    void refundPlacement(
+            final Player player,
+            final Location targetLocation,
+            final String normalizedVar,
+            final boolean creative,
+            final boolean bypassCost,
+            final CostBundle costBundle,
+            final CostQuote costQuote,
+            final EconomyProvider paymentProvider
+    ) {
         if (!creative) {
             refundItemToPlayer(player, targetLocation, normalizedVar);
             if (!bypassCost && !costBundle.isEmpty()) {
                 final ScheduledTask scheduled = player.getScheduler().run(
                         plugin,
                         t -> {
-                            final CostBundle.RefundResult result = costBundle.refundWithResult(player, costQuote, economyProvider);
+                            final CostBundle.RefundResult result = costBundle.refundWithResult(player, costQuote, paymentProvider);
                             if (!result.success()) {
                                 pendingRefunds.computeIfAbsent(player.getUniqueId(), k -> new CopyOnWriteArrayList<>())
                                         .addAll(result.unrefundedItems());
@@ -1016,7 +1046,10 @@ public final class AetheryteService {
      * Removes all backing {@link Marker} entities associated with the given Aetheryte in its chunk.
      */
     private static void removeMarkerEntitiesAt(final World world, final Aetheryte target) {
-        final Chunk chunk = world.getChunkAt(target.blockX() >> 4, target.blockZ() >> 4);
+        final @Nullable Chunk chunk = world.getChunkAt(target.blockX() >> 4, target.blockZ() >> 4);
+        if (chunk == null) {
+            return;
+        }
         for (final Entity entity : chunk.getEntities()) {
             if (entity instanceof Marker) {
                 final Optional<Aetheryte> data = AetheryteRegistry.readMarkerData(entity);
@@ -1160,12 +1193,22 @@ public final class AetheryteService {
                             }
                             if (Boolean.TRUE.equals(success)) {
                                 if (!bypassCost) {
+                                    final List<CostItemQuote> chargedItems = activeEvaluator.popPendingCharge(player, destination);
                                     activeEvaluator.commit(player, source, destination);
+                                    final CostQuote paidQuote = new CostQuote(chargedItems);
+                                    if (!paidQuote.isFree()) {
+                                        final Component paidDisplay = CostFormatter.format(player, paidQuote, this.economyProvider, messages, false);
+                                        player.sendMessage(messages.get(player, MessageKey.WARP_COST_PAID, Placeholder.component("cost", paidDisplay)));
+                                    }
                                 }
                                 modelService.triggerAnimation(destination.id(), ModelAnimationTrigger.ON_WARP_ARRIVE);
                                 player.sendMessage(messages.warpedTo(player, destination));
                                 player.getScheduler().run(plugin, postTask -> {
-                                    player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
+                                    try {
+                                        player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
+                                    } catch (final Throwable ignored) {
+                                        // Sound playback is non-fatal if sound registry is unavailable in test environments
+                                    }
                                     hologramService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
                                     modelService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
                                 }, null);

@@ -14,6 +14,7 @@ hologram:
 
 cost:
   free: "<green>Free</green>"
+  bypassed: "<strikethrough><cost></strikethrough> <green>(Bypassed)</green>"
   separator: "<dark_gray> + </dark_gray>"
   vault: "<gold><amount></gold>"
   exp-points: "<green><amount> XP</green>"
@@ -31,6 +32,7 @@ dialog:
     description: "<gray>Target coordinates: </gray><white><world> (<x>, <y>, <z>)</white>"
     variation: "<gray>Variation: </gray><variation>"
     cost: "<gray>Placement cost: </gray><cost>"
+    cost-bypassed: "<gray>Placement cost: </gray><strikethrough><cost></strikethrough> <green>(Bypassed)</green>"
     name-input-label: "<aqua>Aetheryte Name</aqua>"
     default-name: "<player>'s Aetheryte"
   button:
@@ -43,6 +45,7 @@ dialog:
   warp:
     title: "<aqua>✦ Aetheryte: </aqua><white><bold><name></bold></white>"
     body-empty: "<gray>Current location: </gray><white><name></white><newline><yellow>No other Aetherytes are available to warp to yet.</yellow>"
+    body-no-route: "<gray>Current location: </gray><white><name></white><newline><yellow>No connecting routes to other dimensions are available.</yellow>"
     body-select: "<gray>Select an Aetheryte destination to warp to.</gray>"
     destination-available: "<aqua>✦ </aqua><white><name></white><dark_gray> [</dark_gray><cost><dark_gray>]</dark_gray>"
     destination-unavailable: "<red>✖ </red><gray><name></gray><dark_gray> [</dark_gray><cost><dark_gray>]</dark_gray>"
@@ -57,9 +60,11 @@ dialog:
 aetheryte:
   created: "<prefix><green>Placed Aetheryte \"</green><white><bold><name></bold></white><green>\".</green>"
   removed: "<prefix><yellow>Removed Aetheryte \"</yellow><white><bold><name></bold></white><yellow>\".</yellow>"
+  cost-paid: "<prefix><gray>Paid <cost> for Aetheryte placement.</gray>"
 
 warp:
   success: "<prefix><aqua>Warped to \"</aqua><white><bold><name></bold></white><aqua>\".</aqua>"
+  cost-paid: "<prefix><gray>Paid <cost> for warp.</gray>"
 
 error:
   invalid-name: "<prefix><red>Please enter a valid Aetheryte name (1-32 characters).</red>"

@@ -14,6 +14,7 @@ hologram:
 
 cost:
   free: "<green>無料</green>"
+  bypassed: "<strikethrough><cost></strikethrough> <green>(免除)</green>"
   separator: "<dark_gray> + </dark_gray>"
   vault: "<gold><amount></gold>"
   exp-points: "<green><amount> XP</green>"
@@ -31,6 +32,7 @@ dialog:
     description: "<gray>設置座標: </gray><white><world> (<x>, <y>, <z>)</white>"
     variation: "<gray>種類: </gray><variation>"
     cost: "<gray>設置コスト: </gray><cost>"
+    cost-bypassed: "<gray>設置コスト: </gray><strikethrough><cost></strikethrough> <green>(免除)</green>"
     name-input-label: "<aqua>エーテライト名</aqua>"
     default-name: "<player>のエーテライト"
   button:
@@ -43,6 +45,7 @@ dialog:
   warp:
     title: "<aqua>✦ エーテライト: </aqua><white><bold><name></bold></white>"
     body-empty: "<gray>現在地: </gray><white><name></white><newline><yellow>ワープ可能な他のエーテライトがまだありません。</yellow>"
+    body-no-route: "<gray>現在地: </gray><white><name></white><newline><yellow>他のディメンションへ接続可能なルートがありません。</yellow>"
     body-select: "<gray>ワープ先のエーテライトを選択してください。</gray>"
     destination-available: "<aqua>✦ </aqua><white><name></white><dark_gray> [</dark_gray><cost><dark_gray>]</dark_gray>"
     destination-unavailable: "<red>✖ </red><gray><name></gray><dark_gray> [</dark_gray><cost><dark_gray>]</dark_gray>"
@@ -57,9 +60,11 @@ dialog:
 aetheryte:
   created: "<prefix><green>エーテライト「</green><white><bold><name></bold></white><green>」を設置しました。</green>"
   removed: "<prefix><yellow>エーテライト「</yellow><white><bold><name></bold></white><yellow>」を撤去しました。</yellow>"
+  cost-paid: "<prefix><gray>エーテライトの設置費用として <cost> を支払いました。</gray>"
 
 warp:
   success: "<prefix><aqua>「</aqua><white><bold><name></bold></white><aqua>」へワープしました。</aqua>"
+  cost-paid: "<prefix><gray>ワープ費用として <cost> を支払いました。</gray>"
 
 error:
   invalid-name: "<prefix><red>有効なエーテライト名を入力してください（1〜32文字）。</red>"

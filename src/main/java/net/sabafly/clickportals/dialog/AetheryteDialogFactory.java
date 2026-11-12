@@ -37,9 +37,11 @@ import net.sabafly.clickportals.cost.CostFormatter;
 import net.sabafly.clickportals.cost.CostQuote;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
+import net.sabafly.clickportals.permission.Permissions;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation;
 import net.sabafly.clickportals.variation.AetheryteVariation;
+import org.bukkit.GameMode;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 
@@ -129,7 +131,12 @@ public final class AetheryteDialogFactory {
             );
             final CostQuote quote = placementCostBundle.quote(player, costVars, service.economyProvider());
             final Component costDisplay = CostFormatter.format(player, quote, service.economyProvider(), messages, true);
-            costLine = Component.newline().append(messages.get(player, MessageKey.DIALOG_CREATE_COST, Placeholder.component("cost", costDisplay)));
+            final boolean bypassed = player.getGameMode() == GameMode.CREATIVE || Permissions.canBypassPlaceCost(player);
+            if (bypassed) {
+                costLine = Component.newline().append(messages.get(player, MessageKey.DIALOG_CREATE_COST_BYPASSED, Placeholder.component("cost", costDisplay)));
+            } else {
+                costLine = Component.newline().append(messages.get(player, MessageKey.DIALOG_CREATE_COST, Placeholder.component("cost", costDisplay)));
+            }
         } else {
             costLine = Component.empty();
         }
@@ -216,13 +223,16 @@ public final class AetheryteDialogFactory {
                 .build();
 
         if (buttons.isEmpty()) {
+            final Component emptyBody = allDestinations.isEmpty()
+                    ? messages.warpDialogBody(player, current, 0)
+                    : messages.get(player, MessageKey.DIALOG_WARP_BODY_NO_ROUTE, Placeholder.unparsed("name", current.name()));
             final Dialog noticeDialog = Dialog.create(factory -> factory.empty()
                     .base(DialogBase.builder(messages.warpDialogTitle(player, current))
                             .canCloseWithEscape(true)
                             .pause(false)
                             .afterAction(DialogBase.DialogAfterAction.CLOSE)
                             .body(List.of(
-                                    DialogBody.plainMessage(messages.warpDialogBody(player, current, 0))
+                                    DialogBody.plainMessage(emptyBody)
                             ))
                             .build())
                     .type(DialogType.notice(closeButton))

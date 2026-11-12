@@ -33,6 +33,7 @@ public enum MessageKey {
     HOLOGRAM_TITLE("hologram.title"),
 
     COST_FREE("cost.free"),
+    COST_BYPASSED("cost.bypassed"),
     COST_SEPARATOR("cost.separator"),
     COST_VAULT("cost.vault"),
     COST_EXP_POINTS("cost.exp-points"),
@@ -47,6 +48,7 @@ public enum MessageKey {
     DIALOG_CREATE_DESCRIPTION("dialog.create.description"),
     DIALOG_CREATE_VARIATION("dialog.create.variation"),
     DIALOG_CREATE_COST("dialog.create.cost"),
+    DIALOG_CREATE_COST_BYPASSED("dialog.create.cost-bypassed"),
     DIALOG_CREATE_NAME_INPUT_LABEL("dialog.create.name-input-label"),
     DIALOG_CREATE_DEFAULT_NAME("dialog.create.default-name"),
 
@@ -59,6 +61,7 @@ public enum MessageKey {
 
     DIALOG_WARP_TITLE("dialog.warp.title"),
     DIALOG_WARP_BODY_EMPTY("dialog.warp.body-empty"),
+    DIALOG_WARP_BODY_NO_ROUTE("dialog.warp.body-no-route"),
     DIALOG_WARP_BODY_SELECT("dialog.warp.body-select"),
     DIALOG_WARP_DESTINATION_AVAILABLE("dialog.warp.destination-available"),
     DIALOG_WARP_DESTINATION_UNAVAILABLE("dialog.warp.destination-unavailable"),
@@ -72,8 +75,10 @@ public enum MessageKey {
 
     AETHERYTE_CREATED("aetheryte.created"),
     AETHERYTE_REMOVED("aetheryte.removed"),
+    AETHERYTE_COST_PAID("aetheryte.cost-paid"),
 
     WARP_SUCCESS("warp.success"),
+    WARP_COST_PAID("warp.cost-paid"),
 
     ERROR_INVALID_NAME("error.invalid-name"),
     ERROR_SPACE_NOT_EMPTY("error.space-not-empty"),

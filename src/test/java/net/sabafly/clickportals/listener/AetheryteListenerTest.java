@@ -19,6 +19,8 @@ package net.sabafly.clickportals.listener;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -32,14 +34,18 @@ import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.sabafly.clickportals.ClickPortals;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
+import net.sabafly.clickportals.cost.CostItemQuote;
+import net.sabafly.clickportals.cost.CostType;
 import net.sabafly.clickportals.dialog.AetheryteDialogFactory;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.permission.Permissions;
@@ -72,6 +78,7 @@ import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.Plugin;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class AetheryteListenerTest {
 
@@ -392,6 +399,89 @@ class AetheryteListenerTest {
             // Next warp attempt: player is NOT locked in inFlightWarps, so charge() is invoked again!
             customService.warpToAetheryte(player, registeredAetheryte, registeredAetheryte.id());
             verify(evaluator, times(2)).charge(any(), any(), any());
+        } finally {
+            serverField.set(null, null);
+        }
+    }
+
+    @Test
+    void warpToAetheryteChargesCostAndSendsPaidNotificationOnSuccess() throws Exception {
+        final Server server = mock(Server.class);
+        final java.lang.reflect.Field serverField = Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            when(server.getWorld(WORLD_ID)).thenReturn(world);
+            when(server.isOwnedByCurrentRegion(any(), any(int.class), any(int.class))).thenReturn(true);
+            final RegionScheduler regionScheduler = mock(RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+            doAnswer(inv -> {
+                ((Runnable) inv.getArgument(2)).run();
+                return null;
+            }).when(regionScheduler).execute(any(), any(Location.class), any());
+
+            final Block safeFloor = mock(Block.class);
+            when(safeFloor.isSolid()).thenReturn(true);
+            when(safeFloor.getType()).thenReturn(Material.STONE);
+            final Block safeAir = mock(Block.class);
+            when(safeAir.isPassable()).thenReturn(true);
+            when(safeAir.getType()).thenReturn(Material.AIR);
+
+            when(world.getBlockAt(5, 63, 5)).thenReturn(safeFloor);
+            when(world.getBlockAt(5, 64, 5)).thenReturn(safeAir);
+            when(world.getBlockAt(5, 65, 5)).thenReturn(safeAir);
+            when(world.getBlockAt(5, 66, 5)).thenReturn(safeAir);
+
+            final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
+            when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.text("$30.00")));
+            when(evaluator.charge(any(), any(), any())).thenReturn(true);
+            when(evaluator.popPendingCharge(any(), any())).thenReturn(
+                    List.of(new CostItemQuote(CostType.VAULT, 30.0, true, true, 100.0, false))
+            );
+
+            final AetheryteService customService = new AetheryteService(
+                    plugin,
+                    registry,
+                    VariationRegistry.defaults(),
+                    NoopHologramService.INSTANCE,
+                    Messages.defaults(),
+                    () -> -1,
+                    () -> 0,
+                    p -> 0L,
+                    (p, t) -> {},
+                    evaluator
+            );
+            final net.sabafly.clickportals.economy.EconomyProvider economy = mock(net.sabafly.clickportals.economy.EconomyProvider.class);
+            when(economy.isAvailable()).thenReturn(true);
+            when(economy.format(30.0)).thenReturn("$30.00");
+            customService.setEconomyProvider(economy);
+
+            final Player player = mock(Player.class);
+            final UUID playerId = UUID.randomUUID();
+            when(player.getUniqueId()).thenReturn(playerId);
+            when(player.hasPermission("clickportals.use")).thenReturn(true);
+            when(player.getWorld()).thenReturn(world);
+            when(player.getLocation()).thenReturn(new Location(world, 5, 64, 5));
+            when(player.teleportAsync(any(Location.class))).thenReturn(CompletableFuture.completedFuture(true));
+
+            final EntityScheduler entityScheduler = mock(EntityScheduler.class);
+            when(player.getScheduler()).thenReturn(entityScheduler);
+            doAnswer(inv -> {
+                @SuppressWarnings("unchecked")
+                final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+                consumer.accept(mock(ScheduledTask.class));
+                return mock(ScheduledTask.class);
+            }).when(entityScheduler).run(any(), any(), any());
+
+            customService.warpToAetheryte(player, registeredAetheryte, registeredAetheryte.id());
+
+            verify(evaluator).commit(eq(player), eq(registeredAetheryte), eq(registeredAetheryte));
+            final ArgumentCaptor<Component> msgCaptor = ArgumentCaptor.forClass(Component.class);
+            verify(player, atLeastOnce()).sendMessage(msgCaptor.capture());
+            final boolean hasPaidMessage = msgCaptor.getAllValues().stream()
+                    .map(c -> PlainTextComponentSerializer.plainText().serialize(c))
+                    .anyMatch(s -> s.contains("Paid") && s.contains("$30.00"));
+            assertThat(hasPaidMessage).isTrue();
         } finally {
             serverField.set(null, null);
         }

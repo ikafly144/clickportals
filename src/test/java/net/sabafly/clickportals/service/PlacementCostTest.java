@@ -20,7 +20,10 @@ package net.sabafly.clickportals.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -39,18 +42,24 @@ import net.sabafly.clickportals.cost.CostEntry;
 import net.sabafly.clickportals.cost.CostQuote;
 import net.sabafly.clickportals.cost.CostType;
 import net.sabafly.clickportals.economy.EconomyProvider;
+import net.sabafly.clickportals.item.AetheryteItemFactory;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.permission.Permissions;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.AetheryteVariation.PlacementSection;
 import net.sabafly.clickportals.variation.VariationRegistry;
 import net.sabafly.clickportals.visual.HologramService;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.persistence.PersistentDataContainer;
+import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.Plugin;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -88,10 +97,12 @@ class PlacementCostTest {
         when(player.getGameMode()).thenReturn(GameMode.SURVIVAL);
         when(player.getInventory()).thenReturn(inventory);
         when(player.getScheduler()).thenReturn(scheduler);
+        when(player.getPersistentDataContainer()).thenReturn(mock(PersistentDataContainer.class));
         when(player.hasPermission(Permissions.PLACE)).thenReturn(true);
 
         when(world.getUID()).thenReturn(UUID.randomUUID());
         when(world.getName()).thenReturn("world");
+        when(world.getPersistentDataContainer()).thenReturn(mock(PersistentDataContainer.class));
 
         when(economy.isAvailable()).thenReturn(true);
         when(economy.getBalance(player)).thenReturn(500.0);
@@ -178,6 +189,51 @@ class PlacementCostTest {
 
         // With bypass, economy is not charged
         verify(economy, never()).withdraw(any(), anyDouble());
+    }
+
+    @Test
+    void creativeModeExemptsPlayerFromPlacementCostEvenWithZeroFunds() throws Exception {
+        final org.bukkit.Server server = mock(org.bukkit.Server.class);
+        final java.lang.reflect.Field serverField = org.bukkit.Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            final io.papermc.paper.threadedregions.scheduler.RegionScheduler regionScheduler =
+                    mock(io.papermc.paper.threadedregions.scheduler.RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+
+            when(player.getGameMode()).thenReturn(org.bukkit.GameMode.CREATIVE);
+            when(player.hasPermission(Permissions.BYPASS_COST_PLACE)).thenReturn(false);
+            when(economy.has(any(), anyDouble())).thenReturn(false);
+
+            final AetheryteVariation expensiveVariation = new AetheryteVariation(
+                    "<aqua>Costly</aqua>",
+                    null, null, null, null, null,
+                    new PlacementSection(null, List.of(CostEntry.of(CostType.VAULT, "1000"))),
+                    null
+            );
+            when(variationRegistry.getOrDefault("costly")).thenReturn(expensiveVariation);
+
+            final AetheryteService service = new AetheryteService(
+                    plugin,
+                    registry,
+                    variationRegistry,
+                    hologramService,
+                    messages,
+                    () -> -1,
+                    () -> 0,
+                    p -> 0L,
+                    (p, t) -> {},
+                    (p, s, d) -> AetheryteService.WarpEvaluation.permitted(Component.empty())
+            );
+            service.setEconomyProvider(economy);
+
+            service.placeAetheryte(player, world, 10, 64, 20, "CostlyPortal", "costly");
+
+            verify(economy, never()).withdraw(any(), anyDouble());
+        } finally {
+            serverField.set(null, null);
+        }
     }
 
     @Test
@@ -354,6 +410,9 @@ class PlacementCostTest {
         when(player.hasPermission(Permissions.BYPASS_COST_WARP)).thenReturn(true);
         final AetheryteService.WarpEvaluation permittedEval = service.evaluateWarp(player, null, dest);
         assertThat(permittedEval.allowed()).isTrue();
+        assertThat(net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(permittedEval.costDisplay()))
+                .contains("100 G")
+                .contains("Bypassed");
 
         // But NO_ROUTE or TOO_FAR is NOT bypassed even with BYPASS_COST_WARP
         when(mockEvaluator.evaluate(eq(player), any(), eq(dest)))
@@ -396,5 +455,72 @@ class PlacementCostTest {
         assertThat(eval.denyReasonCode()).isEqualTo(AetheryteService.WarpEvaluation.DenyReason.NO_PERMISSION);
         assertThat(net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(eval.costDisplay()))
                 .isEqualTo("$85.00");
+    }
+
+    @Test
+    void successfulPlacementChargesCostAndSendsPaidNotification() throws Exception {
+        final org.bukkit.Server server = mock(org.bukkit.Server.class);
+        final java.lang.reflect.Field serverField = org.bukkit.Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            final io.papermc.paper.threadedregions.scheduler.RegionScheduler regionScheduler =
+                    mock(io.papermc.paper.threadedregions.scheduler.RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+            when(server.isOwnedByCurrentRegion(any(), any(int.class), any(int.class))).thenReturn(true);
+            doAnswer(inv -> {
+                ((Runnable) inv.getArgument(2)).run();
+                return null;
+            }).when(regionScheduler).execute(any(), any(Location.class), any());
+
+            final Block originBlock = mock(Block.class);
+            when(originBlock.getType()).thenReturn(Material.AIR);
+            when(originBlock.isReplaceable()).thenReturn(true);
+            when(world.getBlockAt(anyInt(), anyInt(), anyInt())).thenReturn(originBlock);
+            when(world.getBlockAt(any(Location.class))).thenReturn(originBlock);
+
+            final ItemStack mainHand = mock(ItemStack.class);
+            final PersistentDataContainer pdc = mock(PersistentDataContainer.class);
+            when(mainHand.isEmpty()).thenReturn(false);
+            when(mainHand.getAmount()).thenReturn(1);
+            when(mainHand.getPersistentDataContainer()).thenReturn(pdc);
+            when(pdc.get(AetheryteItemFactory.ITEM_MARKER_KEY, PersistentDataType.BYTE)).thenReturn((byte) 1);
+            when(pdc.get(AetheryteItemFactory.VARIATION_KEY, PersistentDataType.STRING)).thenReturn("cheap");
+            when(inventory.getItemInMainHand()).thenReturn(mainHand);
+
+            final AetheryteVariation cheapVariation = new AetheryteVariation(
+                    "<aqua>Cheap</aqua>",
+                    null, null, null, null, null,
+                    new PlacementSection(null, List.of(CostEntry.of(CostType.VAULT, "50"))),
+                    null
+            );
+            when(variationRegistry.getOrDefault("cheap")).thenReturn(cheapVariation);
+
+            final AetheryteService service = new AetheryteService(
+                    plugin,
+                    registry,
+                    variationRegistry,
+                    hologramService,
+                    messages,
+                    () -> -1,
+                    () -> 0,
+                    p -> 0L,
+                    (p, t) -> {},
+                    (p, s, d) -> AetheryteService.WarpEvaluation.permitted(Component.empty())
+            );
+            service.setEconomyProvider(economy);
+
+            service.placeAetheryte(player, world, 10, 64, 20, "CheapPortal", "cheap");
+
+            verify(economy).withdraw(player, 50.0);
+            final ArgumentCaptor<Component> msgCaptor = ArgumentCaptor.forClass(Component.class);
+            verify(player, atLeastOnce()).sendMessage(msgCaptor.capture());
+            final boolean hasPaidMsg = msgCaptor.getAllValues().stream()
+                    .map(c -> PlainTextComponentSerializer.plainText().serialize(c))
+                    .anyMatch(s -> s.contains("Paid") && s.contains("$50.00"));
+            assertThat(hasPaidMsg).isTrue();
+        } finally {
+            serverField.set(null, null);
+        }
     }
 }
