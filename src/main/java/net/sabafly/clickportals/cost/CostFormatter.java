@@ -21,9 +21,9 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.sabafly.clickportals.economy.EconomyProvider;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
@@ -56,8 +56,33 @@ public final class CostFormatter {
             final Messages messages,
             final boolean showOptionalCosts
     ) {
+        return format(messages.locale(player), quote, economy, messages, showOptionalCosts);
+    }
+
+    /**
+     * Formats the quote into a readable label using a pre-resolved {@link Locale} (#7, #20).
+     */
+    public static Component format(
+            final Locale locale,
+            final CostQuote quote,
+            final EconomyProvider economy,
+            final Messages messages,
+            final boolean showOptionalCosts
+    ) {
         if (quote.isFree()) {
-            return messages.freeCostLabel(player);
+            return messages.freeCostLabel(locale);
+        }
+
+        final List<CostItemQuote> items = quote.items();
+        if (items.size() == 1) {
+            final CostItemQuote item = items.get(0);
+            if (item.disabled() || item.amount() <= 0.0 || (!showOptionalCosts && !item.required())) {
+                return messages.freeCostLabel(locale);
+            }
+            if (item.type() == null || !Double.isFinite(item.amount())) {
+                return messages.get(locale, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET);
+            }
+            return formatSingleItem(locale, item.type(), item.amount(), economy, messages);
         }
 
         final Map<CostType, BigDecimal> aggregated = new LinkedHashMap<>();
@@ -78,21 +103,21 @@ public final class CostFormatter {
 
         if (aggregated.isEmpty()) {
             return hasInvalid
-                    ? messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET)
-                    : messages.freeCostLabel(player);
+                    ? messages.get(locale, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET)
+                    : messages.freeCostLabel(locale);
         }
 
         final List<Component> parts = new ArrayList<>();
         if (hasInvalid) {
-            parts.add(messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET));
+            parts.add(messages.get(locale, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET));
         }
         for (final Map.Entry<CostType, BigDecimal> entry : aggregated.entrySet()) {
             final CostType type = entry.getKey();
             final double amount = entry.getValue().doubleValue();
-            parts.add(formatSingleItem(player, type, amount, economy, messages));
+            parts.add(formatSingleItem(locale, type, amount, economy, messages));
         }
 
-        final Component separator = messages.get(player, MessageKey.COST_SEPARATOR);
+        final Component separator = messages.get(locale, MessageKey.COST_SEPARATOR);
         Component result = parts.get(0);
         for (int i = 1; i < parts.size(); i++) {
             result = result.append(separator).append(parts.get(i));
@@ -110,9 +135,21 @@ public final class CostFormatter {
             final EconomyProvider economy,
             final Messages messages
     ) {
+        return formatMissingRequirements(messages.locale(player), quote, economy, messages);
+    }
+
+    /**
+     * Formats the specific insufficient cost reasons using a pre-resolved {@link Locale} (#7, #20).
+     */
+    public static Component formatMissingRequirements(
+            final Locale locale,
+            final CostQuote quote,
+            final EconomyProvider economy,
+            final Messages messages
+    ) {
         final List<CostItemQuote> missing = quote.missingRequirements();
         if (missing.isEmpty()) {
-            return messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST);
+            return messages.get(locale, MessageKey.ERROR_INSUFFICIENT_COST);
         }
 
         final Map<CostType, BigDecimal> aggregatedMissing = new LinkedHashMap<>();
@@ -127,7 +164,7 @@ public final class CostFormatter {
 
         final List<Component> reasons = new ArrayList<>();
         if (hasInvalid) {
-            reasons.add(messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET));
+            reasons.add(messages.get(locale, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET));
         }
         for (final Map.Entry<CostType, BigDecimal> entry : aggregatedMissing.entrySet()) {
             final CostType type = entry.getKey();
@@ -139,14 +176,14 @@ public final class CostFormatter {
                 case EXP_LEVELS -> MessageKey.COST_INSUFFICIENT_EXP_LEVELS;
                 case FOOD -> MessageKey.COST_INSUFFICIENT_FOOD;
             };
-            reasons.add(messages.get(player, key, Placeholder.unparsed("amount", formattedAmount)));
+            reasons.add(messages.renderAmountPlaceholder(locale, key, formattedAmount));
         }
 
         if (reasons.isEmpty()) {
-            return messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST);
+            return messages.get(locale, MessageKey.ERROR_INSUFFICIENT_COST);
         }
 
-        final Component separator = messages.get(player, MessageKey.COST_SEPARATOR);
+        final Component separator = messages.get(locale, MessageKey.COST_SEPARATOR);
         Component result = reasons.get(0);
         for (int i = 1; i < reasons.size(); i++) {
             result = result.append(separator).append(reasons.get(i));
@@ -155,7 +192,7 @@ public final class CostFormatter {
     }
 
     private static Component formatSingleItem(
-            final Player player,
+            final Locale locale,
             final CostType type,
             final double amount,
             final EconomyProvider economy,
@@ -168,7 +205,7 @@ public final class CostFormatter {
             case EXP_LEVELS -> MessageKey.COST_EXP_LEVELS;
             case FOOD -> MessageKey.COST_FOOD;
         };
-        return messages.get(player, key, Placeholder.unparsed("amount", formattedAmount));
+        return messages.renderAmountPlaceholder(locale, key, formattedAmount);
     }
 
     private static String formatAmountString(final CostType type, final double amount, final EconomyProvider economy) {

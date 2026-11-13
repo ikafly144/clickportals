@@ -20,11 +20,15 @@ package net.sabafly.clickportals.message;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.OptionalDouble;
+import java.util.concurrent.ConcurrentHashMap;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TextComponent;
+import net.kyori.adventure.text.format.Style;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
@@ -41,12 +45,109 @@ import org.slf4j.Logger;
 public final class Messages {
 
     private static final MiniMessage MINI_MESSAGE = MiniMessage.miniMessage();
+    private static final char SENTINEL_START = '\uE000';
+    private static final char SENTINEL_END = '\uE001';
+    private static final List<String> ARG_NAME_COST = List.of("name", "cost");
+    private static final List<String> ARG_AMOUNT = List.of("amount");
+
+    private record TemplateCacheKey(MessageKey key, List<String> argNames) {
+    }
+
+    private sealed interface CompiledNode permits StaticNode, SlotNode, GroupNode {
+        Component render(Component[] args);
+    }
+
+    private record StaticNode(Component component) implements CompiledNode {
+        @Override
+        public Component render(final Component[] args) {
+            return component;
+        }
+    }
+
+    private record SlotNode(int index, Style style) implements CompiledNode {
+        @Override
+        public Component render(final Component[] args) {
+            final Component value = args[index];
+            if (style.isEmpty()) {
+                return value;
+            }
+            if (value instanceof TextComponent text && text.style().isEmpty() && text.children().isEmpty()) {
+                return Component.text(text.content(), style);
+            }
+            return Component.text("", style).append(value);
+        }
+    }
+
+    private record GroupNode(Component shellWithoutChildren, List<CompiledNode> children) implements CompiledNode {
+        @Override
+        public Component render(final Component[] args) {
+            final List<Component> rendered = new ArrayList<>(children.size());
+            for (final CompiledNode child : children) {
+                rendered.add(child.render(args));
+            }
+            return shellWithoutChildren.children(rendered);
+        }
+    }
+
+    private record CompiledTemplate(@Nullable CompiledNode root) {
+        static final CompiledTemplate UNSUPPORTED = new CompiledTemplate(null);
+    }
+
+    private record CachedBundle(
+            TranslationBundle bundle,
+            Component prefixComponent,
+            TagResolver prefixResolver,
+            Map<MessageKey, Component> staticCache,
+            Map<TemplateCacheKey, CompiledTemplate> compiledTemplates
+    ) {
+    }
 
     private record State(
             Map<Locale, TranslationBundle> bundles,
+            Map<Locale, CachedBundle> cachedBundles,
+            Map<Locale, CachedBundle> resolvedByLocale,
+            CachedBundle emptyFallback,
             Locale defaultLocale,
             boolean useClientLocale
     ) {
+        static State create(
+                final Map<Locale, TranslationBundle> rawBundles,
+                final Locale rawDefaultLocale,
+                final boolean useClientLocale
+        ) {
+            final Map<Locale, TranslationBundle> bundles = Map.copyOf(rawBundles);
+            final Locale defaultLocale = LanguageLoader.normalizeLocale(rawDefaultLocale);
+            final Map<Locale, CachedBundle> cached = new HashMap<>(bundles.size() * 2);
+            for (final Map.Entry<Locale, TranslationBundle> entry : bundles.entrySet()) {
+                cached.put(entry.getKey(), buildCachedBundle(bundles, defaultLocale, entry.getValue()));
+            }
+            final CachedBundle emptyFallback = buildCachedBundle(bundles, defaultLocale, TranslationBundle.empty());
+            return new State(
+                    bundles,
+                    Map.copyOf(cached),
+                    new ConcurrentHashMap<>(),
+                    emptyFallback,
+                    defaultLocale,
+                    useClientLocale
+            );
+        }
+
+        private static CachedBundle buildCachedBundle(
+                final Map<Locale, TranslationBundle> bundles,
+                final Locale defaultLocale,
+                final TranslationBundle bundle
+        ) {
+            final String prefixTemplate = lookupString(bundles, defaultLocale, bundle, MessageKey.PREFIX);
+            final Component prefixComponent = MINI_MESSAGE.deserialize(prefixTemplate);
+            final TagResolver prefixResolver = Placeholder.component("prefix", prefixComponent);
+            return new CachedBundle(
+                    bundle,
+                    prefixComponent,
+                    prefixResolver,
+                    new ConcurrentHashMap<>(),
+                    new ConcurrentHashMap<>()
+            );
+        }
     }
 
     private volatile State state;
@@ -59,11 +160,7 @@ public final class Messages {
             final Locale defaultLocale,
             final boolean useClientLocale
     ) {
-        this.state = new State(
-                Map.copyOf(bundles),
-                LanguageLoader.normalizeLocale(defaultLocale),
-                useClientLocale
-        );
+        this.state = State.create(bundles, defaultLocale, useClientLocale);
     }
 
     /**
@@ -103,11 +200,7 @@ public final class Messages {
             final Logger logger
     ) {
         final Map<Locale, TranslationBundle> bundles = LanguageLoader.loadDirectory(langDir, logger);
-        this.state = new State(
-                Map.copyOf(bundles),
-                LanguageLoader.normalizeLocale(defaultLocale),
-                useClientLocale
-        );
+        this.state = State.create(bundles, defaultLocale, useClientLocale);
     }
 
     /**
@@ -150,17 +243,170 @@ public final class Messages {
      */
     public Component get(final Locale locale, final MessageKey key, final TagResolver... resolvers) {
         final State current = this.state;
-        final TranslationBundle bundle = resolveBundle(current, locale);
-        final String template = lookupString(current, bundle, key);
+        final CachedBundle cached = resolveCachedBundle(current, locale);
+        if (resolvers.length == 0) {
+            if (key == MessageKey.PREFIX) {
+                return cached.prefixComponent();
+            }
+            return cached.staticCache().computeIfAbsent(key, k -> renderSingle(current, cached, k, resolvers));
+        }
+        return renderSingle(current, cached, key, resolvers);
+    }
+
+    /**
+     * Renders a single-line cost amount placeholder ({@code <amount>}) using a pre-compiled template cache (#20).
+     */
+    public Component renderAmountPlaceholder(
+            final Locale locale,
+            final MessageKey key,
+            final String amount
+    ) {
+        return renderWithPlaceholders(locale, key, ARG_AMOUNT, Component.text(amount));
+    }
+
+    private Component renderWithPlaceholders(
+            final Locale locale,
+            final MessageKey key,
+            final List<String> argNames,
+            final Component... args
+    ) {
+        final State current = this.state;
+        final CachedBundle cached = resolveCachedBundle(current, locale);
+        final CompiledTemplate template = cached.compiledTemplates().computeIfAbsent(
+                new TemplateCacheKey(key, argNames),
+                cacheKey -> compileTemplate(current, cached, cacheKey)
+        );
+        final CompiledNode root = template.root();
+        if (root != null) {
+            return root.render(args);
+        }
+        final TagResolver[] resolvers = new TagResolver[argNames.size()];
+        for (int i = 0; i < argNames.size(); i++) {
+            resolvers[i] = Placeholder.component(argNames.get(i), args[i]);
+        }
+        return renderSingle(current, cached, key, resolvers);
+    }
+
+    private static CompiledTemplate compileTemplate(
+            final State current,
+            final CachedBundle cached,
+            final TemplateCacheKey cacheKey
+    ) {
+        final String raw = lookupString(current, cached.bundle(), cacheKey.key());
+        if (raw.indexOf(SENTINEL_START) >= 0 || raw.indexOf(SENTINEL_END) >= 0) {
+            return CompiledTemplate.UNSUPPORTED;
+        }
+        final String lower = raw.toLowerCase(Locale.ROOT);
+        if (lower.contains("<gradient")
+                || lower.contains("<rainbow")
+                || lower.contains("<transition")
+                || lower.contains("<hover")
+                || lower.contains("<click")
+                || lower.contains("<insert")
+                || lower.contains("<selector")) {
+            return CompiledTemplate.UNSUPPORTED;
+        }
+
+        final TagResolver.Builder builder = TagResolver.builder().resolver(cached.prefixResolver());
+        final List<String> argNames = cacheKey.argNames();
+        for (int i = 0; i < argNames.size(); i++) {
+            builder.resolver(Placeholder.unparsed(argNames.get(i), SENTINEL_START + Integer.toString(i) + SENTINEL_END));
+        }
+        final Component parsed = MINI_MESSAGE.deserialize(raw, builder.build());
+        final @Nullable CompiledNode compiled = compileNode(parsed, argNames.size());
+        return compiled != null ? new CompiledTemplate(compiled) : CompiledTemplate.UNSUPPORTED;
+    }
+
+    private static @Nullable CompiledNode compileNode(final Component component, final int argCount) {
+        if (!containsSentinel(component)) {
+            return new StaticNode(component);
+        }
+        if (!(component instanceof TextComponent text)) {
+            return null;
+        }
+        final Style style = text.style();
+        if (style.hoverEvent() != null || style.clickEvent() != null || style.insertion() != null) {
+            return null;
+        }
+
+        final String content = text.content();
+        final List<CompiledNode> children = new ArrayList<>();
+        if (content.indexOf(SENTINEL_START) >= 0) {
+            int pos = 0;
+            final int len = content.length();
+            while (pos < len) {
+                final int start = content.indexOf(SENTINEL_START, pos);
+                if (start < 0) {
+                    children.add(new StaticNode(Component.text(content.substring(pos))));
+                    break;
+                }
+                if (start > pos) {
+                    children.add(new StaticNode(Component.text(content.substring(pos, start))));
+                }
+                final int end = content.indexOf(SENTINEL_END, start + 1);
+                if (end < 0) {
+                    return null;
+                }
+                final int slotIndex;
+                try {
+                    slotIndex = Integer.parseInt(content.substring(start + 1, end));
+                } catch (final NumberFormatException e) {
+                    return null;
+                }
+                if (slotIndex < 0 || slotIndex >= argCount) {
+                    return null;
+                }
+                if (start == 0 && end == len - 1 && text.children().isEmpty()) {
+                    return new SlotNode(slotIndex, style);
+                }
+                children.add(new SlotNode(slotIndex, Style.empty()));
+                pos = end + 1;
+            }
+        } else if (!content.isEmpty()) {
+            children.add(new StaticNode(Component.text(content)));
+        }
+
+        for (final Component child : text.children()) {
+            final @Nullable CompiledNode compiledChild = compileNode(child, argCount);
+            if (compiledChild == null) {
+                return null;
+            }
+            children.add(compiledChild);
+        }
+        return new GroupNode(Component.text("", style), List.copyOf(children));
+    }
+
+    private static boolean containsSentinel(final Component component) {
+        if (component instanceof TextComponent text
+                && (text.content().indexOf(SENTINEL_START) >= 0 || text.content().indexOf(SENTINEL_END) >= 0)) {
+            return true;
+        }
+        for (final Component child : component.children()) {
+            if (containsSentinel(child)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static Component renderSingle(
+            final State current,
+            final CachedBundle cached,
+            final MessageKey key,
+            final TagResolver... resolvers
+    ) {
+        final String template = lookupString(current, cached.bundle(), key);
         if (key == MessageKey.PREFIX) {
             return MINI_MESSAGE.deserialize(template, resolvers);
         }
-        final String prefixTemplate = lookupString(current, bundle, MessageKey.PREFIX);
-        final Component prefixComponent = MINI_MESSAGE.deserialize(prefixTemplate);
-        final TagResolver combined = TagResolver.builder()
-                .resolver(Placeholder.component("prefix", prefixComponent))
-                .resolvers(resolvers)
-                .build();
+        final TagResolver combined = switch (resolvers.length) {
+            case 0 -> cached.prefixResolver();
+            case 1 -> TagResolver.resolver(cached.prefixResolver(), resolvers[0]);
+            default -> TagResolver.builder()
+                    .resolver(cached.prefixResolver())
+                    .resolvers(resolvers)
+                    .build();
+        };
         return MINI_MESSAGE.deserialize(template, combined);
     }
 
@@ -176,14 +422,16 @@ public final class Messages {
      */
     public List<Component> getList(final Locale locale, final MessageKey key, final TagResolver... resolvers) {
         final State current = this.state;
-        final TranslationBundle bundle = resolveBundle(current, locale);
-        final List<String> templates = lookupList(current, bundle, key);
-        final String prefixTemplate = lookupString(current, bundle, MessageKey.PREFIX);
-        final Component prefixComponent = MINI_MESSAGE.deserialize(prefixTemplate);
-        final TagResolver combined = TagResolver.builder()
-                .resolver(Placeholder.component("prefix", prefixComponent))
-                .resolvers(resolvers)
-                .build();
+        final CachedBundle cached = resolveCachedBundle(current, locale);
+        final List<String> templates = lookupList(current, cached.bundle(), key);
+        final TagResolver combined = switch (resolvers.length) {
+            case 0 -> cached.prefixResolver();
+            case 1 -> TagResolver.resolver(cached.prefixResolver(), resolvers[0]);
+            default -> TagResolver.builder()
+                    .resolver(cached.prefixResolver())
+                    .resolvers(resolvers)
+                    .build();
+        };
         final List<Component> result = new ArrayList<>(templates.size());
         for (final String line : templates) {
             result.add(MINI_MESSAGE.deserialize(line, combined));
@@ -199,52 +447,50 @@ public final class Messages {
     }
 
     /**
-     * Resolves the best-matching {@link TranslationBundle} for {@code requested} using the 4-step fallback chain.
+     * Resolves and caches the best-matching {@link CachedBundle} for {@code requested}.
      */
-    private static TranslationBundle resolveBundle(final State current, final Locale requested) {
+    private static CachedBundle resolveCachedBundle(final State current, final Locale requested) {
         final Locale normalized = LanguageLoader.normalizeLocale(requested);
-        final Map<Locale, TranslationBundle> bundles = current.bundles();
-
-        // 1. Exact match (language + country)
-        final TranslationBundle exact = bundles.get(normalized);
-        if (exact != null) {
-            return exact;
-        }
-
-        // 2. Language-only match
-        final TranslationBundle byLang = findByLanguage(bundles, normalized.getLanguage());
-        if (byLang != null) {
-            return byLang;
-        }
-
-        // 3. Configured default locale (exact, then language)
-        final Locale def = current.defaultLocale();
-        final TranslationBundle defExact = bundles.get(def);
-        if (defExact != null) {
-            return defExact;
-        }
-        final TranslationBundle defLang = findByLanguage(bundles, def.getLanguage());
-        if (defLang != null) {
-            return defLang;
-        }
-
-        // 4. Built-in en_US fallback
-        final TranslationBundle us = bundles.get(Locale.US);
-        return us != null ? us : TranslationBundle.empty();
+        return current.resolvedByLocale().computeIfAbsent(normalized, loc -> {
+            final Map<Locale, CachedBundle> bundles = current.cachedBundles();
+            // 1. Exact match (language + country)
+            final CachedBundle exact = bundles.get(loc);
+            if (exact != null) {
+                return exact;
+            }
+            // 2. Language-only match
+            final CachedBundle byLang = findByLanguage(bundles, loc.getLanguage());
+            if (byLang != null) {
+                return byLang;
+            }
+            // 3. Configured default locale (exact, then language)
+            final Locale def = current.defaultLocale();
+            final CachedBundle defExact = bundles.get(def);
+            if (defExact != null) {
+                return defExact;
+            }
+            final CachedBundle defLang = findByLanguage(bundles, def.getLanguage());
+            if (defLang != null) {
+                return defLang;
+            }
+            // 4. Built-in en_US fallback
+            final CachedBundle us = bundles.get(Locale.US);
+            return us != null ? us : current.emptyFallback();
+        });
     }
 
     /**
-     * Finds a {@link TranslationBundle} whose locale shares the given language code, selecting the lexicographically
+     * Finds a {@link CachedBundle} whose locale shares the given language code, selecting the lexicographically
      * smallest {@link Locale#toString()} for deterministic behavior across JVM restarts.
      */
-    private static @Nullable TranslationBundle findByLanguage(
-            final Map<Locale, TranslationBundle> bundles,
+    private static @Nullable CachedBundle findByLanguage(
+            final Map<Locale, CachedBundle> bundles,
             final String language
     ) {
         if (language.isEmpty()) {
             return null;
         }
-        final TranslationBundle langOnly = bundles.get(Locale.of(language));
+        final CachedBundle langOnly = bundles.get(Locale.of(language));
         if (langOnly != null) {
             return langOnly;
         }
@@ -263,17 +509,32 @@ public final class Messages {
             final TranslationBundle bundle,
             final MessageKey key
     ) {
+        return lookupString(current.bundles(), current.defaultLocale(), bundle, key);
+    }
+
+    private static String lookupString(
+            final Map<Locale, TranslationBundle> bundles,
+            final Locale defaultLocale,
+            final TranslationBundle bundle,
+            final MessageKey key
+    ) {
         final String direct = bundle.strings().get(key);
         if (direct != null) {
             return direct;
         }
-        final TranslationBundle def = current.bundles().get(current.defaultLocale());
-        if (def != null && def.strings().containsKey(key)) {
-            return def.strings().get(key);
+        final TranslationBundle def = bundles.get(defaultLocale);
+        if (def != null) {
+            final String defStr = def.strings().get(key);
+            if (defStr != null) {
+                return defStr;
+            }
         }
-        final TranslationBundle us = current.bundles().get(Locale.US);
-        if (us != null && us.strings().containsKey(key)) {
-            return us.strings().get(key);
+        final TranslationBundle us = bundles.get(Locale.US);
+        if (us != null) {
+            final String usStr = us.strings().get(key);
+            if (usStr != null) {
+                return usStr;
+            }
         }
         return key.path();
     }
@@ -339,6 +600,13 @@ public final class Messages {
     }
 
     /**
+     * Returns the localized label for free costs using a pre-resolved {@link Locale} (#20).
+     */
+    public Component freeCostLabel(final Locale locale) {
+        return get(locale, MessageKey.COST_FREE);
+    }
+
+    /**
      * Returns the title for the Aetheryte creation dialog.
      */
     public Component createDialogTitle(final CommandSender viewer) {
@@ -377,7 +645,7 @@ public final class Messages {
      */
     public String createDialogDefaultName(final Player player) {
         final State current = this.state;
-        final TranslationBundle bundle = resolveBundle(current, locale(player));
+        final TranslationBundle bundle = resolveCachedBundle(current, locale(player)).bundle();
         final String template = lookupString(current, bundle, MessageKey.DIALOG_CREATE_DEFAULT_NAME);
         return template.replace("<player>", player.getName());
     }
@@ -428,11 +696,23 @@ public final class Messages {
             final Aetheryte destination,
             final Component costDisplay
     ) {
-        return get(
-                viewer,
+        return warpDestinationLabel(locale(viewer), destination, costDisplay);
+    }
+
+    /**
+     * Returns the button label for an available warp destination entry using a pre-resolved {@link Locale} (#13, #20).
+     */
+    public Component warpDestinationLabel(
+            final Locale locale,
+            final Aetheryte destination,
+            final Component costDisplay
+    ) {
+        return renderWithPlaceholders(
+                locale,
                 MessageKey.DIALOG_WARP_DESTINATION_AVAILABLE,
-                Placeholder.unparsed("name", destination.name()),
-                Placeholder.component("cost", costDisplay)
+                ARG_NAME_COST,
+                Component.text(destination.name()),
+                costDisplay
         );
     }
 
@@ -444,11 +724,23 @@ public final class Messages {
             final Aetheryte destination,
             final Component costDisplay
     ) {
-        return get(
-                viewer,
+        return warpDestinationUnavailableLabel(locale(viewer), destination, costDisplay);
+    }
+
+    /**
+     * Returns the button label for an unavailable warp destination entry using a pre-resolved {@link Locale} (#13, #20).
+     */
+    public Component warpDestinationUnavailableLabel(
+            final Locale locale,
+            final Aetheryte destination,
+            final Component costDisplay
+    ) {
+        return renderWithPlaceholders(
+                locale,
                 MessageKey.DIALOG_WARP_DESTINATION_UNAVAILABLE,
-                Placeholder.unparsed("name", destination.name()),
-                Placeholder.component("cost", costDisplay)
+                ARG_NAME_COST,
+                Component.text(destination.name()),
+                costDisplay
         );
     }
 

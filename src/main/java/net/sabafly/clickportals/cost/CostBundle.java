@@ -27,6 +27,7 @@ import java.util.Objects;
 import net.sabafly.clickportals.cost.expr.Expression;
 import net.sabafly.clickportals.economy.EconomyProvider;
 import org.bukkit.entity.Player;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,6 +37,54 @@ import org.slf4j.LoggerFactory;
 public final class CostBundle {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(CostBundle.class);
+
+    /**
+     * Immutable snapshot of a player's economy and resource balances for N+1-free batch cost quoting (#20).
+     */
+    public record PlayerResourceSnapshot(
+            boolean economyAvailable,
+            boolean economySoftDisabled,
+            double balance,
+            double expPoints,
+            double expLevel,
+            double foodLevel
+    ) {
+        /**
+         * Captures the player's current economy balance, experience, and food level in a single pass.
+         */
+        public static PlayerResourceSnapshot capture(
+                final Player player,
+                final @Nullable EconomyProvider economy
+        ) {
+            final boolean available = economy != null && economy.isAvailable();
+            final boolean softDisabled = economy == null || economy.isSoftDisabled();
+            final double balance = (economy != null && economy.isAvailable()) ? economy.getBalance(player) : 0.0;
+            return new PlayerResourceSnapshot(
+                    available,
+                    softDisabled,
+                    balance,
+                    player.calculateTotalExperiencePoints(),
+                    player.getLevel(),
+                    player.getFoodLevel()
+            );
+        }
+
+        double resourceFor(final CostType type) {
+            return switch (type) {
+                case VAULT -> balance;
+                case EXP_POINTS -> expPoints;
+                case EXP_LEVELS -> expLevel;
+                case FOOD -> foodLevel;
+            };
+        }
+
+        public void populateVariables(final Map<String, Double> variables) {
+            variables.put("balance", balance);
+            variables.put("exp_points", expPoints);
+            variables.put("exp_level", expLevel);
+            variables.put("food", foodLevel);
+        }
+    }
 
     private final List<CostEntry> entries;
     private final List<Expression> compiledExpressions;
@@ -68,14 +117,50 @@ public final class CostBundle {
     public CostQuote quote(
             final Player player,
             final Map<String, Double> externalVariables,
-            final EconomyProvider economy
+            final @Nullable EconomyProvider economy
     ) {
         if (entries.isEmpty()) {
             return CostQuote.FREE;
         }
+        return quote(PlayerResourceSnapshot.capture(player, economy), externalVariables);
+    }
 
-        final Map<String, Double> variables = new HashMap<>(externalVariables);
-        populatePlayerVariables(player, economy, variables);
+    /**
+     * Assesses this bundle using a pre-captured {@link PlayerResourceSnapshot} to avoid redundant
+     * per-destination economy and player resource queries during batch menu evaluation (#20).
+     *
+     * @param snapshot pre-captured player resource and economy snapshot
+     * @param externalVariables contextual variables (e.g. {@code block_distance})
+     * @return assessed {@link CostQuote}
+     */
+    public CostQuote quote(
+            final PlayerResourceSnapshot snapshot,
+            final Map<String, Double> externalVariables
+    ) {
+        if (entries.isEmpty()) {
+            return CostQuote.FREE;
+        }
+        final Map<String, Double> variables = new HashMap<>(externalVariables.size() + 8);
+        variables.putAll(externalVariables);
+        snapshot.populateVariables(variables);
+        return quoteWithPopulatedVariables(snapshot, variables);
+    }
+
+    /**
+     * Assesses this bundle using a pre-captured {@link PlayerResourceSnapshot} and a mutable variable map
+     * already populated via {@link PlayerResourceSnapshot#populateVariables(Map)}, avoiding per-destination map
+     * allocation during batch dialog evaluation (#20).
+     */
+    public CostQuote quoteWithPopulatedVariables(
+            final PlayerResourceSnapshot snapshot,
+            final Map<String, Double> variables
+    ) {
+        if (entries.isEmpty()) {
+            return CostQuote.FREE;
+        }
+        if (entries.size() == 1) {
+            return quoteSingleEntry(entries.get(0), compiledExpressions.get(0), snapshot, variables);
+        }
 
         // First pass: evaluate raw amounts and aggregate required sums by CostType (#7)
         final double[] evaluatedAmounts = new double[entries.size()];
@@ -99,7 +184,7 @@ public final class CostBundle {
 
             final double normalizedAmount = type.normalize(rawAmount);
             evaluatedAmounts[i] = normalizedAmount;
-            if (entry.required() && !(type == CostType.VAULT && (economy == null || economy.isSoftDisabled()))) {
+            if (entry.required() && !(type == CostType.VAULT && snapshot.economySoftDisabled())) {
                 totalRequiredByType.merge(type, type.toBigDecimal(normalizedAmount), BigDecimal::add);
             }
         }
@@ -109,11 +194,11 @@ public final class CostBundle {
         final Map<CostType, BigDecimal> remainingByType = new EnumMap<>(CostType.class);
         final Map<CostType, BigDecimal> remainingRequiredByType = new EnumMap<>(CostType.class);
         for (final CostType type : CostType.values()) {
-            final double current = getCurrentResource(player, type, economy);
+            final double current = snapshot.resourceFor(type);
             final BigDecimal currentBd = type.toBigDecimal(current);
             remainingByType.put(type, currentBd);
             final BigDecimal requiredBd = totalRequiredByType.getOrDefault(type, BigDecimal.ZERO);
-            final boolean available = (type != CostType.VAULT || (economy != null && economy.isAvailable()));
+            final boolean available = (type != CostType.VAULT || snapshot.economyAvailable());
             aggregateAffordability.put(type, available && currentBd.compareTo(requiredBd) >= 0);
             remainingRequiredByType.put(type, requiredBd);
         }
@@ -130,7 +215,7 @@ public final class CostBundle {
                 continue;
             }
 
-            if (type == CostType.VAULT && (economy == null || economy.isSoftDisabled())) {
+            if (type == CostType.VAULT && snapshot.economySoftDisabled()) {
                 // Soft depend: currency costs are disabled when Vault is missing (#16)
                 quotes.add(new CostItemQuote(type, 0.0, entry.required(), true, 0.0, true));
                 continue;
@@ -158,6 +243,31 @@ public final class CostBundle {
         }
 
         return new CostQuote(quotes);
+    }
+
+    private static CostQuote quoteSingleEntry(
+            final CostEntry entry,
+            final Expression expr,
+            final PlayerResourceSnapshot snapshot,
+            final Map<String, Double> variables
+    ) {
+        final CostType type = entry.type();
+        if (type == null || Objects.equals(expr, Expression.INVALID)) {
+            return new CostQuote(List.of(new CostItemQuote(type, Double.POSITIVE_INFINITY, true, false, 0.0, false)));
+        }
+        final double rawAmount = expr.evaluate(variables);
+        if (!Double.isFinite(rawAmount) || rawAmount < 0.0) {
+            return new CostQuote(List.of(new CostItemQuote(type, Double.POSITIVE_INFINITY, true, false, 0.0, false)));
+        }
+        final double amount = type.normalize(rawAmount);
+        if (type == CostType.VAULT && snapshot.economySoftDisabled()) {
+            return new CostQuote(List.of(new CostItemQuote(type, 0.0, entry.required(), true, 0.0, true)));
+        }
+        final double current = snapshot.resourceFor(type);
+        final boolean available = (type != CostType.VAULT || snapshot.economyAvailable());
+        final boolean affordable = !entry.required()
+                || (available && type.toBigDecimal(current).compareTo(type.toBigDecimal(amount)) >= 0);
+        return new CostQuote(List.of(new CostItemQuote(type, amount, entry.required(), affordable, current, false)), affordable);
     }
 
     /**
@@ -347,17 +457,6 @@ public final class CostBundle {
             }
         }
         return allSuccess ? RefundResult.successful(refunded) : RefundResult.failure(refunded, unrefunded);
-    }
-
-    private static void populatePlayerVariables(
-            final Player player,
-            final EconomyProvider economy,
-            final Map<String, Double> variables
-    ) {
-        variables.put("balance", economy.isAvailable() ? economy.getBalance(player) : 0.0);
-        variables.put("exp_points", (double) player.calculateTotalExperiencePoints());
-        variables.put("exp_level", (double) player.getLevel());
-        variables.put("food", (double) player.getFoodLevel());
     }
 
     private static double getCurrentResource(

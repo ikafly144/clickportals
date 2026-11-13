@@ -19,8 +19,10 @@ package net.sabafly.clickportals.service;
 
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -118,6 +120,18 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
     ) {
     }
 
+    private record CachedRoute(
+            boolean hasRoute,
+            double originX,
+            double originY,
+            double originZ,
+            double hops,
+            double dimensionCostAmount,
+            CostBundle bundle,
+            boolean hasCostEntries
+    ) {
+    }
+
     @Override
     public WarpEvaluation evaluate(
             final Player player,
@@ -131,19 +145,301 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         final CostBundle bundle = new CostBundle(ctx.effectiveEntries());
         final Map<String, Double> vars = buildVariables(ctx);
         final CostQuote quote = bundle.quote(player, vars, economy);
-        final Component costDisplay = CostFormatter.format(player, quote, economy, messages, config.showOptionalCosts());
+        final Locale playerLocale = messages.locale(player);
+        final Component costDisplay = CostFormatter.format(playerLocale, quote, economy, messages, config.showOptionalCosts());
 
-        if (ctx.blockReason() != null) {
-            final DenyReason code = ctx.blockReasonCode() != null ? ctx.blockReasonCode() : DenyReason.OTHER;
-            return WarpEvaluation.denied(costDisplay, ctx.blockReason(), code);
+        return toWarpEvaluation(playerLocale, quote, economy, costDisplay, ctx.blockReason(), ctx.blockReasonCode());
+    }
+
+    @Override
+    public List<WarpEvaluation> evaluateBatch(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final List<Aetheryte> destinations
+    ) {
+        if (destinations.isEmpty()) {
+            return List.of();
+        }
+
+        final PluginConfig config = configSupplier.get();
+        final EconomyProvider economy = economySupplier.get();
+        final DimensionRouter router = routerSupplier.get();
+        final boolean showOptionalCosts = config.showOptionalCosts();
+        final Locale playerLocale = messages.locale(player);
+
+        final List<CostEntry> baseEntries = resolveBaseCostEntries(source, config);
+        final CostBundle baseBundle = new CostBundle(baseEntries);
+        final boolean baseHasEntries = !baseEntries.isEmpty();
+        final DistanceSection effectiveDistanceLimits = resolveDistanceLimits(source, config);
+
+        final @Nullable World sourceWorld = source != null ? worldResolver.apply(source.worldId()) : player.getWorld();
+        final @Nullable Location playerLoc = player.getLocation();
+        final Location fallbackSrc = playerLoc != null
+                ? playerLoc
+                : new Location(sourceWorld, 0.0, 64.0, 0.0);
+        final @Nullable Location fixedSrcLoc = source != null
+                ? (sourceWorld != null ? new Location(sourceWorld, source.blockX(), source.blockY(), source.blockZ()) : null)
+                : fallbackSrc;
+
+        final @Nullable DenyReason sourceReachError = resolveSourceReachError(player, source, sourceWorld, playerLoc);
+        final boolean applyCrossDimLimits = effectiveDistanceLimits.crossDimensionOrDefault(true);
+        final double minDist = effectiveDistanceLimits.minOrDefault(0.0);
+        final double maxDist = effectiveDistanceLimits.maxOrDefault(-1.0);
+
+        final @Nullable UUID sourceWorldId = sourceWorld != null ? sourceWorld.getUID() : null;
+        final Location sameWorldOriginLoc = fixedSrcLoc != null ? fixedSrcLoc : fallbackSrc;
+        final double sameWorldOriginX = sameWorldOriginLoc.getX();
+        final double sameWorldOriginY = sameWorldOriginLoc.getY();
+        final double sameWorldOriginZ = sameWorldOriginLoc.getZ();
+
+        final Map<UUID, Optional<World>> worldCache = new HashMap<>();
+        if (sourceWorld != null && sourceWorldId != null) {
+            worldCache.put(sourceWorldId, Optional.of(sourceWorld));
+        }
+        final Map<UUID, CachedRoute> routeCache = new HashMap<>();
+        final EnumMap<DenyReason, Component> errorCache = new EnumMap<>(DenyReason.class);
+        final Map<String, Double> vars = new HashMap<>(16);
+
+        CostBundle.@Nullable PlayerResourceSnapshot snapshot = null;
+        @Nullable Component cachedFreeCostDisplay = null;
+        final List<WarpEvaluation> results = new ArrayList<>(destinations.size());
+
+        for (final Aetheryte destination : destinations) {
+            final UUID destWorldId = destination.worldId();
+            final boolean sameWorld = sourceWorldId != null && destWorldId.equals(sourceWorldId);
+
+            final double originX;
+            final double originY;
+            final double originZ;
+            final double crossDim;
+            final double hops;
+            final double dimCostAmt;
+            final CostBundle bundle;
+            final boolean bundleHasEntries;
+            @Nullable DenyReason blockReasonCode = null;
+
+            if (sameWorld) {
+                originX = sameWorldOriginX;
+                originY = sameWorldOriginY;
+                originZ = sameWorldOriginZ;
+                crossDim = 0.0;
+                hops = 0.0;
+                dimCostAmt = 0.0;
+                bundle = baseBundle;
+                bundleHasEntries = baseHasEntries;
+            } else {
+                final @Nullable World targetWorld = worldCache
+                        .computeIfAbsent(destWorldId, id -> Optional.ofNullable(worldResolver.apply(id)))
+                        .orElse(null);
+
+                if (targetWorld == null) {
+                    final CostQuote quote;
+                    if (baseHasEntries) {
+                        if (snapshot == null) {
+                            snapshot = CostBundle.PlayerResourceSnapshot.capture(player, economy);
+                            snapshot.populateVariables(vars);
+                        }
+                        populateContextVariables(vars, 0, 0, 0, 0, 0, 0, 0);
+                        quote = baseBundle.quoteWithPopulatedVariables(snapshot, vars);
+                    } else {
+                        quote = CostQuote.FREE;
+                    }
+                    final Component costDisplay;
+                    if (quote.items().isEmpty()) {
+                        if (cachedFreeCostDisplay == null) {
+                            cachedFreeCostDisplay = CostFormatter.format(playerLocale, quote, economy, messages, showOptionalCosts);
+                        }
+                        costDisplay = cachedFreeCostDisplay;
+                    } else {
+                        costDisplay = CostFormatter.format(playerLocale, quote, economy, messages, showOptionalCosts);
+                    }
+                    results.add(WarpEvaluation.denied(
+                            costDisplay,
+                            resolveErrorComponent(errorCache, playerLocale, DenyReason.NOT_FOUND),
+                            DenyReason.NOT_FOUND
+                    ));
+                    continue;
+                }
+
+                if (sourceWorld == null || fixedSrcLoc == null) {
+                    originX = 0.0;
+                    originY = 0.0;
+                    originZ = 0.0;
+                    crossDim = 0.0;
+                    hops = 0.0;
+                    dimCostAmt = 0.0;
+                    bundle = baseBundle;
+                    bundleHasEntries = baseHasEntries;
+                    blockReasonCode = DenyReason.NO_ROUTE;
+                } else {
+                    final CachedRoute cachedRoute = routeCache.computeIfAbsent(destWorldId, id -> {
+                        final Optional<RoutePlan> plan = router.findRoute(sourceWorld, targetWorld, fixedSrcLoc);
+                        if (plan.isEmpty()) {
+                            return new CachedRoute(false, 0.0, 0.0, 0.0, 0.0, 0.0, baseBundle, baseHasEntries);
+                        }
+                        final RoutePlan route = plan.get();
+                        final Location origin = route.targetOrigin();
+                        final List<CostEntry> extra = route.dimensionCostEntries();
+                        final CostBundle resolvedBundle;
+                        final boolean hasEntries;
+                        if (extra.isEmpty()) {
+                            resolvedBundle = baseBundle;
+                            hasEntries = baseHasEntries;
+                        } else {
+                            final List<CostEntry> combined = new ArrayList<>(baseEntries.size() + extra.size());
+                            combined.addAll(baseEntries);
+                            combined.addAll(extra);
+                            resolvedBundle = new CostBundle(combined);
+                            hasEntries = true;
+                        }
+                        return new CachedRoute(
+                                true,
+                                origin.getX(),
+                                origin.getY(),
+                                origin.getZ(),
+                                route.hops(),
+                                route.dimensionCostAmount(),
+                                resolvedBundle,
+                                hasEntries
+                        );
+                    });
+                    if (!cachedRoute.hasRoute()) {
+                        originX = 0.0;
+                        originY = 0.0;
+                        originZ = 0.0;
+                        crossDim = 0.0;
+                        hops = 0.0;
+                        dimCostAmt = 0.0;
+                        bundle = baseBundle;
+                        bundleHasEntries = baseHasEntries;
+                        blockReasonCode = DenyReason.NO_ROUTE;
+                    } else {
+                        originX = cachedRoute.originX();
+                        originY = cachedRoute.originY();
+                        originZ = cachedRoute.originZ();
+                        crossDim = 1.0;
+                        hops = cachedRoute.hops();
+                        dimCostAmt = cachedRoute.dimensionCostAmount();
+                        bundle = cachedRoute.bundle();
+                        bundleHasEntries = cachedRoute.hasCostEntries();
+                    }
+                }
+            }
+
+            final double blockDist;
+            final double horizDist;
+            final double chunkDist;
+            final double dy;
+            if (blockReasonCode == DenyReason.NO_ROUTE) {
+                blockDist = 0.0;
+                horizDist = 0.0;
+                chunkDist = 0.0;
+                dy = 0.0;
+            } else {
+                final double dx = destination.blockX() - originX;
+                final double dY = destination.blockY() - originY;
+                final double dz = destination.blockZ() - originZ;
+                blockDist = Math.sqrt(dx * dx + dY * dY + dz * dz);
+                horizDist = Math.sqrt(dx * dx + dz * dz);
+                chunkDist = horizDist / 16.0;
+                dy = Math.abs(dY);
+
+                if (sourceReachError != null) {
+                    blockReasonCode = sourceReachError;
+                } else if (crossDim <= 0.0 || applyCrossDimLimits) {
+                    if (minDist > 0.0 && blockDist < minDist) {
+                        blockReasonCode = DenyReason.TOO_CLOSE;
+                    } else if (maxDist >= 0.0 && blockDist > maxDist) {
+                        blockReasonCode = DenyReason.TOO_FAR;
+                    }
+                }
+            }
+
+            final CostQuote quote;
+            if (bundleHasEntries) {
+                if (snapshot == null) {
+                    snapshot = CostBundle.PlayerResourceSnapshot.capture(player, economy);
+                    snapshot.populateVariables(vars);
+                }
+                populateContextVariables(vars, blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt);
+                quote = bundle.quoteWithPopulatedVariables(snapshot, vars);
+            } else {
+                quote = CostQuote.FREE;
+            }
+
+            final Component costDisplay;
+            if (quote.items().isEmpty()) {
+                if (cachedFreeCostDisplay == null) {
+                    cachedFreeCostDisplay = CostFormatter.format(playerLocale, quote, economy, messages, showOptionalCosts);
+                }
+                costDisplay = cachedFreeCostDisplay;
+            } else {
+                costDisplay = CostFormatter.format(playerLocale, quote, economy, messages, showOptionalCosts);
+            }
+
+            final @Nullable Component blockReason = blockReasonCode != null
+                    ? resolveErrorComponent(errorCache, playerLocale, blockReasonCode)
+                    : null;
+            results.add(toWarpEvaluation(playerLocale, quote, economy, costDisplay, blockReason, blockReasonCode));
+        }
+
+        return results;
+    }
+
+    private WarpEvaluation toWarpEvaluation(
+            final Locale playerLocale,
+            final CostQuote quote,
+            final EconomyProvider economy,
+            final Component costDisplay,
+            final @Nullable Component blockReason,
+            final @Nullable DenyReason blockReasonCode
+    ) {
+        if (blockReason != null) {
+            final DenyReason code = blockReasonCode != null ? blockReasonCode : DenyReason.OTHER;
+            return WarpEvaluation.denied(costDisplay, blockReason, code);
         }
 
         if (!quote.affordable()) {
-            final Component reason = CostFormatter.formatMissingRequirements(player, quote, economy, messages);
-            return WarpEvaluation.denied(costDisplay, reason, WarpEvaluation.DenyReason.INSUFFICIENT_COST);
+            final Component reason = CostFormatter.formatMissingRequirements(playerLocale, quote, economy, messages);
+            return WarpEvaluation.denied(costDisplay, reason, DenyReason.INSUFFICIENT_COST);
         }
 
         return WarpEvaluation.permitted(costDisplay);
+    }
+
+    private @Nullable DenyReason resolveSourceReachError(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final @Nullable World sourceWorld,
+            final @Nullable Location playerLoc
+    ) {
+        if (source == null) {
+            return null;
+        }
+        if (sourceWorld == null || !player.getWorld().getUID().equals(source.worldId()) || playerLoc == null) {
+            return DenyReason.NOT_FOUND;
+        }
+        final AetheryteVariation sourceVar = variationRegistry.getOrDefault(source.variation());
+        final double hitboxAllowance = Math.max(sourceVar.hitbox().width(), sourceVar.hitbox().height());
+        final double maxReach = BASE_INTERACT_REACH + hitboxAllowance;
+        if (playerLoc.distanceSquared(source.markerLocation(sourceWorld)) > maxReach * maxReach) {
+            return DenyReason.TOO_FAR;
+        }
+        return null;
+    }
+
+    private Component resolveErrorComponent(
+            final EnumMap<DenyReason, Component> cache,
+            final Locale playerLocale,
+            final DenyReason reason
+    ) {
+        return cache.computeIfAbsent(reason, r -> switch (r) {
+            case NOT_FOUND -> messages.get(playerLocale, MessageKey.ERROR_NOT_FOUND);
+            case NO_ROUTE -> messages.get(playerLocale, MessageKey.ERROR_NO_ROUTE);
+            case TOO_CLOSE -> messages.get(playerLocale, MessageKey.ERROR_TOO_CLOSE);
+            case TOO_FAR -> messages.get(playerLocale, MessageKey.ERROR_TOO_FAR);
+            case INSUFFICIENT_COST, NO_PERMISSION, OTHER -> messages.get(playerLocale, MessageKey.ERROR_NOT_FOUND);
+        });
     }
 
     @Override
@@ -412,15 +708,37 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
     }
 
     private static Map<String, Double> buildVariables(final EvaluationContext ctx) {
-        final Map<String, Double> map = new HashMap<>();
-        map.put("block_distance", ctx.blockDistance());
-        map.put("horizontal_distance", ctx.horizontalDistance());
-        map.put("chunk_distance", ctx.chunkDistance());
-        map.put("dy", ctx.dy());
-        map.put("cross_dimension", ctx.crossDimension());
-        map.put("hops", ctx.hops());
-        map.put("dimension_cost", ctx.dimensionCostAmount());
-        map.put("amount", ctx.dimensionCostAmount());
+        final Map<String, Double> map = new HashMap<>(16);
+        populateContextVariables(
+                map,
+                ctx.blockDistance(),
+                ctx.horizontalDistance(),
+                ctx.chunkDistance(),
+                ctx.dy(),
+                ctx.crossDimension(),
+                ctx.hops(),
+                ctx.dimensionCostAmount()
+        );
         return map;
+    }
+
+    private static void populateContextVariables(
+            final Map<String, Double> map,
+            final double blockDistance,
+            final double horizontalDistance,
+            final double chunkDistance,
+            final double dy,
+            final double crossDimension,
+            final double hops,
+            final double dimensionCostAmount
+    ) {
+        map.put("block_distance", blockDistance);
+        map.put("horizontal_distance", horizontalDistance);
+        map.put("chunk_distance", chunkDistance);
+        map.put("dy", dy);
+        map.put("cross_dimension", crossDimension);
+        map.put("hops", hops);
+        map.put("dimension_cost", dimensionCostAmount);
+        map.put("amount", dimensionCostAmount);
     }
 }

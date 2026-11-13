@@ -19,6 +19,7 @@ package net.sabafly.clickportals.model;
 
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -53,6 +54,7 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
     private final BiFunction<ModelRenderer, Location, Optional<ModelTracker>> trackerFactory;
     private final BooleanSupplier readySupplier;
     private final Map<UUID, ActiveModel> activeModels = new ConcurrentHashMap<>();
+    private final Map<UUID, Set<UUID>> spawnedByPlayer = new ConcurrentHashMap<>();
 
     private record ActiveModel(ModelTracker tracker, BetterModelSection section, UUID worldId) {}
 
@@ -251,7 +253,61 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
     @Override
     public void refreshPlayer(final Player player, final Collection<Aetheryte> worldAetherytes) {
         final UUID worldId = player.getWorld().getUID();
-        final Set<UUID> inWorld = new HashSet<>();
+        final UUID playerId = player.getUniqueId();
+        if (playerId == null) {
+            refreshPlayerFallback(player, worldId, worldAetherytes);
+            return;
+        }
+
+        final Set<UUID> visibleIds = new HashSet<>(Math.max(16, worldAetherytes.size() * 2));
+        for (final Aetheryte aetheryte : worldAetherytes) {
+            final ActiveModel active = activeModels.get(aetheryte.id());
+            if (active != null && !active.tracker.isClosed() && active.worldId.equals(worldId)) {
+                visibleIds.add(aetheryte.id());
+            }
+        }
+
+        final Set<UUID> previouslySpawned = spawnedByPlayer.get(playerId);
+        if (previouslySpawned != null && !previouslySpawned.isEmpty()) {
+            final Iterator<UUID> iterator = previouslySpawned.iterator();
+            while (iterator.hasNext()) {
+                final UUID spawnedId = iterator.next();
+                if (!visibleIds.contains(spawnedId)) {
+                    final ActiveModel stale = activeModels.get(spawnedId);
+                    try {
+                        if (stale != null && !stale.tracker.isClosed() && stale.tracker.isSpawned(player)) {
+                            stale.tracker.remove(player);
+                        }
+                    } catch (final Throwable t) {
+                        logger.debug("Failed to remove BetterModel visibility for Aetheryte {}", spawnedId, t);
+                    }
+                    iterator.remove();
+                }
+            }
+        }
+
+        for (final UUID visibleId : visibleIds) {
+            final ActiveModel active = activeModels.get(visibleId);
+            if (active == null || active.tracker.isClosed()) {
+                continue;
+            }
+            try {
+                if (active.tracker.isSpawned(player)) {
+                    active.tracker.remove(player);
+                }
+                spawnSafely(active.tracker, player, visibleId);
+            } catch (final Throwable t) {
+                logger.debug("Failed to refresh BetterModel visibility for Aetheryte {}", visibleId, t);
+            }
+        }
+    }
+
+    private void refreshPlayerFallback(
+            final Player player,
+            final UUID worldId,
+            final Collection<Aetheryte> worldAetherytes
+    ) {
+        final Set<UUID> inWorld = new HashSet<>(Math.max(16, worldAetherytes.size() * 2));
         for (final Aetheryte aetheryte : worldAetherytes) {
             inWorld.add(aetheryte.id());
         }
@@ -278,14 +334,35 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
 
     @Override
     public void removePlayer(final Player player) {
-        for (final Map.Entry<UUID, ActiveModel> entry : activeModels.entrySet()) {
-            final ModelTracker tracker = entry.getValue().tracker;
+        final UUID playerId = player.getUniqueId();
+        if (playerId == null) {
+            for (final Map.Entry<UUID, ActiveModel> entry : activeModels.entrySet()) {
+                final ModelTracker tracker = entry.getValue().tracker;
+                try {
+                    if (!tracker.isClosed() && tracker.isSpawned(player)) {
+                        tracker.remove(player);
+                    }
+                } catch (final Throwable t) {
+                    logger.debug("Failed to remove player from BetterModel tracker for Aetheryte {}", entry.getKey(), t);
+                }
+            }
+            return;
+        }
+        final Set<UUID> spawned = spawnedByPlayer.remove(playerId);
+        if (spawned == null || spawned.isEmpty()) {
+            return;
+        }
+        for (final UUID aetheryteId : spawned) {
+            final ActiveModel active = activeModels.get(aetheryteId);
+            if (active == null || active.tracker.isClosed()) {
+                continue;
+            }
             try {
-                if (!tracker.isClosed() && tracker.isSpawned(player)) {
-                    tracker.remove(player);
+                if (active.tracker.isSpawned(player)) {
+                    active.tracker.remove(player);
                 }
             } catch (final Throwable t) {
-                logger.debug("Failed to remove player from BetterModel tracker for Aetheryte {}", entry.getKey(), t);
+                logger.debug("Failed to remove player from BetterModel tracker for Aetheryte {}", aetheryteId, t);
             }
         }
     }
@@ -318,6 +395,13 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
             if (active.tracker.isSpawned(player)) {
                 active.tracker.remove(player);
             }
+            final UUID playerId = player.getUniqueId();
+            if (playerId != null) {
+                final Set<UUID> spawned = spawnedByPlayer.get(playerId);
+                if (spawned != null) {
+                    spawned.remove(aetheryte.id());
+                }
+            }
         } catch (final Throwable t) {
             logger.debug("Failed to hide BetterModel for Aetheryte {}", aetheryte.id(), t);
         }
@@ -329,6 +413,10 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
     private void spawnSafely(final ModelTracker tracker, final Player player, final UUID aetheryteId) {
         try {
             tracker.spawn(player);
+            final UUID playerId = player.getUniqueId();
+            if (playerId != null) {
+                spawnedByPlayer.computeIfAbsent(playerId, ignored -> ConcurrentHashMap.newKeySet()).add(aetheryteId);
+            }
         } catch (final Throwable t) {
             logger.debug("Failed to spawn BetterModel model of Aetheryte {} for {}", aetheryteId, player.getName(), t);
         }
@@ -337,6 +425,9 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
     @Override
     public void unregisterAetheryte(final UUID aetheryteId) {
         final ActiveModel removed = activeModels.remove(aetheryteId);
+        for (final Set<UUID> spawned : spawnedByPlayer.values()) {
+            spawned.remove(aetheryteId);
+        }
         if (removed != null) {
             try {
                 if (!removed.tracker.isClosed()) {
@@ -402,5 +493,6 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
             }
         }
         activeModels.clear();
+        spawnedByPlayer.clear();
     }
 }

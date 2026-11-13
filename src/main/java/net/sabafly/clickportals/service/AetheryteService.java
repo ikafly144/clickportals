@@ -166,6 +166,22 @@ public final class AetheryteService {
         WarpEvaluation evaluate(Player player, @Nullable Aetheryte source, Aetheryte destination);
 
         /**
+         * Evaluates the cost and affordability of warping from {@code source} to each destination in {@code destinations}
+         * in order (#20).
+         */
+        default List<WarpEvaluation> evaluateBatch(
+                final Player player,
+                final @Nullable Aetheryte source,
+                final List<Aetheryte> destinations
+        ) {
+            final List<WarpEvaluation> results = new ArrayList<>(destinations.size());
+            for (final Aetheryte destination : destinations) {
+                results.add(evaluate(player, source, destination));
+            }
+            return results;
+        }
+
+        /**
          * Charges the warp cost on the player's entity scheduler right before teleportation.
          *
          * @return {@code true} if the charge succeeded, {@code false} if insufficient funds/resources.
@@ -231,6 +247,7 @@ public final class AetheryteService {
     private final PendingRefundStorage pendingRefundStorage;
     private final Object refundPersistLock = new Object();
     private final AtomicBoolean pendingRefundsDirty = new AtomicBoolean(false);
+    private final AtomicBoolean refundAsyncPersistRunning = new AtomicBoolean(false);
     private final AtomicBoolean refundPersistScheduled = new AtomicBoolean(false);
     private final Set<UUID> playersPendingPdcTrim = ConcurrentHashMap.newKeySet();
     private static final double BASE_INTERACT_REACH = 6.0;
@@ -760,8 +777,40 @@ public final class AetheryteService {
 
     private void markPendingRefundsDirtyAndPersist() {
         pendingRefundsDirty.set(true);
-        if (!savePendingRefundsLoop()) {
-            plugin.getSLF4JLogger().error("Failed to persist pending refunds to disk; scheduling background retries.");
+        scheduleImmediateAsyncPendingRefundPersist();
+    }
+
+    private void scheduleImmediateAsyncPendingRefundPersist() {
+        if (!pendingRefundsDirty.get() || !refundAsyncPersistRunning.compareAndSet(false, true)) {
+            return;
+        }
+        final org.bukkit.Server server = plugin.getServer();
+        if (server == null || server.getAsyncScheduler() == null || !plugin.isEnabled()) {
+            refundAsyncPersistRunning.set(false);
+            plugin.getSLF4JLogger().warn(
+                    "AsyncScheduler is unavailable while persisting pending refunds; leaving dirty state for flush on shutdown."
+            );
+            return;
+        }
+        try {
+            server.getAsyncScheduler().runNow(plugin, task -> {
+                boolean saved = false;
+                try {
+                    saved = savePendingRefundsLoop();
+                    if (!saved) {
+                        plugin.getSLF4JLogger().error("Failed to persist pending refunds to disk; scheduling background retries.");
+                        schedulePendingRefundRetry(0);
+                    }
+                } finally {
+                    refundAsyncPersistRunning.set(false);
+                    if (saved && pendingRefundsDirty.get()) {
+                        scheduleImmediateAsyncPendingRefundPersist();
+                    }
+                }
+            });
+        } catch (final Throwable t) {
+            refundAsyncPersistRunning.set(false);
+            plugin.getSLF4JLogger().error("Failed to schedule async pending refund persistence; scheduling retry.", t);
             schedulePendingRefundRetry(0);
         }
     }
@@ -1008,17 +1057,68 @@ public final class AetheryteService {
             final Aetheryte destination
     ) {
         final WarpEvaluation evaluation = costEvaluator.evaluate(player, source, destination);
-        if (!canUse(player)) {
+        final boolean hasUsePerm = canUse(player);
+        final boolean canBypass = hasUsePerm && Permissions.canBypassWarpCost(player);
+        final @Nullable String plainFree = canBypass
+                ? net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+                        .serialize(messages.freeCostLabel(player))
+                : null;
+        return applyPermissionAndBypass(player, evaluation, hasUsePerm, canBypass, null, plainFree);
+    }
+
+    /**
+     * Batch-evaluates warping from {@code source} to all {@code destinations} in order (#20).
+     */
+    public List<WarpEvaluation> evaluateWarps(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final List<Aetheryte> destinations
+    ) {
+        if (destinations.isEmpty()) {
+            return List.of();
+        }
+        final List<WarpEvaluation> raw = costEvaluator.evaluateBatch(player, source, destinations);
+        final boolean hasUsePerm = canUse(player);
+        final @Nullable Component noPermMsg = hasUsePerm ? null : messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION);
+        final boolean canBypass = hasUsePerm && Permissions.canBypassWarpCost(player);
+        final @Nullable String plainFree = canBypass
+                ? net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+                        .serialize(messages.freeCostLabel(player))
+                : null;
+
+        final List<WarpEvaluation> results = new ArrayList<>(raw.size());
+        for (final WarpEvaluation evaluation : raw) {
+            results.add(applyPermissionAndBypass(player, evaluation, hasUsePerm, canBypass, noPermMsg, plainFree));
+        }
+        return results;
+    }
+
+    private WarpEvaluation applyPermissionAndBypass(
+            final Player player,
+            final WarpEvaluation evaluation,
+            final boolean hasUsePermission,
+            final boolean canBypass,
+            final @Nullable Component cachedNoPermissionMsg,
+            final @Nullable String cachedPlainFree
+    ) {
+        if (!hasUsePermission) {
+            final Component noPerm = cachedNoPermissionMsg != null
+                    ? cachedNoPermissionMsg
+                    : messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION);
             return WarpEvaluation.denied(
                     evaluation.costDisplay(),
-                    messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION),
+                    noPerm,
                     WarpEvaluation.DenyReason.NO_PERMISSION
             );
         }
-        if (Permissions.canBypassWarpCost(player)) {
+        if (canBypass) {
             final Component originalCost = evaluation.costDisplay();
-            final String plainCost = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(originalCost);
-            final String plainFree = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(messages.freeCostLabel(player));
+            final String plainCost = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+                    .serialize(originalCost);
+            final String plainFree = cachedPlainFree != null
+                    ? cachedPlainFree
+                    : net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+                            .serialize(messages.freeCostLabel(player));
             final Component bypassedCostDisplay = plainCost.equals(plainFree)
                     ? originalCost
                     : messages.get(player, MessageKey.COST_BYPASSED, Placeholder.component("cost", originalCost));
@@ -1847,19 +1947,62 @@ public final class AetheryteService {
      */
     public void refreshPlayerVisuals(final Player player, final World world) {
         final UUID worldId = world.getUID();
-        hologramService.refreshPlayer(player, registry.getByWorld(worldId));
-        modelService.refreshPlayer(player, registry.getByWorld(worldId));
+        refreshPlayerVisualsNow(player, worldId);
         player.getScheduler().runDelayed(plugin, task -> {
             if (player.getWorld().getUID().equals(worldId)) {
-                hologramService.refreshPlayer(player, registry.getByWorld(worldId));
-                modelService.refreshPlayer(player, registry.getByWorld(worldId));
+                refreshPlayerVisualsNow(player, worldId);
             }
         }, null, 5L);
         player.getScheduler().runDelayed(plugin, task -> {
             if (player.getWorld().getUID().equals(worldId)) {
-                hologramService.refreshPlayer(player, registry.getByWorld(worldId));
-                modelService.refreshPlayer(player, registry.getByWorld(worldId));
+                refreshPlayerVisualsNow(player, worldId);
             }
         }, null, 20L);
+    }
+
+    private void refreshPlayerVisualsNow(final Player player, final UUID worldId) {
+        final List<Aetheryte> visible = collectVisibleAetherytes(registry, player, worldId);
+        hologramService.refreshPlayer(player, visible);
+        modelService.refreshPlayer(player, visible);
+    }
+
+    /**
+     * Collects Aetherytes within the player's chunk view distance for visual refresh (#20 Option A),
+     * falling back to all Aetherytes in {@code worldId} when player location is unavailable (e.g. unit test mocks).
+     */
+    public static List<Aetheryte> collectVisibleAetherytes(
+            final AetheryteRegistry registry,
+            final Player player,
+            final UUID worldId
+    ) {
+        final Location loc = player.getLocation();
+        if (loc == null) {
+            return registry.getByWorld(worldId);
+        }
+        final int viewDistance = resolveEffectiveViewDistance(player);
+        final int centerChunkX = loc.getBlockX() >> 4;
+        final int centerChunkZ = loc.getBlockZ() >> 4;
+        final List<Aetheryte> visible = new ArrayList<>();
+        for (int cx = centerChunkX - viewDistance; cx <= centerChunkX + viewDistance; cx++) {
+            for (int cz = centerChunkZ - viewDistance; cz <= centerChunkZ + viewDistance; cz++) {
+                final List<Aetheryte> chunkList = registry.getByChunk(worldId, cx, cz);
+                if (!chunkList.isEmpty()) {
+                    visible.addAll(chunkList);
+                }
+            }
+        }
+        return visible;
+    }
+
+    private static int resolveEffectiveViewDistance(final Player player) {
+        final int playerDist = player.getSendViewDistance();
+        if (playerDist > 0) {
+            return Math.min(playerDist, 64);
+        }
+        final org.bukkit.Server server = Bukkit.getServer();
+        if (server != null && server.getViewDistance() > 0) {
+            return Math.min(server.getViewDistance(), 64);
+        }
+        return 10;
     }
 }
