@@ -157,4 +157,29 @@ class MessagesTest {
         assertThat(PLAIN.serialize(messages.get(Locale.of("en", "AU"), MessageKey.COST_FREE)))
                 .isEqualTo("Free (UK)");
     }
+
+    @Test
+    void arbitraryUnregisteredLocalesResolveFallbackWithoutGrowingStateMaps() throws Exception {
+        final Messages messages = Messages.defaults(Locale.JAPAN, true);
+        final java.lang.reflect.Field stateField = Messages.class.getDeclaredField("state");
+        stateField.setAccessible(true);
+        final Object state = stateField.get(messages);
+        final java.util.Map<?, ?> cachedBundles = (java.util.Map<?, ?>) state.getClass().getDeclaredMethod("cachedBundles").invoke(state);
+        final int initialBundleCount = cachedBundles.size();
+
+        for (int i = 0; i < 500; i++) {
+            final Locale unknownLang = Locale.of("q" + (char) ('a' + (i % 20)), String.format(Locale.ROOT, "%03d", i));
+            assertThat(PLAIN.serialize(messages.get(unknownLang, MessageKey.COST_FREE))).isEqualTo("無料");
+            final Locale unknownJaCountry = Locale.of("ja", String.format(Locale.ROOT, "%03d", i));
+            assertThat(PLAIN.serialize(messages.get(unknownJaCountry, MessageKey.COST_FREE))).isEqualTo("無料");
+        }
+
+        // State maps must remain strictly bounded to the registered locales
+        for (final java.lang.reflect.RecordComponent component : state.getClass().getRecordComponents()) {
+            final Object value = component.getAccessor().invoke(state);
+            if (value instanceof java.util.Map<?, ?> map) {
+                assertThat(map.size()).isLessThanOrEqualTo(initialBundleCount);
+            }
+        }
+    }
 }

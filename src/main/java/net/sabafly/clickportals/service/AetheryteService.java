@@ -28,6 +28,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.DoubleSupplier;
 import java.util.function.IntSupplier;
 import java.util.function.ToLongFunction;
@@ -247,6 +248,8 @@ public final class AetheryteService {
     private final PendingRefundStorage pendingRefundStorage;
     private final Object refundPersistLock = new Object();
     private final AtomicBoolean pendingRefundsDirty = new AtomicBoolean(false);
+    private final AtomicLong pendingRefundMutationGeneration = new AtomicLong(0L);
+    private volatile long persistedRefundGeneration = 0L;
     private final AtomicBoolean refundAsyncPersistRunning = new AtomicBoolean(false);
     private final AtomicBoolean refundPersistScheduled = new AtomicBoolean(false);
     private final Set<UUID> playersPendingPdcTrim = ConcurrentHashMap.newKeySet();
@@ -776,6 +779,7 @@ public final class AetheryteService {
     }
 
     private void markPendingRefundsDirtyAndPersist() {
+        pendingRefundMutationGeneration.incrementAndGet();
         pendingRefundsDirty.set(true);
         scheduleImmediateAsyncPendingRefundPersist();
     }
@@ -818,12 +822,14 @@ public final class AetheryteService {
     private boolean savePendingRefundsLoop() {
         synchronized (refundPersistLock) {
             while (pendingRefundsDirty.getAndSet(false)) {
+                final long targetGeneration = pendingRefundMutationGeneration.get();
                 if (!pendingRefundStorage.save(pendingRefunds)) {
                     pendingRefundsDirty.set(true);
                     return false;
                 }
+                persistedRefundGeneration = targetGeneration;
             }
-            trimProcessedRefundsForPendingPlayers();
+            trimProcessedRefundsForPendingPlayers(persistedRefundGeneration);
             return true;
         }
     }
@@ -863,7 +869,7 @@ public final class AetheryteService {
         }
     }
 
-    private void trimProcessedRefundsForPendingPlayers() {
+    private void trimProcessedRefundsForPendingPlayers(final long scheduledGeneration) {
         if (playersPendingPdcTrim.isEmpty() || !plugin.isEnabled()) {
             return;
         }
@@ -879,7 +885,9 @@ public final class AetheryteService {
             }
             try {
                 player.getScheduler().run(plugin, t -> {
-                    if (pendingRefundsDirty.get()) {
+                    if (pendingRefundsDirty.get()
+                            || persistedRefundGeneration != scheduledGeneration
+                            || pendingRefundMutationGeneration.get() != scheduledGeneration) {
                         return;
                     }
                     final PersistentDataContainer pdc = player.getPersistentDataContainer();

@@ -56,6 +56,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.plugin.Plugin;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
@@ -302,8 +303,10 @@ class Issue20PerformanceScaleTest {
                 elapsedNs / 1_000_000.0, f.economy().balanceCallCount());
     }
 
-    @Test
-    void scale5000RegistryAndBatchEvaluationCompletesWithinOneTick() {
+    private record Scale5000Result(long getAllNs, long radiusNs, double evalMs, int visibleCount) {
+    }
+
+    private Scale5000Result runAndAssertScale5000Invariants() {
         final Fixture f = createScaleFixture(5_000);
         final List<Aetheryte> destinations = f.registry().getAll().stream()
                 .filter(a -> !a.id().equals(f.source().id()))
@@ -331,7 +334,6 @@ class Issue20PerformanceScaleTest {
         assertThat(allA).isSameAs(allB).hasSize(5_000);
         assertThat(worldA).isSameAs(worldB).hasSize(4_500);
         assertThat(owned).isEqualTo(5_000);
-        assertThat(tGetAllNs).isLessThan(1_000_000L); // < 1 ms
 
         // Measure spatial radius lookup and view-distance visual collection
         final long tRadiusStart = System.nanoTime();
@@ -341,7 +343,6 @@ class Issue20PerformanceScaleTest {
 
         assertThat(nearby).isPresent();
         assertThat(visible).isNotEmpty().hasSizeLessThan(500);
-        assertThat(tRadiusNs).isLessThan(10_000_000L); // < 10 ms
 
         // Measure 5,000-destination dialog batch evaluation + component formatting within 1 tick (50 ms)
         f.economy().resetBalanceCalls();
@@ -352,10 +353,24 @@ class Issue20PerformanceScaleTest {
 
         assertThat(labels).hasSize(4_999);
         assertThat(f.economy().balanceCallCount()).isEqualTo(1);
-        assertThat(evalMs).isLessThan(50.0);
 
         System.out.printf(Locale.US,
                 "[Issue20 Benchmark N=5000] cached lookups=%.4f ms, findWithinDistance+visible=%.3f ms (visible=%d), dialog evaluate+format=%.2f ms, Vault calls=%d%n",
                 tGetAllNs / 1_000_000.0, tRadiusNs / 1_000_000.0, visible.size(), evalMs, f.economy().balanceCallCount());
+        return new Scale5000Result(tGetAllNs, tRadiusNs, evalMs, visible.size());
+    }
+
+    @Test
+    void scale5000RegistryCachesReferencesAndCollapsesBatchQueries() {
+        runAndAssertScale5000Invariants();
+    }
+
+    @Test
+    @Tag("performance")
+    void scale5000RegistryAndBatchEvaluationCompletesWithinOneTick() {
+        final Scale5000Result result = runAndAssertScale5000Invariants();
+        assertThat(result.getAllNs()).isLessThan(1_000_000L); // < 1 ms
+        assertThat(result.radiusNs()).isLessThan(10_000_000L); // < 10 ms
+        assertThat(result.evalMs()).isLessThan(50.0);
     }
 }

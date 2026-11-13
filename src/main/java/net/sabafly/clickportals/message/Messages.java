@@ -105,8 +105,8 @@ public final class Messages {
     private record State(
             Map<Locale, TranslationBundle> bundles,
             Map<Locale, CachedBundle> cachedBundles,
-            Map<Locale, CachedBundle> resolvedByLocale,
-            CachedBundle emptyFallback,
+            Map<String, CachedBundle> cachedByLanguage,
+            CachedBundle defaultFallback,
             Locale defaultLocale,
             boolean useClientLocale
     ) {
@@ -121,12 +121,35 @@ public final class Messages {
             for (final Map.Entry<Locale, TranslationBundle> entry : bundles.entrySet()) {
                 cached.put(entry.getKey(), buildCachedBundle(bundles, defaultLocale, entry.getValue()));
             }
+            final Map<Locale, CachedBundle> immutableCached = Map.copyOf(cached);
+            final Map<String, CachedBundle> byLanguage = new HashMap<>();
+            for (final Locale locale : immutableCached.keySet()) {
+                final String language = locale.getLanguage();
+                if (language.isEmpty() || byLanguage.containsKey(language)) {
+                    continue;
+                }
+                final CachedBundle resolved = findByLanguage(immutableCached, language);
+                if (resolved != null) {
+                    byLanguage.put(language, resolved);
+                }
+            }
+            final Map<String, CachedBundle> immutableByLanguage = Map.copyOf(byLanguage);
             final CachedBundle emptyFallback = buildCachedBundle(bundles, defaultLocale, TranslationBundle.empty());
+            CachedBundle defaultFallback = immutableCached.get(defaultLocale);
+            if (defaultFallback == null) {
+                defaultFallback = immutableByLanguage.get(defaultLocale.getLanguage());
+            }
+            if (defaultFallback == null) {
+                defaultFallback = immutableCached.get(Locale.US);
+            }
+            if (defaultFallback == null) {
+                defaultFallback = emptyFallback;
+            }
             return new State(
                     bundles,
-                    Map.copyOf(cached),
-                    new ConcurrentHashMap<>(),
-                    emptyFallback,
+                    immutableCached,
+                    immutableByLanguage,
+                    defaultFallback,
                     defaultLocale,
                     useClientLocale
             );
@@ -447,36 +470,26 @@ public final class Messages {
     }
 
     /**
-     * Resolves and caches the best-matching {@link CachedBundle} for {@code requested}.
+     * Resolves the best-matching pre-cached {@link CachedBundle} for {@code requested} without retaining
+     * arbitrary unregistered client locales.
      */
     private static CachedBundle resolveCachedBundle(final State current, final Locale requested) {
         final Locale normalized = LanguageLoader.normalizeLocale(requested);
-        return current.resolvedByLocale().computeIfAbsent(normalized, loc -> {
-            final Map<Locale, CachedBundle> bundles = current.cachedBundles();
-            // 1. Exact match (language + country)
-            final CachedBundle exact = bundles.get(loc);
-            if (exact != null) {
-                return exact;
-            }
-            // 2. Language-only match
-            final CachedBundle byLang = findByLanguage(bundles, loc.getLanguage());
+        // 1. Exact match (language + country)
+        final CachedBundle exact = current.cachedBundles().get(normalized);
+        if (exact != null) {
+            return exact;
+        }
+        // 2. Language-only match (precomputed across registered bundles)
+        final String language = normalized.getLanguage();
+        if (!language.isEmpty()) {
+            final CachedBundle byLang = current.cachedByLanguage().get(language);
             if (byLang != null) {
                 return byLang;
             }
-            // 3. Configured default locale (exact, then language)
-            final Locale def = current.defaultLocale();
-            final CachedBundle defExact = bundles.get(def);
-            if (defExact != null) {
-                return defExact;
-            }
-            final CachedBundle defLang = findByLanguage(bundles, def.getLanguage());
-            if (defLang != null) {
-                return defLang;
-            }
-            // 4. Built-in en_US fallback
-            final CachedBundle us = bundles.get(Locale.US);
-            return us != null ? us : current.emptyFallback();
-        });
+        }
+        // 3 & 4. Configured default locale -> en_US -> empty fallback (precomputed)
+        return current.defaultFallback();
     }
 
     /**
