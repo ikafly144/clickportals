@@ -22,9 +22,6 @@ import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
 import org.slf4j.Logger;
 import org.spongepowered.configurate.CommentedConfigurationNode;
 import org.spongepowered.configurate.ConfigurateException;
@@ -62,9 +59,25 @@ public final class ConfigManager {
 
     /**
      * Loads the configuration from disk (creating the default file if missing), validates it,
+     * synchronizes schema changes back to disk with a {@code .bak} backup when needed,
      * and logs warnings or errors for invalid settings.
      */
     public PluginConfig load() {
+        return load(true);
+    }
+
+    /**
+     * Reloads the configuration from disk without modifying or backing up existing files.
+     */
+    public PluginConfig reload() {
+        return load(false);
+    }
+
+    /**
+     * Loads the configuration from disk (creating the default file if missing), optionally synchronizing
+     * missing or obsolete schema keys back to disk.
+     */
+    public PluginConfig load(final boolean syncSchema) {
         try {
             final Path parent = configFile.getParent();
             if (parent != null && !Files.exists(parent)) {
@@ -100,6 +113,17 @@ public final class ConfigManager {
                 return currentConfig;
             }
             final PluginConfig validated = parsed.validated(logger);
+            if (syncSchema) {
+                final CommentedConfigurationNode targetRoot = loader.createNode();
+                targetRoot.set(PluginConfig.class, validated);
+                if (YamlSchemaSync.hasSchemaDiff(root, targetRoot) && YamlSchemaSync.backupFile(configFile, logger)) {
+                    try {
+                        writeNodeToDisk(targetRoot, validated);
+                    } catch (final ConfigurateException e) {
+                        logger.warn("Failed to write updated configuration to {}: {}", configFile, e.getMessage(), e);
+                    }
+                }
+            }
             currentConfig = validated;
             lastLoadSuccessful = true;
             return currentConfig;
@@ -128,7 +152,13 @@ public final class ConfigManager {
         final PluginConfig validated = config.validated(logger);
         final CommentedConfigurationNode root = loader.createNode();
         root.set(PluginConfig.class, validated);
+        writeNodeToDisk(root, validated);
+    }
 
+    private void writeNodeToDisk(
+            final CommentedConfigurationNode root,
+            final PluginConfig validated
+    ) throws ConfigurateException {
         final StringWriter stringWriter = new StringWriter();
         final YamlConfigurationLoader stringLoader = YamlConfigurationLoader.builder()
                 .sink(() -> new java.io.BufferedWriter(stringWriter))
@@ -138,7 +168,7 @@ public final class ConfigManager {
                 .build();
         stringLoader.save(root);
 
-        final String commentedYaml = renderInlineComments(stringWriter.toString(), root);
+        final String commentedYaml = YamlSchemaSync.renderInlineComments(stringWriter.toString(), root, INDENT_SPACES);
         try {
             final Path parent = configFile.getParent();
             if (parent != null && !Files.exists(parent)) {
@@ -166,51 +196,5 @@ public final class ConfigManager {
      */
     public PluginConfig config() {
         return currentConfig;
-    }
-
-    /**
-     * Injects {@code @Comment} lines from the {@link CommentedConfigurationNode} tree into the dumped YAML text.
-     */
-    private static String renderInlineComments(final String dumpedYaml, final CommentedConfigurationNode root) {
-        final List<String> outputLines = new ArrayList<>();
-        final String[] lines = dumpedYaml.split("\r?\n", -1);
-        final List<CommentedConfigurationNode> nodeStack = new ArrayList<>();
-
-        for (int i = 0; i < lines.length; i++) {
-            final String line = lines[i];
-            final String trimmed = line.stripLeading();
-            if (!trimmed.isEmpty() && !trimmed.startsWith("#") && !trimmed.startsWith("-")) {
-                final int colonIndex = trimmed.indexOf(':');
-                if (colonIndex > 0) {
-                    final int indent = line.length() - trimmed.length();
-                    final int depth = indent / INDENT_SPACES;
-                    final String key = trimmed.substring(0, colonIndex).strip();
-
-                    while (nodeStack.size() > depth) {
-                        nodeStack.removeLast();
-                    }
-                    final CommentedConfigurationNode parentNode = nodeStack.isEmpty() ? root : nodeStack.getLast();
-                    final Map<Object, ? extends CommentedConfigurationNode> children = parentNode.childrenMap();
-                    final CommentedConfigurationNode currentNode = children.get(key);
-                    if (currentNode != null) {
-                        final String comment = currentNode.comment();
-                        if (comment != null && !comment.isBlank()) {
-                            final String indentPrefix = " ".repeat(indent);
-                            if (depth == 0 && !outputLines.isEmpty() && !outputLines.getLast().isBlank()) {
-                                outputLines.add("");
-                            }
-                            for (final String commentLine : comment.split("\r?\n", -1)) {
-                                outputLines.add(indentPrefix + "# " + commentLine);
-                            }
-                        }
-                        if (nodeStack.size() == depth) {
-                            nodeStack.add(currentNode);
-                        }
-                    }
-                }
-            }
-            outputLines.add(line);
-        }
-        return String.join("\n", outputLines);
     }
 }

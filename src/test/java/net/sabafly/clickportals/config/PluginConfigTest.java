@@ -286,6 +286,7 @@ class PluginConfigTest {
         // so that creating or writing to dir/config.yml fails deterministically (NotADirectoryException)
         // regardless of OS permissions or root user status
         Files.delete(configFile);
+        Files.deleteIfExists(dir.resolve("config.yml.bak"));
         Files.delete(dir);
         Files.writeString(dir, "not-a-directory", StandardCharsets.UTF_8);
 
@@ -293,5 +294,82 @@ class PluginConfigTest {
         assertThat(manager.lastLoadSuccessful()).isFalse();
         // Retains previous configuration
         assertThat(afterFailure.maxAetherytesPerPlayer()).isEqualTo(77);
+    }
+
+    @Test
+    void startupLoadSyncsMissingAndObsoleteKeysWithBackupWhilePreservingUserValuesAndDynamicMaps() throws IOException {
+        final Path configFile = tempDir.resolve("config.yml");
+        final Path backupFile = tempDir.resolve("config.yml.bak");
+        final String legacyYaml = """
+                language:
+                  default-locale: ja_JP
+                  use-client-locale: false
+                hologram:
+                  enabled: true
+                  view-distance: 40.0
+                  legacy-unused: true
+                limits:
+                  max-aetherytes-per-player: 8
+                  placement-cooldown-ticks: 200
+                dimensions:
+                  default-cost:
+                    - type: vault
+                      amount: "$amount"
+                      required: true
+                  amounts:
+                    custom_realm: 42.0
+                  routes: []
+                obsolete-top-level: "should-be-removed"
+                """;
+        Files.writeString(configFile, legacyYaml, StandardCharsets.UTF_8);
+
+        final ConfigManager manager = new ConfigManager(configFile, mock(Logger.class));
+        final PluginConfig loaded = manager.load();
+
+        assertThat(loaded.defaultLocale()).isEqualTo(Locale.JAPAN);
+        assertThat(loaded.useClientLocale()).isFalse();
+        assertThat(loaded.hologramViewDistance()).isEqualTo(40.0);
+        assertThat(loaded.maxAetherytesPerPlayer()).isEqualTo(8);
+        assertThat(loaded.placementCooldownTicks()).isEqualTo(200);
+        assertThat(loaded.minDistanceBetweenAetherytes()).isEqualTo(0.0);
+        assertThat(loaded.maxFavoritesPerPlayer()).isEqualTo(-1);
+        assertThat(loaded.dimensions().amounts()).containsEntry("custom_realm", 42.0);
+
+        // Backup created with original content
+        assertThat(backupFile).exists().hasContent(legacyYaml);
+
+        // Updated file has new keys, comments, preserved dynamic world, and removed obsolete keys
+        final String syncedYaml = Files.readString(configFile, StandardCharsets.UTF_8);
+        assertThat(syncedYaml)
+                .contains("min-distance-between-aetherytes: 0.0")
+                .contains("max-favorites-per-player: -1")
+                .contains("cross-dimension: true")
+                .contains("custom_realm: 42.0")
+                .contains("default-locale: ja_JP")
+                .doesNotContain("legacy-unused")
+                .doesNotContain("obsolete-top-level");
+
+        // Second startup load is idempotent and does not overwrite backup or file
+        Files.writeString(backupFile, "sentinel-backup", StandardCharsets.UTF_8);
+        manager.load();
+        assertThat(Files.readString(backupFile, StandardCharsets.UTF_8)).isEqualTo("sentinel-backup");
+    }
+
+    @Test
+    void reloadDoesNotModifyOrBackupConfigFile() throws IOException {
+        final Path configFile = tempDir.resolve("config.yml");
+        final String partialYaml = """
+                limits:
+                  max-aetherytes-per-player: 12
+                obsolete-key: true
+                """;
+        Files.writeString(configFile, partialYaml, StandardCharsets.UTF_8);
+
+        final ConfigManager manager = new ConfigManager(configFile, mock(Logger.class));
+        final PluginConfig reloaded = manager.reload();
+
+        assertThat(reloaded.maxAetherytesPerPlayer()).isEqualTo(12);
+        assertThat(tempDir.resolve("config.yml.bak")).doesNotExist();
+        assertThat(Files.readString(configFile, StandardCharsets.UTF_8)).isEqualTo(partialYaml);
     }
 }

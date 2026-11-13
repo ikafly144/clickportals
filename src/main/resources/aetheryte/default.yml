@@ -77,6 +77,8 @@ placement:
     height: 2
   # Required costs to place this variation (empty = free) (#15)
   cost: []
+  # Minimum block distance to another Aetheryte in the same world (-1 to inherit global, 0 to disable)
+  min-distance: -1.0
 
 # Optional warp overrides applied when warping from this variation (#14, #26)
 warp:
@@ -85,6 +87,8 @@ warp:
     min: -1.0
     # Maximum warp distance (-1 to inherit global config)
     max: -1.0
+    # Whether distance limits (min/max) apply to cross-dimension warps (null to inherit global)
+    cross-dimension: null
   # Cost override for warps originating from this variation (null to inherit global, [] for free)
   cost: null
 

@@ -258,7 +258,7 @@ public final class ClickPortals extends JavaPlugin {
         }
 
         Bukkit.getGlobalRegionScheduler().execute(this, () -> {
-            final PluginConfig reloadedConfig = cfgManager.load();
+            final PluginConfig reloadedConfig = cfgManager.reload();
             if (!cfgManager.lastLoadSuccessful()) {
                 msgService.send(sender, MessageKey.COMMAND_RELOAD_FAILED);
                 return;

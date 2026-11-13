@@ -65,10 +65,10 @@ public final class VariationRegistry {
     }
 
     /**
-     * Reloads all variation definitions from {@code aetheryteDir} atomically.
+     * Reloads all variation definitions from {@code aetheryteDir} atomically without modifying files on disk.
      */
     public void reload(final Path aetheryteDir, final Logger reloadLogger) {
-        this.variations = VariationLoader.loadDirectory(aetheryteDir, reloadLogger);
+        this.variations = VariationLoader.loadDirectory(aetheryteDir, reloadLogger, false);
         this.warnedUnknownIds.clear();
     }
 
