@@ -42,6 +42,11 @@ public final class Permissions {
     public static final String REMOVE_ANY = "clickportals.remove.any";
 
     /**
+     * Allows renaming Aetherytes owned by other players (default: {@code op}) (#57).
+     */
+    public static final String RENAME_ANY = "clickportals.rename.any";
+
+    /**
      * Allows using {@code /clickportals give} (default: {@code op}).
      */
     public static final String COMMAND_GIVE = "clickportals.command.give";
@@ -99,6 +104,21 @@ public final class Permissions {
     public static boolean canRemove(final Permissible permissible, final UUID playerId, final Aetheryte aetheryte) {
         return aetheryte.ownerId().equals(playerId)
                 || permissible.hasPermission(REMOVE_ANY);
+    }
+
+    /**
+     * Checks whether the given permissible with {@code playerId} is allowed to rename the specified Aetheryte (#57).
+     */
+    public static boolean canRename(final Permissible permissible, final UUID playerId, final Aetheryte aetheryte) {
+        return aetheryte.ownerId().equals(playerId)
+                || permissible.hasPermission(RENAME_ANY);
+    }
+
+    /**
+     * Checks whether the given permissible holds full administrative privileges (#57).
+     */
+    public static boolean canAdmin(final Permissible permissible) {
+        return permissible.hasPermission(ADMIN);
     }
 
     /**

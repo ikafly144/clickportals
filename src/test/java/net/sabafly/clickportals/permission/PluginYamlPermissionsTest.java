@@ -51,6 +51,7 @@ class PluginYamlPermissionsTest {
             assertThat(perms.node(Permissions.USE, "default").getString()).isEqualTo("true");
             assertThat(perms.node(Permissions.PLACE, "default").getString()).isEqualTo("true");
             assertThat(perms.node(Permissions.REMOVE_ANY, "default").getString()).isEqualTo("op");
+            assertThat(perms.node(Permissions.RENAME_ANY, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.COMMAND_GIVE, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.COMMAND_RELOAD, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.BYPASS_LIMIT, "default").getString()).isEqualTo("op");
@@ -62,6 +63,7 @@ class PluginYamlPermissionsTest {
             assertThat(children.node(Permissions.USE).getBoolean()).isTrue();
             assertThat(children.node(Permissions.PLACE).getBoolean()).isTrue();
             assertThat(children.node(Permissions.REMOVE_ANY).getBoolean()).isTrue();
+            assertThat(children.node(Permissions.RENAME_ANY).getBoolean()).isTrue();
             assertThat(children.node(Permissions.COMMAND_GIVE).getBoolean()).isTrue();
             assertThat(children.node(Permissions.COMMAND_RELOAD).getBoolean()).isTrue();
             assertThat(children.node(Permissions.BYPASS_LIMIT).getBoolean()).isTrue();
@@ -94,13 +96,19 @@ class PluginYamlPermissionsTest {
         assertThat(Permissions.canPlace(regularUser)).isTrue();
         assertThat(Permissions.canRemove(regularUser, ownerId, aetheryte)).isTrue();
         assertThat(Permissions.canRemove(regularUser, otherId, aetheryte)).isFalse();
+        assertThat(Permissions.canRename(regularUser, ownerId, aetheryte)).isTrue();
+        assertThat(Permissions.canRename(regularUser, otherId, aetheryte)).isFalse();
+        assertThat(Permissions.canAdmin(regularUser)).isFalse();
         assertThat(Permissions.canUseCommand(regularUser)).isFalse();
 
         final Permissible moderator = mock(Permissible.class);
         when(moderator.hasPermission(Permissions.REMOVE_ANY)).thenReturn(true);
+        when(moderator.hasPermission(Permissions.RENAME_ANY)).thenReturn(true);
         when(moderator.hasPermission(Permissions.COMMAND_RELOAD)).thenReturn(true);
 
         assertThat(Permissions.canRemove(moderator, otherId, aetheryte)).isTrue();
+        assertThat(Permissions.canRename(moderator, otherId, aetheryte)).isTrue();
+        assertThat(Permissions.canAdmin(moderator)).isFalse();
         assertThat(Permissions.canUseCommand(moderator)).isTrue();
         assertThat(Permissions.canReload(moderator)).isTrue();
         assertThat(Permissions.canGive(moderator)).isFalse();

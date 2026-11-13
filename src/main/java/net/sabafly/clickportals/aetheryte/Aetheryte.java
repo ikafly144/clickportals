@@ -25,7 +25,7 @@ import org.bukkit.World;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Immutable domain model representing a placed Aetheryte warp point (#6, #12, #37).
+ * Immutable domain model representing a placed Aetheryte warp point (#6, #12, #37, #53).
  */
 public record Aetheryte(
         UUID id,
@@ -37,7 +37,8 @@ public record Aetheryte(
         int blockZ,
         UUID ownerId,
         long createdAt,
-        String variation
+        String variation,
+        @Nullable String ownerName
 ) {
 
     /**
@@ -46,14 +47,15 @@ public record Aetheryte(
     public static final String DEFAULT_VARIATION = "default";
 
     /**
-     * Compact constructor normalizing null or blank variation identifiers to {@link #DEFAULT_VARIATION}.
+     * Compact constructor normalizing variation identifiers and optional owner names.
      */
     public Aetheryte {
         variation = normalizeVariation(variation);
+        ownerName = normalizeOwnerName(ownerName);
     }
 
     /**
-     * Convenience constructor using {@link #DEFAULT_VARIATION}.
+     * Convenience constructor using {@link #DEFAULT_VARIATION} and no cached owner name.
      */
     public Aetheryte(
             final UUID id,
@@ -66,7 +68,63 @@ public record Aetheryte(
             final UUID ownerId,
             final long createdAt
     ) {
-        this(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt, DEFAULT_VARIATION);
+        this(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt, DEFAULT_VARIATION, null);
+    }
+
+    /**
+     * Convenience constructor using no cached owner name.
+     */
+    public Aetheryte(
+            final UUID id,
+            final String name,
+            final UUID worldId,
+            final String worldName,
+            final int blockX,
+            final int blockY,
+            final int blockZ,
+            final UUID ownerId,
+            final long createdAt,
+            final String variation
+    ) {
+        this(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt, variation, null);
+    }
+
+    /**
+     * Normalizes an optional owner name, returning {@code null} when null or blank.
+     */
+    public static @Nullable String normalizeOwnerName(@Nullable final String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        return raw.strip();
+    }
+
+    /**
+     * Returns a copy of this Aetheryte with an updated display name.
+     */
+    public Aetheryte withName(final String newName) {
+        return new Aetheryte(id, newName, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt, variation, ownerName);
+    }
+
+    /**
+     * Returns a copy of this Aetheryte with an updated owner UUID and cached name.
+     */
+    public Aetheryte withOwner(final UUID newOwnerId, @Nullable final String newOwnerName) {
+        return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ, newOwnerId, createdAt, variation, newOwnerName);
+    }
+
+    /**
+     * Returns a copy of this Aetheryte with an updated cached owner name.
+     */
+    public Aetheryte withOwnerName(@Nullable final String newOwnerName) {
+        return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt, variation, newOwnerName);
+    }
+
+    /**
+     * Returns a copy of this Aetheryte with an updated variation identifier.
+     */
+    public Aetheryte withVariation(final String newVariation) {
+        return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt, newVariation, ownerName);
     }
 
     /**

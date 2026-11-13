@@ -351,4 +351,28 @@ class AetheryteRegistryTest {
         assertThat(registry.getByPosition(world, 10, 64, 10)).contains(aetheryteB);
         assertThat(registry.getByPosition(world, 50, 64, 50)).contains(movedA);
     }
+
+    @Test
+    void updateAtomicallyUpdatesAllIndicesAndWorldPdc() {
+        final UUID id = UUID.randomUUID();
+        final UUID oldOwner = UUID.randomUUID();
+        final UUID newOwner = UUID.randomUUID();
+        final Aetheryte initial = new Aetheryte(id, "OldName", WORLD_ID, WORLD_NAME, 16, 64, 32, oldOwner, 100L, "default", "Alice");
+        registry.register(world, initial);
+
+        final var updatedOpt = registry.update(world, id, a -> a.withName("NewName").withOwner(newOwner, "Bob").withVariation("grand"));
+        assertThat(updatedOpt).isPresent();
+        final Aetheryte updated = updatedOpt.get();
+        assertThat(updated.name()).isEqualTo("NewName");
+        assertThat(updated.ownerId()).isEqualTo(newOwner);
+        assertThat(updated.ownerName()).isEqualTo("Bob");
+        assertThat(updated.variation()).isEqualTo("grand");
+
+        assertThat(registry.getById(id)).contains(updated);
+        assertThat(registry.getByPosition(world, 16, 64, 32)).contains(updated);
+        assertThat(registry.getByChunk(WORLD_ID, 1, 2)).containsExactly(updated);
+
+        final AetheryteRegistry reloaded = new AetheryteRegistry();
+        assertThat(reloaded.loadWorld(world)).containsExactly(updated);
+    }
 }

@@ -182,4 +182,25 @@ class MessagesTest {
             }
         }
     }
+
+    @Test
+    void warpMessagesIncludeOwnerInBodyLabelAndTooltip() {
+        final Messages messages = Messages.defaults(Locale.JAPAN, true);
+        final Player viewer = mock(Player.class);
+        when(viewer.locale()).thenReturn(Locale.JAPAN);
+
+        final UUID worldId = UUID.randomUUID();
+        final Aetheryte current = new Aetheryte(UUID.randomUUID(), "現在地", worldId, "world", 0, 64, 0, UUID.randomUUID(), 100L, "default", "Alice");
+        final Aetheryte dest = new Aetheryte(UUID.randomUUID(), "目的地", worldId, "world", 30, 64, 40, UUID.randomUUID(), 200L, "default", "Bob");
+
+        assertThat(PLAIN.serialize(messages.warpDialogBody(viewer, current, "Alice", 1)))
+                .contains("現在地")
+                .contains("Alice");
+        assertThat(PLAIN.serialize(messages.warpDestinationLabel(viewer, dest, "Bob", messages.freeCostLabel(viewer))))
+                .contains("目的地")
+                .contains("Bob");
+        assertThat(PLAIN.serialize(messages.warpDestinationTooltip(viewer, current, dest, "Bob", messages.freeCostLabel(viewer), true, null)))
+                .contains("Bob")
+                .contains("world");
+    }
 }

@@ -25,6 +25,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.UnaryOperator;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
@@ -97,7 +98,8 @@ public final class AetheryteRegistry {
                     entry.blockZ(),
                     entry.ownerId(),
                     entry.createdAt(),
-                    entry.variation()
+                    entry.variation(),
+                    entry.ownerName()
             );
             final Aetheryte previous = indexEntry(normalized);
             if (previous != null && !previous.worldId().equals(worldId)) {
@@ -219,6 +221,32 @@ public final class AetheryteRegistry {
             final int maxVariation
     ) {
         return tryRegister(world, aetheryte, maxGlobal, maxVariation, 0.0);
+    }
+
+    /**
+     * Atomically updates an existing Aetheryte in memory and persists the updated list to the world's PDC (#53, #57).
+     */
+    public synchronized Optional<Aetheryte> update(
+            final World world,
+            final UUID id,
+            final UnaryOperator<Aetheryte> updater
+    ) {
+        final Aetheryte existing = byId.get(id);
+        if (existing == null) {
+            return Optional.empty();
+        }
+        final Aetheryte updated = updater.apply(existing);
+        indexEntry(updated);
+        if (!existing.worldId().equals(updated.worldId())) {
+            rebuildWorldCache(existing.worldId());
+        }
+        rebuildWorldCache(updated.worldId());
+        if (!world.getUID().equals(updated.worldId())) {
+            rebuildWorldCache(world.getUID());
+        }
+        rebuildAllCache();
+        saveWorld(world);
+        return Optional.of(updated);
     }
 
     /**

@@ -40,6 +40,7 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
     private static final NamespacedKey KEY_OWNER_ID = new NamespacedKey(NAMESPACE, "owner_id");
     private static final NamespacedKey KEY_CREATED_AT = new NamespacedKey(NAMESPACE, "created_at");
     private static final NamespacedKey KEY_VARIATION = new NamespacedKey(NAMESPACE, "variation");
+    private static final NamespacedKey KEY_OWNER_NAME = new NamespacedKey(NAMESPACE, "owner_name");
 
     public static final AetheryteDataType INSTANCE = new AetheryteDataType();
 
@@ -69,6 +70,9 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
         container.set(KEY_OWNER_ID, PersistentDataType.STRING, complex.ownerId().toString());
         container.set(KEY_CREATED_AT, PersistentDataType.LONG, complex.createdAt());
         container.set(KEY_VARIATION, PersistentDataType.STRING, complex.variation());
+        if (complex.ownerName() != null) {
+            container.set(KEY_OWNER_NAME, PersistentDataType.STRING, complex.ownerName());
+        }
         return container;
     }
 
@@ -84,6 +88,7 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
         final String ownerIdStr = Objects.requireNonNull(primitive.get(KEY_OWNER_ID, PersistentDataType.STRING), "Missing owner_id");
         final Long createdAt = Objects.requireNonNull(primitive.get(KEY_CREATED_AT, PersistentDataType.LONG), "Missing created_at");
         final String variation = primitive.get(KEY_VARIATION, PersistentDataType.STRING);
+        final String ownerName = primitive.get(KEY_OWNER_NAME, PersistentDataType.STRING);
 
         return new Aetheryte(
                 UUID.fromString(idStr),
@@ -95,7 +100,8 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
                 z,
                 UUID.fromString(ownerIdStr),
                 createdAt,
-                Aetheryte.normalizeVariation(variation)
+                Aetheryte.normalizeVariation(variation),
+                ownerName
         );
     }
 }

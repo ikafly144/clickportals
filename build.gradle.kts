@@ -167,6 +167,10 @@ paperPluginYaml {
             description = "Remove Aetherytes owned by others"
             default = Permission.Default.OP
         }
+        register("clickportals.rename.any") {
+            description = "Rename Aetherytes owned by others"
+            default = Permission.Default.OP
+        }
         register("clickportals.command.give") {
             description = "Give Aetheryte creation items via command"
             default = Permission.Default.OP
@@ -198,6 +202,7 @@ paperPluginYaml {
                 "clickportals.use",
                 "clickportals.place",
                 "clickportals.remove.any",
+                "clickportals.rename.any",
                 "clickportals.command.give",
                 "clickportals.command.reload",
                 "clickportals.bypass.limit",

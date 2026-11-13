@@ -51,7 +51,8 @@ class AetheryteDataTypeTest {
                 -256,
                 UUID.fromString("99999999-8888-7777-6666-555555555555"),
                 1_700_000_000_000L,
-                "grand_crystal"
+                "grand_crystal",
+                "ikafly144"
         );
 
         final PersistentDataContainer serialized = AetheryteDataType.INSTANCE.toPrimitive(original, context);
@@ -59,6 +60,7 @@ class AetheryteDataTypeTest {
 
         assertThat(restored).isEqualTo(original);
         assertThat(restored.variation()).isEqualTo("grand_crystal");
+        assertThat(restored.ownerName()).isEqualTo("ikafly144");
     }
 
     @Test
@@ -85,6 +87,7 @@ class AetheryteDataTypeTest {
 
         final Aetheryte restored = AetheryteDataType.INSTANCE.fromPrimitive(serialized, context);
         assertThat(restored.variation()).isEqualTo(Aetheryte.DEFAULT_VARIATION);
+        assertThat(restored.ownerName()).isNull();
     }
 
     @SuppressWarnings("unchecked")
