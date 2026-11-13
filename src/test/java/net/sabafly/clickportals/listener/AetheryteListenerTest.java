@@ -236,17 +236,7 @@ class AetheryteListenerTest {
                 return null;
             }).when(regionScheduler).execute(any(), any(Location.class), any());
 
-            final Block safeFloor = mock(Block.class);
-            when(safeFloor.isSolid()).thenReturn(true);
-            when(safeFloor.getType()).thenReturn(Material.STONE);
-            final Block safeAir = mock(Block.class);
-            when(safeAir.isPassable()).thenReturn(true);
-            when(safeAir.getType()).thenReturn(Material.AIR);
-
-            when(world.getBlockAt(5, 63, 5)).thenReturn(safeFloor);
-            when(world.getBlockAt(5, 64, 5)).thenReturn(safeAir);
-            when(world.getBlockAt(5, 65, 5)).thenReturn(safeAir);
-            when(world.getBlockAt(5, 66, 5)).thenReturn(safeAir);
+            stubFlatSafeTerrain(world);
 
             final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
             when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
@@ -346,17 +336,7 @@ class AetheryteListenerTest {
                 return null;
             }).when(regionScheduler).execute(any(), any(Location.class), any());
 
-            final Block safeFloor = mock(Block.class);
-            when(safeFloor.isSolid()).thenReturn(true);
-            when(safeFloor.getType()).thenReturn(Material.STONE);
-            final Block safeAir = mock(Block.class);
-            when(safeAir.isPassable()).thenReturn(true);
-            when(safeAir.getType()).thenReturn(Material.AIR);
-
-            when(world.getBlockAt(5, 63, 5)).thenReturn(safeFloor);
-            when(world.getBlockAt(5, 64, 5)).thenReturn(safeAir);
-            when(world.getBlockAt(5, 65, 5)).thenReturn(safeAir);
-            when(world.getBlockAt(5, 66, 5)).thenReturn(safeAir);
+            stubFlatSafeTerrain(world);
 
             final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
             when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
@@ -424,17 +404,7 @@ class AetheryteListenerTest {
                 return null;
             }).when(regionScheduler).execute(any(), any(Location.class), any());
 
-            final Block safeFloor = mock(Block.class);
-            when(safeFloor.isSolid()).thenReturn(true);
-            when(safeFloor.getType()).thenReturn(Material.STONE);
-            final Block safeAir = mock(Block.class);
-            when(safeAir.isPassable()).thenReturn(true);
-            when(safeAir.getType()).thenReturn(Material.AIR);
-
-            when(world.getBlockAt(5, 63, 5)).thenReturn(safeFloor);
-            when(world.getBlockAt(5, 64, 5)).thenReturn(safeAir);
-            when(world.getBlockAt(5, 65, 5)).thenReturn(safeAir);
-            when(world.getBlockAt(5, 66, 5)).thenReturn(safeAir);
+            stubFlatSafeTerrain(world);
 
             final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
             when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.text("$30.00")));
@@ -682,17 +652,7 @@ class AetheryteListenerTest {
                 return null;
             }).when(regionScheduler).execute(any(), any(Location.class), any());
 
-            final Block safeFloor = mock(Block.class);
-            when(safeFloor.isSolid()).thenReturn(true);
-            when(safeFloor.getType()).thenReturn(Material.STONE);
-            final Block safeAir = mock(Block.class);
-            when(safeAir.isPassable()).thenReturn(true);
-            when(safeAir.getType()).thenReturn(Material.AIR);
-
-            when(world.getBlockAt(5, 63, 5)).thenReturn(safeFloor);
-            when(world.getBlockAt(5, 64, 5)).thenReturn(safeAir);
-            when(world.getBlockAt(5, 65, 5)).thenReturn(safeAir);
-            when(world.getBlockAt(5, 66, 5)).thenReturn(safeAir);
+            stubFlatSafeTerrain(world);
 
             final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
             when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.text("$70.00")));
@@ -797,5 +757,58 @@ class AetheryteListenerTest {
         when(deathEvent.getEntity()).thenReturn(player);
         listener.onPlayerDeath(deathEvent);
         verify(mockService).cancelCast(player, AetheryteService.CastCancelReason.DIED);
+    }
+
+    @Test
+    void dimensionDisablePlaceForbidsNewPlacementWhileAllowingRemovalAndBypass() {
+        service.setDimensionConfigSupplier(() -> new net.sabafly.clickportals.route.DimensionRoutesConfig(
+                List.of(),
+                java.util.Map.of("world", 0.0),
+                List.of(),
+                java.util.Map.of(
+                        "world",
+                        new net.sabafly.clickportals.route.DimensionWorldConfig("<aqua>Disabled Place World</aqua>", false, false)
+                )
+        ));
+
+        final Player player = mock(Player.class);
+        when(player.getUniqueId()).thenReturn(registeredAetheryte.ownerId());
+        when(player.hasPermission(Permissions.PLACE)).thenReturn(true);
+        when(player.hasPermission(Permissions.USE)).thenReturn(true);
+        when(player.getWorld()).thenReturn(world);
+
+        // Placement check fails with formatted dimension display name
+        assertThat(service.checkPlacementDimension(player, world)).isPresent();
+        service.placeAetheryte(player, world, 10, 64, 10, "BlockedGate", Aetheryte.DEFAULT_VARIATION);
+
+        final ArgumentCaptor<Component> msgCaptor = ArgumentCaptor.forClass(Component.class);
+        verify(player).sendMessage(msgCaptor.capture());
+        assertThat(PlainTextComponentSerializer.plainText().serialize(msgCaptor.getValue()))
+                .contains("Disabled Place World");
+        assertThat(registry.getByPosition(world, 10, 64, 10)).isEmpty();
+        verify(player, never()).getScheduler();
+
+        // Warp use in this dimension is denied, yet owner removal remains permitted
+        assertThat(service.isDimensionUseAllowed(player, "world")).isFalse();
+        assertThat(AetheryteService.canRemove(player, registeredAetheryte)).isTrue();
+
+        // Bypass permission allows both placement check and dimension use
+        when(player.hasPermission(Permissions.BYPASS_DIMENSION)).thenReturn(true);
+        assertThat(service.checkPlacementDimension(player, world)).isEmpty();
+        assertThat(service.isDimensionUseAllowed(player, "world")).isTrue();
+    }
+
+    private static void stubFlatSafeTerrain(final World mockWorld) {
+        final Block safeFloor = mock(Block.class);
+        when(safeFloor.isSolid()).thenReturn(true);
+        when(safeFloor.getType()).thenReturn(Material.STONE);
+        final Block safeAir = mock(Block.class);
+        when(safeAir.isPassable()).thenReturn(true);
+        when(safeAir.getType()).thenReturn(Material.AIR);
+
+        when(mockWorld.getBlockAt(any(int.class), any(int.class), any(int.class))).thenAnswer(inv -> {
+            final int y = inv.getArgument(1);
+            return y <= 63 ? safeFloor : safeAir;
+        });
     }
 }

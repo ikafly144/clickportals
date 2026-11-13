@@ -247,6 +247,11 @@ public final class AetheryteListener implements Listener {
             messages.send(player, MessageKey.ERROR_NO_PERMISSION);
             return;
         }
+        final var dimensionPlaceError = service.checkPlacementDimension(player, clicked.getWorld());
+        if (dimensionPlaceError.isPresent()) {
+            player.sendMessage(dimensionPlaceError.get());
+            return;
+        }
 
         final Block targetBlock = AetheryteService.isReplaceableBlock(clicked)
                 ? clicked

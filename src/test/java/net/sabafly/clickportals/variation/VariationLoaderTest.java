@@ -313,4 +313,17 @@ class VariationLoaderTest {
         assertThat(VariationLoader.migrateLegacyConfig(badLegacyRoot, writableDir, mock(Logger.class))).isFalse();
         assertThat(writableDir.resolve("default.yml")).doesNotExist();
     }
+
+    @Test
+    void bundledDefaultVariationEnforcesMinimumTeleportRadiusOfOne() throws IOException {
+        final Path aetheryteDir = tempDir.resolve("default_teleport_min");
+        final VariationRegistry registry = VariationRegistry.load(aetheryteDir, mock(Logger.class));
+
+        final AetheryteVariation def = registry.getOrDefault(Aetheryte.DEFAULT_VARIATION);
+        assertThat(def.teleport().minRadius()).isEqualTo(1);
+        assertThat(def.teleport().maxRadius()).isEqualTo(1);
+        assertThat(Files.readString(aetheryteDir.resolve("default.yml"), StandardCharsets.UTF_8))
+                .contains("min-radius: 1")
+                .contains("max-radius: 1");
+    }
 }

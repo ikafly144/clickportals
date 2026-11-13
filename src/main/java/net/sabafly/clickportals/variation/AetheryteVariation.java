@@ -87,6 +87,11 @@ public record AetheryteVariation(
 ) {
 
     /**
+     * Minimum allowed horizontal radius for teleport landing search (#62).
+     */
+    public static final int MIN_HORIZONTAL_RADIUS = 1;
+
+    /**
      * Maximum allowed horizontal radius for teleport landing search and placement clearance.
      */
     public static final int MAX_HORIZONTAL_RADIUS = 8;
@@ -362,16 +367,16 @@ public record AetheryteVariation(
     }
 
     /**
-     * Teleport destination ring spread and orientation settings (#41).
+     * Teleport destination ring spread and orientation settings (#41, #62).
      */
     @ConfigSerializable
     public record TeleportSection(
             @Setting("min-radius")
-            @Comment("Minimum horizontal distance radius in blocks from the Aetheryte to land (inner ring radius, 0..max-radius)")
+            @Comment("Minimum horizontal distance radius in blocks from the Aetheryte to land (inner ring radius, 1..max-radius)")
             Integer minRadius,
 
             @Setting("max-radius")
-            @Comment("Maximum horizontal distance radius in blocks around the Aetheryte to search for a safe landing spot (outer ring radius, 0 = center/top, max 8)")
+            @Comment("Maximum horizontal distance radius in blocks around the Aetheryte to search for a safe landing spot (outer ring radius, 1..8)")
             Integer maxRadius,
 
             @Setting("face-aetheryte")
@@ -383,16 +388,16 @@ public record AetheryteVariation(
                 @Nullable final Integer maxRadius,
                 @Nullable final Boolean faceAetheryte
         ) {
-            this.minRadius = minRadius == null ? 0 : minRadius;
-            this.maxRadius = maxRadius == null ? 0 : maxRadius;
+            this.minRadius = minRadius == null ? MIN_HORIZONTAL_RADIUS : minRadius;
+            this.maxRadius = maxRadius == null ? MIN_HORIZONTAL_RADIUS : maxRadius;
             this.faceAetheryte = faceAetheryte == null ? true : faceAetheryte;
         }
 
         /**
-         * Returns the default teleport section (min-radius 0, max-radius 0, face-aetheryte true).
+         * Returns the default teleport section (min-radius 1, max-radius 1, face-aetheryte true).
          */
         public static TeleportSection defaults() {
-            return new TeleportSection(0, 0, true);
+            return new TeleportSection(MIN_HORIZONTAL_RADIUS, MIN_HORIZONTAL_RADIUS, true);
         }
     }
 
@@ -907,21 +912,21 @@ public record AetheryteVariation(
         }
         final HitboxSection validatedHitbox = new HitboxSection(validWidth, validHeight);
 
-        // 5. Validate teleport section (#41)
+        // 5. Validate teleport section (#41, #62)
         final int rawMaxRadius = teleport.maxRadius();
         int validMaxRadius = rawMaxRadius;
-        if (validMaxRadius < 0 || validMaxRadius > MAX_HORIZONTAL_RADIUS) {
-            final int clamped = Math.clamp(validMaxRadius, 0, MAX_HORIZONTAL_RADIUS);
-            logger.warn("Clamping teleport.max-radius {} to {} in variation '{}' (allowed range: 0..{})",
-                    validMaxRadius, clamped, cleanId, MAX_HORIZONTAL_RADIUS);
+        if (validMaxRadius < MIN_HORIZONTAL_RADIUS || validMaxRadius > MAX_HORIZONTAL_RADIUS) {
+            final int clamped = Math.clamp(validMaxRadius, MIN_HORIZONTAL_RADIUS, MAX_HORIZONTAL_RADIUS);
+            logger.warn("Clamping teleport.max-radius {} to {} in variation '{}' (allowed range: {}..{})",
+                    validMaxRadius, clamped, cleanId, MIN_HORIZONTAL_RADIUS, MAX_HORIZONTAL_RADIUS);
             validMaxRadius = clamped;
         }
         final int rawMinRadius = teleport.minRadius();
         int validMinRadius = rawMinRadius;
-        if (validMinRadius < 0 || validMinRadius > validMaxRadius) {
-            final int clamped = Math.clamp(validMinRadius, 0, validMaxRadius);
-            logger.warn("Clamping teleport.min-radius {} to {} in variation '{}' (allowed range: 0..{})",
-                    validMinRadius, clamped, cleanId, validMaxRadius);
+        if (validMinRadius < MIN_HORIZONTAL_RADIUS || validMinRadius > validMaxRadius) {
+            final int clamped = Math.clamp(validMinRadius, MIN_HORIZONTAL_RADIUS, validMaxRadius);
+            logger.warn("Clamping teleport.min-radius {} to {} in variation '{}' (allowed range: {}..{})",
+                    validMinRadius, clamped, cleanId, MIN_HORIZONTAL_RADIUS, validMaxRadius);
             validMinRadius = clamped;
         }
         final boolean validFace = teleport.faceAetheryte();

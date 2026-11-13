@@ -150,7 +150,7 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
                 (renderer, player) -> {
                     try {
                         return Optional.of(new BetterModelTrackerHandle(
-                                renderer.getOrCreate(BukkitAdapter.adapt(player), TrackerModifier.DEFAULT)));
+                                renderer.create(BukkitAdapter.adapt(player), TrackerModifier.DEFAULT)));
                     } catch (final Throwable t) {
                         return Optional.empty();
                     }

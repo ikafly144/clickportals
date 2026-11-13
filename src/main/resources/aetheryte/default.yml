@@ -61,10 +61,10 @@ hitbox:
 
 # Teleport destination spread and orientation settings
 teleport:
-  # Minimum horizontal distance radius in blocks from the Aetheryte to land (inner ring radius, 0..max-radius)
-  min-radius: 0
-  # Maximum horizontal distance radius in blocks around the Aetheryte to search for a safe landing spot (outer ring radius, 0 = center/top, max 8)
-  max-radius: 0
+  # Minimum horizontal distance radius in blocks from the Aetheryte to land (inner ring radius, 1..max-radius)
+  min-radius: 1
+  # Maximum horizontal distance radius in blocks around the Aetheryte to search for a safe landing spot (outer ring radius, 1..8)
+  max-radius: 1
   # Whether to orient the arriving player to face toward the Aetheryte when landing in the surrounding ring
   face-aetheryte: true
 
@@ -115,7 +115,7 @@ limit:
 
 # BetterModel animated 3D model engine settings (#46)
 bettermodel:
-  # Whether to render this variation using BetterModel (falls back to model.block if false or plugin is absent)
+  # Whether to render this variation using BetterModel (falls back to model.block if false or the model is not found)
   enabled: false
   # Model identifier registered in BetterModel (e.g. aetheryte_crystal)
   model-id: ""
