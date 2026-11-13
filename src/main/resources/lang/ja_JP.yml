@@ -144,6 +144,11 @@ aetheryte:
 warp:
   success: "<prefix><aqua>「</aqua><white><bold><name></bold></white><aqua>」へワープしました。</aqua>"
   cost-paid: "<prefix><gray>ワープ費用として <cost> を支払いました。</gray>"
+  cast-started: "<prefix><aqua>「</aqua><white><bold><name></bold></white><aqua>」へのワープを詠唱しています（<seconds>秒）...</aqua>"
+  cast-progress: "<aqua>ワープ詠唱中: </aqua><white><bold><name></bold></white> <gray>（残り <seconds>秒）</gray>"
+  cast-cancelled: "<prefix><red>ワープの詠唱がキャンセルされました。</red>"
+  cast-cancelled-move: "<prefix><red>移動したためワープの詠唱がキャンセルされました。</red>"
+  cast-cancelled-damage: "<prefix><red>ダメージを受けたためワープの詠唱がキャンセルされました。</red>"
 
 error:
   invalid-name: "<prefix><red>有効なエーテライト名を入力してください（1〜32文字）。</red>"

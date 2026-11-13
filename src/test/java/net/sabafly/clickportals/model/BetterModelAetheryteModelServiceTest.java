@@ -328,4 +328,97 @@ class BetterModelAetheryteModelServiceTest {
         service.removePlayer(inWorld);
         verify(mockTracker).remove(inWorld);
     }
+
+    @Test
+    void playerAnimationHoldOnLastPlaysAndClosesOnStopOrDestroy() {
+        final ModelRenderer limbRenderer = mock(ModelRenderer.class);
+        final ModelTracker playerTracker = mock(ModelTracker.class);
+        when(playerTracker.animate(eq("cast_pose"), any(AnimationModifier.class))).thenReturn(true);
+
+        final Player player = mock(Player.class);
+        when(player.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(player.getName()).thenReturn("Steve");
+
+        final BetterModelAetheryteModelService service = new BetterModelAetheryteModelService(
+                logger,
+                id -> Optional.empty(),
+                (r, loc) -> Optional.empty(),
+                limbId -> "steve".equals(limbId) ? Optional.of(limbRenderer) : Optional.empty(),
+                (r, p) -> Optional.of(playerTracker),
+                () -> true
+        );
+
+        service.playPlayerAnimation(player, "steve", "cast_pose", AetheryteModelService.PlayerAnimationMode.HOLD_ON_LAST);
+
+        final ArgumentCaptor<AnimationModifier> modifierCaptor = ArgumentCaptor.forClass(AnimationModifier.class);
+        verify(playerTracker).animate(eq("cast_pose"), modifierCaptor.capture());
+        assertThat(modifierCaptor.getValue().type()).isEqualTo(AnimationIterator.Type.HOLD_ON_LAST);
+        verify(playerTracker, never()).close();
+
+        service.stopPlayerAnimation(player);
+        verify(playerTracker).close();
+    }
+
+    @Test
+    void playerAnimationPlayOnceClosesAutomaticallyViaOnEndCallbackAndSupportsColonLimbSyntax() {
+        final ModelRenderer customLimb = mock(ModelRenderer.class);
+        final ModelTracker playerTracker = mock(ModelTracker.class);
+        when(playerTracker.animate(eq("arrive_flourish"), any(AnimationModifier.class), any(Runnable.class))).thenReturn(true);
+
+        final Player player = mock(Player.class);
+        when(player.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(player.getName()).thenReturn("Alex");
+
+        final BetterModelAetheryteModelService service = new BetterModelAetheryteModelService(
+                logger,
+                id -> Optional.empty(),
+                (r, loc) -> Optional.empty(),
+                limbId -> "custom_player".equals(limbId) ? Optional.of(customLimb) : Optional.empty(),
+                (r, p) -> Optional.of(playerTracker),
+                () -> true
+        );
+
+        service.playPlayerAnimation(
+                player,
+                "steve",
+                "custom_player:arrive_flourish",
+                AetheryteModelService.PlayerAnimationMode.PLAY_ONCE
+        );
+
+        final ArgumentCaptor<AnimationModifier> modifierCaptor = ArgumentCaptor.forClass(AnimationModifier.class);
+        final ArgumentCaptor<Runnable> onEndCaptor = ArgumentCaptor.forClass(Runnable.class);
+        verify(playerTracker).animate(eq("arrive_flourish"), modifierCaptor.capture(), onEndCaptor.capture());
+        assertThat(modifierCaptor.getValue().type()).isEqualTo(AnimationIterator.Type.PLAY_ONCE);
+        verify(playerTracker, never()).close();
+
+        onEndCaptor.getValue().run();
+        verify(playerTracker).close();
+    }
+
+    @Test
+    void playerAnimationNoOpsSafelyWhenBlankMissingOrAnimateReturnsFalse() {
+        final ModelRenderer limbRenderer = mock(ModelRenderer.class);
+        final ModelTracker failingTracker = mock(ModelTracker.class);
+        when(failingTracker.animate(eq("missing_anim"), any(AnimationModifier.class))).thenReturn(false);
+
+        final Player player = mock(Player.class);
+        when(player.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(player.getName()).thenReturn("Alex");
+
+        final BetterModelAetheryteModelService service = new BetterModelAetheryteModelService(
+                logger,
+                id -> Optional.empty(),
+                (r, loc) -> Optional.empty(),
+                limbId -> "steve".equals(limbId) ? Optional.of(limbRenderer) : Optional.empty(),
+                (r, p) -> Optional.of(failingTracker),
+                () -> true
+        );
+
+        service.playPlayerAnimation(player, "steve", "", AetheryteModelService.PlayerAnimationMode.HOLD_ON_LAST);
+        service.playPlayerAnimation(player, "unknown_limb", "cast", AetheryteModelService.PlayerAnimationMode.HOLD_ON_LAST);
+        verify(failingTracker, never()).close();
+
+        service.playPlayerAnimation(player, "steve", "missing_anim", AetheryteModelService.PlayerAnimationMode.HOLD_ON_LAST);
+        verify(failingTracker).close();
+    }
 }

@@ -760,4 +760,42 @@ class AetheryteListenerTest {
             serverField.set(null, null);
         }
     }
+
+    @Test
+    void castListenersCancelOnCoordinateMoveDamageAndDeathButAllowHeadRotation() {
+        final AetheryteService mockService = mock(AetheryteService.class);
+        final AetheryteListener listener = new AetheryteListener(
+                plugin,
+                registry,
+                mockService,
+                mock(AetheryteDialogFactory.class),
+                NoopHologramService.INSTANCE,
+                Messages.defaults()
+        );
+
+        final Player player = mock(Player.class);
+        final UUID playerId = UUID.randomUUID();
+        when(player.getUniqueId()).thenReturn(playerId);
+        when(mockService.isCasting(playerId)).thenReturn(true);
+
+        final Location from = new Location(world, 10.0, 64.0, 10.0, 0.0f, 0.0f);
+        final Location rotatedOnly = new Location(world, 10.0, 64.0, 10.0, 90.0f, -20.0f);
+        final Location moved = new Location(world, 10.5, 64.0, 10.0, 0.0f, 0.0f);
+
+        listener.onPlayerMove(new org.bukkit.event.player.PlayerMoveEvent(player, from, rotatedOnly));
+        verify(mockService, never()).onPlayerMoveDuringCast(player);
+
+        listener.onPlayerMove(new org.bukkit.event.player.PlayerMoveEvent(player, from, moved));
+        verify(mockService).onPlayerMoveDuringCast(player);
+
+        final org.bukkit.event.entity.EntityDamageEvent damageEvent = mock(org.bukkit.event.entity.EntityDamageEvent.class);
+        when(damageEvent.getEntity()).thenReturn(player);
+        listener.onEntityDamage(damageEvent);
+        verify(mockService).onPlayerDamageDuringCast(player);
+
+        final org.bukkit.event.entity.PlayerDeathEvent deathEvent = mock(org.bukkit.event.entity.PlayerDeathEvent.class);
+        when(deathEvent.getEntity()).thenReturn(player);
+        listener.onPlayerDeath(deathEvent);
+        verify(mockService).cancelCast(player, AetheryteService.CastCancelReason.DIED);
+    }
 }

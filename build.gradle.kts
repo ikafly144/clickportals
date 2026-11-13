@@ -150,9 +150,9 @@ paperPluginYaml {
     authors.add("ikafly144")
     website = "https://github.com/ikafly144/clickportals"
     dependencies {
-        server("packetevents", PaperPluginYaml.Load.BEFORE, false)
+        server("packetevents", PaperPluginYaml.Load.BEFORE, true)
         server("Vault", PaperPluginYaml.Load.BEFORE, false)
-        server("BetterModel", PaperPluginYaml.Load.BEFORE, false)
+        server("BetterModel", PaperPluginYaml.Load.BEFORE, true)
     }
     permissions {
         register("clickportals.use") {

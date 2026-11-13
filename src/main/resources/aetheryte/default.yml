@@ -91,6 +91,20 @@ warp:
     cross-dimension: null
   # Cost override for warps originating from this variation (null to inherit global, [] for free)
   cost: null
+  # Optional warp casting overrides for warps originating from this variation (#65)
+  cast:
+    # Cast time in ticks (-1 to inherit global warp.cast.ticks, 0 for instant warp)
+    ticks: -1
+    # BetterModel player limb model override (null to inherit global, "" to disable)
+    player-model: null
+    # BetterModel cast animation override (null to inherit global, "" to disable)
+    cast-animation: null
+    # BetterModel arrival animation override (null to inherit global, "" to disable)
+    arrive-animation: null
+    # Cancellation overrides (null to inherit global)
+    cancel:
+      on-move: null
+      on-damage: null
 
 # Per-player placement limit and cooldown for this variation
 limit:

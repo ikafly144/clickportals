@@ -144,6 +144,11 @@ aetheryte:
 warp:
   success: "<prefix><aqua>Warped to \"</aqua><white><bold><name></bold></white><aqua>\".</aqua>"
   cost-paid: "<prefix><gray>Paid <cost> for warp.</gray>"
+  cast-started: "<prefix><aqua>Channeling warp to \"</aqua><white><bold><name></bold></white><aqua>\" (<seconds>s)...</aqua>"
+  cast-progress: "<aqua>Channeling warp to </aqua><white><bold><name></bold></white> <gray>(<seconds>s)</gray>"
+  cast-cancelled: "<prefix><red>Warp casting was cancelled.</red>"
+  cast-cancelled-move: "<prefix><red>Warp casting cancelled because you moved.</red>"
+  cast-cancelled-damage: "<prefix><red>Warp casting cancelled because you took damage.</red>"
 
 error:
   invalid-name: "<prefix><red>Please enter a valid Aetheryte name (1-32 characters).</red>"

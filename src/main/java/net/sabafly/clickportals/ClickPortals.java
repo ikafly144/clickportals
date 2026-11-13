@@ -38,7 +38,6 @@ import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.model.AetheryteModelService;
 import net.sabafly.clickportals.model.BetterModelAetheryteModelService;
 import net.sabafly.clickportals.model.ModelAnimationTrigger;
-import net.sabafly.clickportals.model.NoopAetheryteModelService;
 import net.sabafly.clickportals.route.DimensionRouter;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.ConfiguredWarpCostEvaluator;
@@ -144,6 +143,7 @@ public final class ClickPortals extends JavaPlugin {
         service.setCostEvaluator(warpEvaluator);
         service.setEconomyProvider(this.economyProvider);
         service.setMaxFavoritesPerPlayerSupplier(() -> cfgManager.config().maxFavoritesPerPlayer());
+        service.setGlobalCastSupplier(() -> cfgManager.config().warp().cast());
         this.aetheryteService = service;
         final AetheryteDialogFactory dialogs = new AetheryteDialogFactory(service, msgService);
         this.dialogFactory = dialogs;
@@ -163,21 +163,15 @@ public final class ClickPortals extends JavaPlugin {
         this.aetheryteListener = listener;
         Bukkit.getPluginManager().registerEvents(listener, this);
 
-        if (Bukkit.getPluginManager().isPluginEnabled("BetterModel")) {
-            try {
-                BetterModel.platform().addReloadEndHandler(result -> {
-                    if (isEnabled()) {
-                        try {
-                            Bukkit.getGlobalRegionScheduler().execute(this, this::syncAllAetheryteModels);
-                        } catch (final Throwable t) {
-                            syncAllAetheryteModels();
-                        }
-                    }
-                });
-            } catch (final Throwable t) {
-                getSLF4JLogger().debug("Could not register BetterModel reload end handler", t);
+        BetterModel.platform().addReloadEndHandler(result -> {
+            if (isEnabled()) {
+                try {
+                    Bukkit.getGlobalRegionScheduler().execute(this, this::syncAllAetheryteModels);
+                } catch (final Throwable t) {
+                    syncAllAetheryteModels();
+                }
             }
-        }
+        });
 
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event -> {
             event.registrar().register(
@@ -219,6 +213,7 @@ public final class ClickPortals extends JavaPlugin {
         aetheryteListener = null;
         dialogFactory = null;
         if (aetheryteService != null) {
+            aetheryteService.cancelAllCasts();
             if (!aetheryteService.flushPendingRefunds()) {
                 getSLF4JLogger().error(
                         "CRITICAL: Failed to flush pending refunds to disk during shutdown ({} player(s), {} item(s) unpersisted).",
@@ -298,6 +293,7 @@ public final class ClickPortals extends JavaPlugin {
             this.economyProvider = resolveEconomyProvider();
             this.dimensionRouter = new DimensionRouter(reloadedConfig.dimensions());
             service.setEconomyProvider(this.economyProvider);
+            service.setGlobalCastSupplier(() -> cfgManager.config().warp().cast());
             service.setCostEvaluator(new ConfiguredWarpCostEvaluator(
                     () -> cfgManager.config(),
                     variations,
@@ -447,7 +443,7 @@ public final class ClickPortals extends JavaPlugin {
     }
 
     /**
-     * Creates the appropriate {@link HologramService} based on configuration and PacketEvents availability.
+     * Creates the {@link HologramService} using PacketEvents (unless holograms are disabled in config).
      */
     private HologramService createHologramService(
             final PluginConfig config,
@@ -458,16 +454,12 @@ public final class ClickPortals extends JavaPlugin {
         if (!config.hologramEnabled()) {
             return NoopHologramService.INSTANCE;
         }
-        if (Bukkit.getPluginManager().getPlugin("packetevents") != null) {
-            getComponentLogger().info("PacketEvents detected; enabling client-side Aetheryte visuals and interaction.");
-            return new PacketEventsHologramService(
-                    config.hologramViewDistance(),
-                    variations,
-                    msgService,
-                    externalModelPredicate
-            );
-        }
-        return NoopHologramService.INSTANCE;
+        return new PacketEventsHologramService(
+                config.hologramViewDistance(),
+                variations,
+                msgService,
+                externalModelPredicate
+        );
     }
 
     /**
@@ -487,14 +479,10 @@ public final class ClickPortals extends JavaPlugin {
     }
 
     /**
-     * Creates the appropriate {@link AetheryteModelService} based on BetterModel availability (#46).
+     * Creates the {@link BetterModelAetheryteModelService} (#46, #65).
      */
     private AetheryteModelService createModelService() {
-        if (Bukkit.getPluginManager().isPluginEnabled("BetterModel")) {
-            getComponentLogger().info("BetterModel detected; enabling BetterModel 3D animation engine.");
-            return new BetterModelAetheryteModelService(getSLF4JLogger());
-        }
-        return NoopAetheryteModelService.INSTANCE;
+        return new BetterModelAetheryteModelService(getSLF4JLogger());
     }
 
     /**

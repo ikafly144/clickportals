@@ -52,9 +52,12 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
     private final Logger logger;
     private final Function<String, Optional<ModelRenderer>> modelSupplier;
     private final BiFunction<ModelRenderer, Location, Optional<ModelTracker>> trackerFactory;
+    private final Function<String, Optional<ModelRenderer>> limbSupplier;
+    private final BiFunction<ModelRenderer, Player, Optional<ModelTracker>> playerTrackerFactory;
     private final BooleanSupplier readySupplier;
     private final Map<UUID, ActiveModel> activeModels = new ConcurrentHashMap<>();
     private final Map<UUID, Set<UUID>> spawnedByPlayer = new ConcurrentHashMap<>();
+    private final Map<UUID, ModelTracker> activePlayerAnimations = new ConcurrentHashMap<>();
 
     private record ActiveModel(ModelTracker tracker, BetterModelSection section, UUID worldId) {}
 
@@ -137,6 +140,21 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
                         return Optional.empty();
                     }
                 },
+                limbId -> {
+                    try {
+                        return BetterModel.limb(limbId);
+                    } catch (final Throwable t) {
+                        return Optional.empty();
+                    }
+                },
+                (renderer, player) -> {
+                    try {
+                        return Optional.of(new BetterModelTrackerHandle(
+                                renderer.getOrCreate(BukkitAdapter.adapt(player), TrackerModifier.DEFAULT)));
+                    } catch (final Throwable t) {
+                        return Optional.empty();
+                    }
+                },
                 () -> {
                     try {
                         return !BetterModel.models().isEmpty();
@@ -176,9 +194,25 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
             final BiFunction<ModelRenderer, Location, Optional<ModelTracker>> trackerFactory,
             final BooleanSupplier readySupplier
     ) {
+        this(logger, modelSupplier, trackerFactory, id -> Optional.empty(), (r, p) -> Optional.empty(), readySupplier);
+    }
+
+    /**
+     * Creates a new {@link BetterModelAetheryteModelService} with injected limb supplier and player tracker factory for testing.
+     */
+    public BetterModelAetheryteModelService(
+            final Logger logger,
+            final Function<String, Optional<ModelRenderer>> modelSupplier,
+            final BiFunction<ModelRenderer, Location, Optional<ModelTracker>> trackerFactory,
+            final Function<String, Optional<ModelRenderer>> limbSupplier,
+            final BiFunction<ModelRenderer, Player, Optional<ModelTracker>> playerTrackerFactory,
+            final BooleanSupplier readySupplier
+    ) {
         this.logger = logger;
         this.modelSupplier = modelSupplier;
         this.trackerFactory = trackerFactory;
+        this.limbSupplier = limbSupplier;
+        this.playerTrackerFactory = playerTrackerFactory;
         this.readySupplier = readySupplier;
     }
 
@@ -334,6 +368,7 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
 
     @Override
     public void removePlayer(final Player player) {
+        stopPlayerAnimation(player);
         final UUID playerId = player.getUniqueId();
         if (playerId == null) {
             for (final Map.Entry<UUID, ActiveModel> entry : activeModels.entrySet()) {
@@ -482,17 +517,127 @@ public final class BetterModelAetheryteModelService implements AetheryteModelSer
     }
 
     @Override
+    public void playPlayerAnimation(
+            final Player player,
+            final String limbModel,
+            final String animationName,
+            final PlayerAnimationMode mode
+    ) {
+        if (animationName == null || animationName.isBlank()) {
+            return;
+        }
+        final UUID playerId = player.getUniqueId();
+        if (playerId == null) {
+            return;
+        }
+        final String trimmedAnim = animationName.strip();
+        final String effectiveLimb;
+        final String effectiveAnim;
+        final int colonIdx = trimmedAnim.indexOf(':');
+        if (colonIdx > 0 && colonIdx < trimmedAnim.length() - 1) {
+            effectiveLimb = trimmedAnim.substring(0, colonIdx).strip();
+            effectiveAnim = trimmedAnim.substring(colonIdx + 1).strip();
+        } else {
+            effectiveLimb = (limbModel == null || limbModel.isBlank()) ? "steve" : limbModel.strip();
+            effectiveAnim = trimmedAnim;
+        }
+        if (effectiveLimb.isBlank() || effectiveAnim.isBlank()) {
+            return;
+        }
+
+        stopPlayerAnimation(player);
+
+        final Optional<ModelRenderer> rendererOpt;
+        try {
+            rendererOpt = limbSupplier.apply(effectiveLimb);
+        } catch (final Throwable t) {
+            logger.debug("Failed to query BetterModel player limb '{}' for {}", effectiveLimb, player.getName(), t);
+            return;
+        }
+        if (rendererOpt.isEmpty()) {
+            logger.debug("BetterModel player limb '{}' not found; skipping player animation '{}'", effectiveLimb, effectiveAnim);
+            return;
+        }
+
+        final Optional<ModelTracker> trackerOpt;
+        try {
+            trackerOpt = playerTrackerFactory.apply(rendererOpt.get(), player);
+        } catch (final Throwable t) {
+            logger.debug("Failed to create BetterModel player tracker for {} (limb '{}')", player.getName(), effectiveLimb, t);
+            return;
+        }
+        if (trackerOpt.isEmpty()) {
+            return;
+        }
+        final ModelTracker tracker = trackerOpt.get();
+        if (tracker.isClosed()) {
+            return;
+        }
+
+        final AnimationIterator.Type bmType = mode == PlayerAnimationMode.HOLD_ON_LAST
+                ? AnimationIterator.Type.HOLD_ON_LAST
+                : AnimationIterator.Type.PLAY_ONCE;
+        final AnimationModifier modifier = AnimationModifier.builder()
+                .type(bmType)
+                .build();
+
+        activePlayerAnimations.put(playerId, tracker);
+        try {
+            final boolean started;
+            if (mode == PlayerAnimationMode.PLAY_ONCE) {
+                started = tracker.animate(effectiveAnim, modifier, () -> {
+                    activePlayerAnimations.remove(playerId, tracker);
+                    closeTrackerSafely(tracker);
+                });
+            } else {
+                started = tracker.animate(effectiveAnim, modifier);
+            }
+            if (!started) {
+                activePlayerAnimations.remove(playerId, tracker);
+                closeTrackerSafely(tracker);
+                logger.debug("BetterModel player animation '{}' failed to start on limb '{}' for {}",
+                        effectiveAnim, effectiveLimb, player.getName());
+            }
+        } catch (final Throwable t) {
+            activePlayerAnimations.remove(playerId, tracker);
+            closeTrackerSafely(tracker);
+            logger.warn("Failed to play BetterModel player animation '{}' for {}: {}",
+                    effectiveAnim, player.getName(), t.getMessage());
+        }
+    }
+
+    @Override
+    public void stopPlayerAnimation(final Player player) {
+        final UUID playerId = player.getUniqueId();
+        if (playerId == null) {
+            return;
+        }
+        final ModelTracker tracker = activePlayerAnimations.remove(playerId);
+        if (tracker != null) {
+            closeTrackerSafely(tracker);
+        }
+    }
+
+    private void closeTrackerSafely(final ModelTracker tracker) {
+        try {
+            if (!tracker.isClosed()) {
+                tracker.close();
+            }
+        } catch (final Throwable t) {
+            logger.debug("Error while closing BetterModel tracker", t);
+        }
+    }
+
+    @Override
     public void destroyAll() {
         for (final ActiveModel model : activeModels.values()) {
-            try {
-                if (!model.tracker.isClosed()) {
-                    model.tracker.close();
-                }
-            } catch (final Throwable t) {
-                logger.debug("Error while closing tracker during destroyAll", t);
-            }
+            closeTrackerSafely(model.tracker);
         }
         activeModels.clear();
         spawnedByPlayer.clear();
+        for (final ModelTracker tracker : activePlayerAnimations.values()) {
+            closeTrackerSafely(tracker);
+        }
+        activePlayerAnimations.clear();
     }
 }
