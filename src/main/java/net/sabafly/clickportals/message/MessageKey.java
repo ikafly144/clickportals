@@ -83,6 +83,7 @@ public enum MessageKey {
     DIALOG_BUTTON_ADMIN_RESYNC_TOOLTIP("dialog.button.admin-resync-tooltip"),
 
     DIALOG_WARP_TITLE("dialog.warp.title"),
+    DIALOG_WARP_HEADER("dialog.warp.header"),
     DIALOG_WARP_BODY_EMPTY("dialog.warp.body-empty"),
     DIALOG_WARP_BODY_NO_ROUTE("dialog.warp.body-no-route"),
     DIALOG_WARP_BODY_SELECT("dialog.warp.body-select"),

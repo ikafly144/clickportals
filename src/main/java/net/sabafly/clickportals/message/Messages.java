@@ -694,6 +694,22 @@ public final class Messages {
     }
 
     /**
+     * Returns the common warp dialog header showing the current Aetheryte's name, owner, and coordinates (#53, #54).
+     */
+    public Component warpDialogHeader(final CommandSender viewer, final Aetheryte current, final String ownerName) {
+        return get(
+                viewer,
+                MessageKey.DIALOG_WARP_HEADER,
+                Placeholder.unparsed("name", current.name()),
+                Placeholder.unparsed("owner", ownerName),
+                Placeholder.unparsed("world", current.worldName()),
+                Placeholder.unparsed("x", Integer.toString(current.blockX())),
+                Placeholder.unparsed("y", Integer.toString(current.blockY())),
+                Placeholder.unparsed("z", Integer.toString(current.blockZ()))
+        );
+    }
+
+    /**
      * Returns the body message for the warp destination selection dialog.
      */
     public Component warpDialogBody(final CommandSender viewer, final Aetheryte current, final int destinationCount) {
@@ -934,7 +950,7 @@ public final class Messages {
     }
 
     /**
-     * Returns the root menu body showing the current Aetheryte's name, owner, and coordinates (#54).
+     * Returns the root menu body prompt message (#54).
      */
     public Component warpRootBody(final CommandSender viewer, final Aetheryte current, final String ownerName) {
         return get(

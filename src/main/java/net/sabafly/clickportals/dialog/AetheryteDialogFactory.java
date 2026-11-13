@@ -247,25 +247,30 @@ public final class AetheryteDialogFactory {
 
         final List<ActionButton> buttons = buildRootButtons(player, current, state, worldGroups, reachableFavoritesCount, totalReachableCount);
 
-        Component body = messages.warpRootBody(player, current, currentOwner);
+        final Component header = messages.warpDialogHeader(player, current, currentOwner);
+        final Component body;
         if (allAetherytes.size() <= 1) {
-            body = body.append(Component.newline()).append(messages.warpDialogBody(player, current, currentOwner, 0));
+            body = messages.warpDialogBody(player, current, currentOwner, 0);
         } else if (totalReachableCount == 0) {
-            body = body.append(Component.newline()).append(messages.get(
+            body = messages.get(
                     player,
                     MessageKey.DIALOG_WARP_BODY_NO_ROUTE,
                     Placeholder.unparsed("name", current.name()),
                     Placeholder.unparsed("owner", currentOwner)
-            ));
+            );
+        } else {
+            body = messages.warpRootBody(player, current, currentOwner);
         }
 
-        final Component finalBody = body;
         final Dialog dialog = Dialog.create(factory -> factory.empty()
                 .base(DialogBase.builder(messages.warpDialogTitle(player, current))
                         .canCloseWithEscape(true)
                         .pause(false)
                         .afterAction(DialogBase.DialogAfterAction.NONE)
-                        .body(List.of(DialogBody.plainMessage(finalBody)))
+                        .body(List.of(
+                                DialogBody.plainMessage(header),
+                                DialogBody.plainMessage(body)
+                        ))
                         .build())
                 .type(DialogType.multiAction(buttons)
                         .columns(1)
