@@ -142,6 +142,7 @@ public final class ClickPortals extends JavaPlugin {
         );
         service.setCostEvaluator(warpEvaluator);
         service.setEconomyProvider(this.economyProvider);
+        service.setMaxFavoritesPerPlayerSupplier(() -> cfgManager.config().maxFavoritesPerPlayer());
         this.aetheryteService = service;
         final AetheryteDialogFactory dialogs = new AetheryteDialogFactory(service, msgService);
         this.dialogFactory = dialogs;

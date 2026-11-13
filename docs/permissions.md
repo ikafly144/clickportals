@@ -9,6 +9,7 @@ ClickPortals registers all permission nodes in `paper-plugin.yml` with sensible 
 | `clickportals.use` | `true` | Allows using Aetheryte warps and opening the warp destination dialog. |
 | `clickportals.place` | `true` | Allows placing new Aetherytes using an Aetheryte creation item. |
 | `clickportals.remove.any` | `op` | Allows removing Aetherytes placed by other players (owners can always remove their own). |
+| `clickportals.rename.any` | `op` | Allows renaming Aetherytes placed by other players (owners can always rename their own). |
 | `clickportals.command.give` | `op` | Allows executing `/clickportals give` (`/cp give`) to distribute Aetheryte creation items. |
 | `clickportals.command.reload` | `op` | Allows executing `/clickportals reload` (`/cp reload`) to reload configuration and translations. |
 | `clickportals.bypass.limit` | `op` | Bypasses per-player Aetheryte placement limits and placement cooldowns. |

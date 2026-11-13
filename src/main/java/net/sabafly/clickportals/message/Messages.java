@@ -33,7 +33,9 @@ import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.dialog.WarpSortOrder;
 import net.sabafly.clickportals.message.LanguageLoader.TranslationBundle;
+import org.bukkit.World;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.jspecify.annotations.Nullable;
@@ -47,7 +49,7 @@ public final class Messages {
     private static final MiniMessage MINI_MESSAGE = MiniMessage.miniMessage();
     private static final char SENTINEL_START = '\uE000';
     private static final char SENTINEL_END = '\uE001';
-    private static final List<String> ARG_NAME_COST = List.of("name", "cost");
+    private static final List<String> ARG_NAME_OWNER_COST = List.of("name", "owner", "cost");
     private static final List<String> ARG_AMOUNT = List.of("amount");
 
     private record TemplateCacheKey(MessageKey key, List<String> argNames) {
@@ -692,13 +694,44 @@ public final class Messages {
     }
 
     /**
+     * Returns the common warp dialog header showing the current Aetheryte's name, owner, and coordinates (#53, #54).
+     */
+    public Component warpDialogHeader(final CommandSender viewer, final Aetheryte current, final String ownerName) {
+        return get(
+                viewer,
+                MessageKey.DIALOG_WARP_HEADER,
+                Placeholder.unparsed("name", current.name()),
+                Placeholder.unparsed("owner", ownerName),
+                Placeholder.unparsed("world", current.worldName()),
+                Placeholder.unparsed("x", Integer.toString(current.blockX())),
+                Placeholder.unparsed("y", Integer.toString(current.blockY())),
+                Placeholder.unparsed("z", Integer.toString(current.blockZ()))
+        );
+    }
+
+    /**
      * Returns the body message for the warp destination selection dialog.
      */
     public Component warpDialogBody(final CommandSender viewer, final Aetheryte current, final int destinationCount) {
-        if (destinationCount == 0) {
-            return get(viewer, MessageKey.DIALOG_WARP_BODY_EMPTY, Placeholder.unparsed("name", current.name()));
-        }
-        return get(viewer, MessageKey.DIALOG_WARP_BODY_SELECT, Placeholder.unparsed("name", current.name()));
+        return warpDialogBody(viewer, current, fallbackOwnerName(viewer, current), destinationCount);
+    }
+
+    /**
+     * Returns the body message for the warp destination selection dialog with an explicit resolved owner name (#53).
+     */
+    public Component warpDialogBody(
+            final CommandSender viewer,
+            final Aetheryte current,
+            final String ownerName,
+            final int destinationCount
+    ) {
+        final MessageKey key = destinationCount == 0 ? MessageKey.DIALOG_WARP_BODY_EMPTY : MessageKey.DIALOG_WARP_BODY_SELECT;
+        return get(
+                viewer,
+                key,
+                Placeholder.unparsed("name", current.name()),
+                Placeholder.unparsed("owner", ownerName)
+        );
     }
 
     /**
@@ -720,13 +753,45 @@ public final class Messages {
             final Aetheryte destination,
             final Component costDisplay
     ) {
-        return renderWithPlaceholders(
-                locale,
-                MessageKey.DIALOG_WARP_DESTINATION_AVAILABLE,
-                ARG_NAME_COST,
-                Component.text(destination.name()),
-                costDisplay
-        );
+        return warpDestinationLabel(locale, destination, fallbackOwnerName(locale, destination), costDisplay, false);
+    }
+
+    /**
+     * Returns the button label for an available warp destination entry showing its name, owner, and cost (#13, #53).
+     */
+    public Component warpDestinationLabel(
+            final CommandSender viewer,
+            final Aetheryte destination,
+            final String ownerName,
+            final Component costDisplay
+    ) {
+        return warpDestinationLabel(locale(viewer), destination, ownerName, costDisplay, false);
+    }
+
+    /**
+     * Returns the button label for an available warp destination entry with optional favorite badge (#13, #53, #56).
+     */
+    public Component warpDestinationLabel(
+            final CommandSender viewer,
+            final Aetheryte destination,
+            final String ownerName,
+            final Component costDisplay,
+            final boolean favorite
+    ) {
+        return warpDestinationLabel(locale(viewer), destination, ownerName, costDisplay, favorite);
+    }
+
+    /**
+     * Returns the button label for an available warp destination entry using a pre-resolved {@link Locale} (#13, #20, #53, #56).
+     */
+    public Component warpDestinationLabel(
+            final Locale locale,
+            final Aetheryte destination,
+            final String ownerName,
+            final Component costDisplay,
+            final boolean favorite
+    ) {
+        return renderWarpDestinationLabel(locale, MessageKey.DIALOG_WARP_DESTINATION_AVAILABLE, destination, ownerName, costDisplay, favorite);
     }
 
     /**
@@ -748,13 +813,64 @@ public final class Messages {
             final Aetheryte destination,
             final Component costDisplay
     ) {
-        return renderWithPlaceholders(
+        return warpDestinationUnavailableLabel(locale, destination, fallbackOwnerName(locale, destination), costDisplay, false);
+    }
+
+    /**
+     * Returns the button label for an unavailable warp destination entry with an explicit owner name (#13, #53).
+     */
+    public Component warpDestinationUnavailableLabel(
+            final CommandSender viewer,
+            final Aetheryte destination,
+            final String ownerName,
+            final Component costDisplay
+    ) {
+        return warpDestinationUnavailableLabel(locale(viewer), destination, ownerName, costDisplay, false);
+    }
+
+    /**
+     * Returns the button label for an unavailable warp destination entry with optional favorite badge (#13, #53, #56).
+     */
+    public Component warpDestinationUnavailableLabel(
+            final CommandSender viewer,
+            final Aetheryte destination,
+            final String ownerName,
+            final Component costDisplay,
+            final boolean favorite
+    ) {
+        return warpDestinationUnavailableLabel(locale(viewer), destination, ownerName, costDisplay, favorite);
+    }
+
+    /**
+     * Returns the button label for an unavailable warp destination entry using a pre-resolved {@link Locale} (#13, #20, #53, #56).
+     */
+    public Component warpDestinationUnavailableLabel(
+            final Locale locale,
+            final Aetheryte destination,
+            final String ownerName,
+            final Component costDisplay,
+            final boolean favorite
+    ) {
+        return renderWarpDestinationLabel(locale, MessageKey.DIALOG_WARP_DESTINATION_UNAVAILABLE, destination, ownerName, costDisplay, favorite);
+    }
+
+    private Component renderWarpDestinationLabel(
+            final Locale locale,
+            final MessageKey key,
+            final Aetheryte destination,
+            final String ownerName,
+            final Component costDisplay,
+            final boolean favorite
+    ) {
+        final Component base = renderWithPlaceholders(
                 locale,
-                MessageKey.DIALOG_WARP_DESTINATION_UNAVAILABLE,
-                ARG_NAME_COST,
+                key,
+                ARG_NAME_OWNER_COST,
                 Component.text(destination.name()),
+                Component.text(ownerName),
                 costDisplay
         );
+        return favorite ? get(locale, MessageKey.DIALOG_WARP_FAVORITE_BADGE).append(base) : base;
     }
 
     /**
@@ -764,6 +880,29 @@ public final class Messages {
             final CommandSender viewer,
             final Aetheryte current,
             final Aetheryte destination,
+            final Component costDisplay,
+            final boolean allowed,
+            final @Nullable Component denyReason
+    ) {
+        return warpDestinationTooltip(
+                viewer,
+                current,
+                destination,
+                fallbackOwnerName(viewer, destination),
+                costDisplay,
+                allowed,
+                denyReason
+        );
+    }
+
+    /**
+     * Returns the button tooltip for a warp destination entry showing owner, world, coordinates, distance, cost, and status (#13, #53).
+     */
+    public Component warpDestinationTooltip(
+            final CommandSender viewer,
+            final Aetheryte current,
+            final Aetheryte destination,
+            final String ownerName,
             final Component costDisplay,
             final boolean allowed,
             final @Nullable Component denyReason
@@ -778,32 +917,158 @@ public final class Messages {
                 )
                 : get(loc, MessageKey.DIALOG_WARP_DISTANCE_OTHER_DIMENSION);
 
+        final TagResolver.Builder resolvers = TagResolver.builder()
+                .resolver(Placeholder.unparsed("owner", ownerName))
+                .resolver(Placeholder.unparsed("world", destination.worldName()))
+                .resolver(Placeholder.unparsed("x", Integer.toString(destination.blockX())))
+                .resolver(Placeholder.unparsed("y", Integer.toString(destination.blockY())))
+                .resolver(Placeholder.unparsed("z", Integer.toString(destination.blockZ())))
+                .resolver(Placeholder.component("distance", distanceText))
+                .resolver(Placeholder.component("cost", costDisplay));
+
         if (allowed) {
-            return get(
-                    loc,
-                    MessageKey.DIALOG_WARP_TOOLTIP_ALLOWED,
-                    Placeholder.unparsed("world", destination.worldName()),
-                    Placeholder.unparsed("x", Integer.toString(destination.blockX())),
-                    Placeholder.unparsed("y", Integer.toString(destination.blockY())),
-                    Placeholder.unparsed("z", Integer.toString(destination.blockZ())),
-                    Placeholder.component("distance", distanceText),
-                    Placeholder.component("cost", costDisplay)
-            );
+            return get(loc, MessageKey.DIALOG_WARP_TOOLTIP_ALLOWED, resolvers.build());
         }
 
         final Component effectiveReason = denyReason != null
                 ? denyReason
                 : get(loc, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET);
+        resolvers.resolver(Placeholder.component("reason", effectiveReason));
+        return get(loc, MessageKey.DIALOG_WARP_TOOLTIP_DENIED, resolvers.build());
+    }
+
+    private String fallbackOwnerName(final CommandSender viewer, final Aetheryte aetheryte) {
+        return fallbackOwnerName(locale(viewer), aetheryte);
+    }
+
+    private String fallbackOwnerName(final Locale locale, final Aetheryte aetheryte) {
+        if (aetheryte.ownerName() != null) {
+            return aetheryte.ownerName();
+        }
+        return net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+                .serialize(get(locale, MessageKey.DIALOG_WARP_UNKNOWN_OWNER));
+    }
+
+    /**
+     * Returns the root menu body prompt message (#54).
+     */
+    public Component warpRootBody(final CommandSender viewer, final Aetheryte current, final String ownerName) {
         return get(
-                loc,
-                MessageKey.DIALOG_WARP_TOOLTIP_DENIED,
-                Placeholder.unparsed("world", destination.worldName()),
-                Placeholder.unparsed("x", Integer.toString(destination.blockX())),
-                Placeholder.unparsed("y", Integer.toString(destination.blockY())),
-                Placeholder.unparsed("z", Integer.toString(destination.blockZ())),
-                Placeholder.component("distance", distanceText),
-                Placeholder.component("cost", costDisplay),
-                Placeholder.component("reason", effectiveReason)
+                viewer,
+                MessageKey.DIALOG_WARP_ROOT_BODY,
+                Placeholder.unparsed("name", current.name()),
+                Placeholder.unparsed("owner", ownerName),
+                Placeholder.unparsed("world", current.worldName()),
+                Placeholder.unparsed("x", Integer.toString(current.blockX())),
+                Placeholder.unparsed("y", Integer.toString(current.blockY())),
+                Placeholder.unparsed("z", Integer.toString(current.blockZ()))
+        );
+    }
+
+    /**
+     * Returns a formatted world category button label according to {@link World.Environment} (#54).
+     */
+    public Component warpWorldCategoryLabel(
+            final CommandSender viewer,
+            final World.Environment environment,
+            final String worldName,
+            final int count,
+            final boolean currentWorld
+    ) {
+        final MessageKey key = switch (environment) {
+            case NORMAL -> MessageKey.DIALOG_WARP_CATEGORY_WORLD_OVERWORLD;
+            case NETHER -> MessageKey.DIALOG_WARP_CATEGORY_WORLD_NETHER;
+            case THE_END -> MessageKey.DIALOG_WARP_CATEGORY_WORLD_END;
+            case CUSTOM -> MessageKey.DIALOG_WARP_CATEGORY_WORLD_CUSTOM;
+        };
+        final Component currentBadge = currentWorld
+                ? get(viewer, MessageKey.DIALOG_WARP_CATEGORY_WORLD_CURRENT_BADGE)
+                : Component.empty();
+        return get(
+                viewer,
+                key,
+                Placeholder.unparsed("world", worldName),
+                Placeholder.unparsed("count", Integer.toString(count)),
+                Placeholder.component("current", currentBadge)
+        );
+    }
+
+    /**
+     * Returns the localized label for the given {@link WarpSortOrder} (#55).
+     */
+    public Component warpSortOrderLabel(final CommandSender viewer, final WarpSortOrder order) {
+        final MessageKey key = switch (order) {
+            case DISTANCE -> MessageKey.DIALOG_WARP_SORT_DISTANCE;
+            case NAME -> MessageKey.DIALOG_WARP_SORT_NAME;
+            case OWNER -> MessageKey.DIALOG_WARP_SORT_OWNER;
+            case CREATED -> MessageKey.DIALOG_WARP_SORT_CREATED;
+        };
+        return get(viewer, key);
+    }
+
+    /**
+     * Returns the header body for a paginated, filterable warp list screen (#54, #55).
+     */
+    public Component warpListHeader(
+            final CommandSender viewer,
+            final Component scopeLabel,
+            final WarpSortOrder sortOrder,
+            final String searchQuery,
+            final int currentPageZeroBased,
+            final int totalPages,
+            final int totalItems
+    ) {
+        Component header = get(
+                viewer,
+                MessageKey.DIALOG_WARP_LIST_HEADER,
+                Placeholder.component("scope", scopeLabel),
+                Placeholder.component("sort", warpSortOrderLabel(viewer, sortOrder))
+        );
+        if (!searchQuery.isEmpty()) {
+            header = header.append(get(
+                    viewer,
+                    MessageKey.DIALOG_WARP_LIST_HEADER_SEARCH,
+                    Placeholder.unparsed("query", searchQuery)
+            ));
+        }
+        if (totalItems > 0) {
+            header = header.append(Component.newline()).append(get(
+                    viewer,
+                    MessageKey.DIALOG_WARP_PAGE_INDICATOR,
+                    Placeholder.unparsed("current", Integer.toString(currentPageZeroBased + 1)),
+                    Placeholder.unparsed("total", Integer.toString(totalPages)),
+                    Placeholder.unparsed("count", Integer.toString(totalItems))
+            ));
+        }
+        return header;
+    }
+
+    /**
+     * Returns the operations dialog title (#57).
+     */
+    public Component operationsDialogTitle(final CommandSender viewer, final Aetheryte current) {
+        return get(viewer, MessageKey.DIALOG_OPERATIONS_TITLE, Placeholder.unparsed("name", current.name()));
+    }
+
+    /**
+     * Returns the operations dialog body showing Aetheryte details (#57).
+     */
+    public Component operationsDialogBody(
+            final CommandSender viewer,
+            final Aetheryte current,
+            final String ownerName,
+            final String variationDisplayNameMiniMessage
+    ) {
+        return get(
+                viewer,
+                MessageKey.DIALOG_OPERATIONS_BODY,
+                Placeholder.unparsed("name", current.name()),
+                Placeholder.unparsed("owner", ownerName),
+                Placeholder.unparsed("world", current.worldName()),
+                Placeholder.unparsed("x", Integer.toString(current.blockX())),
+                Placeholder.unparsed("y", Integer.toString(current.blockY())),
+                Placeholder.unparsed("z", Integer.toString(current.blockZ())),
+                Placeholder.component("variation", MINI_MESSAGE.deserialize(variationDisplayNameMiniMessage))
         );
     }
 

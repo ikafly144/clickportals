@@ -22,9 +22,11 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.UnaryOperator;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
@@ -73,12 +75,14 @@ public final class AetheryteRegistry {
     private final Map<UUID, List<Aetheryte>> byWorldCache = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> ownerCounts = new ConcurrentHashMap<>();
     private final Map<OwnerVariationKey, Integer> ownerVariationCounts = new ConcurrentHashMap<>();
+    private final Set<UUID> loadedWorlds = ConcurrentHashMap.newKeySet();
     private volatile List<Aetheryte> allCache = List.of();
 
     /**
      * Loads all Aetherytes stored in the given world's {@link PersistentDataContainer} into the in-memory index.
      */
     public synchronized List<Aetheryte> loadWorld(final World world) {
+        loadedWorlds.add(world.getUID());
         final PersistentDataContainer pdc = world.getPersistentDataContainer();
         final List<Aetheryte> stored = pdc.get(WORLD_AETHERYTES_KEY, LIST_TYPE);
         if (stored == null || stored.isEmpty()) {
@@ -97,7 +101,8 @@ public final class AetheryteRegistry {
                     entry.blockZ(),
                     entry.ownerId(),
                     entry.createdAt(),
-                    entry.variation()
+                    entry.variation(),
+                    entry.ownerName()
             );
             final Aetheryte previous = indexEntry(normalized);
             if (previous != null && !previous.worldId().equals(worldId)) {
@@ -137,6 +142,7 @@ public final class AetheryteRegistry {
      * Removes all Aetherytes belonging to the specified world from the in-memory index.
      */
     public synchronized void unloadWorld(final UUID worldId) {
+        loadedWorlds.remove(worldId);
         final List<Aetheryte> removed = new ArrayList<>();
         byId.values().removeIf(aetheryte -> {
             if (aetheryte.worldId().equals(worldId)) {
@@ -158,6 +164,7 @@ public final class AetheryteRegistry {
      * Registers a new Aetheryte in memory and persists the updated list to the world's PDC.
      */
     public synchronized void register(final World world, final Aetheryte aetheryte) {
+        loadedWorlds.add(world.getUID());
         final Aetheryte existing = indexEntry(aetheryte);
         if (existing != null && !existing.worldId().equals(world.getUID())) {
             rebuildWorldCache(existing.worldId());
@@ -182,6 +189,7 @@ public final class AetheryteRegistry {
             final int maxVariation,
             final double minDistance
     ) {
+        loadedWorlds.add(world.getUID());
         final BlockPosKey posKey = aetheryte.posKey();
         if (byPos.containsKey(posKey)) {
             return RegistrationOutcome.ALREADY_EXISTS;
@@ -219,6 +227,32 @@ public final class AetheryteRegistry {
             final int maxVariation
     ) {
         return tryRegister(world, aetheryte, maxGlobal, maxVariation, 0.0);
+    }
+
+    /**
+     * Atomically updates an existing Aetheryte in memory and persists the updated list to the world's PDC (#53, #57).
+     */
+    public synchronized Optional<Aetheryte> update(
+            final World world,
+            final UUID id,
+            final UnaryOperator<Aetheryte> updater
+    ) {
+        final Aetheryte existing = byId.get(id);
+        if (existing == null) {
+            return Optional.empty();
+        }
+        final Aetheryte updated = updater.apply(existing);
+        indexEntry(updated);
+        if (!existing.worldId().equals(updated.worldId())) {
+            rebuildWorldCache(existing.worldId());
+        }
+        rebuildWorldCache(updated.worldId());
+        if (!world.getUID().equals(updated.worldId())) {
+            rebuildWorldCache(world.getUID());
+        }
+        rebuildAllCache();
+        saveWorld(world);
+        return Optional.of(updated);
     }
 
     /**
@@ -376,9 +410,24 @@ public final class AetheryteRegistry {
     }
 
     /**
+     * Returns whether the specified world is currently loaded in this registry.
+     */
+    public boolean isWorldLoaded(final UUID worldId) {
+        return loadedWorlds.contains(worldId);
+    }
+
+    /**
+     * Returns whether at least one world has been loaded or registered in this registry.
+     */
+    public boolean hasLoadedWorlds() {
+        return !loadedWorlds.isEmpty();
+    }
+
+    /**
      * Clears the in-memory index without modifying world PDC data.
      */
     public synchronized void clear() {
+        loadedWorlds.clear();
         byId.clear();
         byPos.clear();
         byChunk.clear();

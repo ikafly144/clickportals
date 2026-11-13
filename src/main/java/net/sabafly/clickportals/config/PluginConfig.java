@@ -29,6 +29,7 @@ import net.sabafly.clickportals.message.LanguageLoader;
 import net.sabafly.clickportals.route.CostOverrideConfig;
 import net.sabafly.clickportals.route.DimensionRoutesConfig;
 import net.sabafly.clickportals.route.RouteEntryConfig;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.spongepowered.configurate.objectmapping.ConfigSerializable;
 import org.spongepowered.configurate.objectmapping.meta.Comment;
@@ -122,17 +123,35 @@ public record PluginConfig(
 
             @Setting("min-distance-between-aetherytes")
             @Comment("Minimum required block distance between Aetherytes in the same world (0 to disable)")
-            double minDistanceBetweenAetherytes
+            double minDistanceBetweenAetherytes,
+
+            @Setting("max-favorites-per-player")
+            @Comment("Maximum number of favorite Aetherytes a player can save (-1 for unlimited, 0 to disable)")
+            @Nullable Integer maxFavoritesPerPlayer
     ) {
+        public LimitsSection {
+            if (maxFavoritesPerPlayer == null) {
+                maxFavoritesPerPlayer = -1;
+            }
+        }
+
         public LimitsSection(final int maxAetherytesPerPlayer, final int placementCooldownTicks) {
-            this(maxAetherytesPerPlayer, placementCooldownTicks, 0.0);
+            this(maxAetherytesPerPlayer, placementCooldownTicks, 0.0, -1);
+        }
+
+        public LimitsSection(
+                final int maxAetherytesPerPlayer,
+                final int placementCooldownTicks,
+                final double minDistanceBetweenAetherytes
+        ) {
+            this(maxAetherytesPerPlayer, placementCooldownTicks, minDistanceBetweenAetherytes, -1);
         }
 
         /**
-         * Returns the default limits section (-1 = unlimited, 100 ticks = 5s cooldown, 0 min distance).
+         * Returns the default limits section (-1 = unlimited, 100 ticks = 5s cooldown, 0 min distance, -1 max favorites).
          */
         public static LimitsSection defaults() {
-            return new LimitsSection(-1, DEFAULT_PLACEMENT_COOLDOWN_TICKS, 0.0);
+            return new LimitsSection(-1, DEFAULT_PLACEMENT_COOLDOWN_TICKS, 0.0, -1);
         }
     }
 
@@ -251,6 +270,17 @@ public record PluginConfig(
             validMinDistBetween = rawMinDistBetween;
         }
 
+        final Integer rawMaxFavorites = limits.maxFavoritesPerPlayer();
+        final int validMaxFavorites;
+        if (rawMaxFavorites == null) {
+            validMaxFavorites = -1;
+        } else if (rawMaxFavorites < -1) {
+            logger.warn("Invalid limits.max-favorites-per-player {} (must be >= -1); falling back to -1 (unlimited)", rawMaxFavorites);
+            validMaxFavorites = -1;
+        } else {
+            validMaxFavorites = rawMaxFavorites;
+        }
+
         final DistanceSection rawDist = warp.distance();
         final double validMinDist;
         if (rawDist.min() == null) {
@@ -315,7 +345,7 @@ public record PluginConfig(
                         hologram.enabled(),
                         validViewDistance
                 ),
-                new LimitsSection(validMaxPerPlayer, validCooldownTicks, validMinDistBetween),
+                new LimitsSection(validMaxPerPlayer, validCooldownTicks, validMinDistBetween, validMaxFavorites),
                 validWarp,
                 validDimensions
         );
@@ -428,6 +458,14 @@ public record PluginConfig(
      */
     public double minDistanceBetweenAetherytes() {
         return limits.minDistanceBetweenAetherytes();
+    }
+
+    /**
+     * Returns the maximum number of favorite Aetherytes a player can save (-1 for unlimited, 0 to disable).
+     */
+    public int maxFavoritesPerPlayer() {
+        final Integer value = limits.maxFavoritesPerPlayer();
+        return value != null ? value : -1;
     }
 
     /**

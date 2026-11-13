@@ -22,6 +22,8 @@ limits:
   placement-cooldown-ticks: 100
   # Minimum required block distance between Aetherytes in the same world (0 to disable)
   min-distance-between-aetherytes: 0.0
+  # Maximum number of favorite Aetherytes a player can save (-1 for unlimited, 0 to disable)
+  max-favorites-per-player: -1
 
 # Global warping settings: distance boundaries, costs, and display (#14, #26)
 warp:

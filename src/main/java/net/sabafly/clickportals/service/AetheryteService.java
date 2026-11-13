@@ -19,6 +19,7 @@ package net.sabafly.clickportals.service;
 
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -29,9 +30,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
+import java.util.function.Function;
 import java.util.function.IntSupplier;
 import java.util.function.ToLongFunction;
+import java.util.function.UnaryOperator;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
@@ -41,6 +47,7 @@ import net.sabafly.clickportals.cost.CostBundle;
 import net.sabafly.clickportals.cost.CostFormatter;
 import net.sabafly.clickportals.cost.CostItemQuote;
 import net.sabafly.clickportals.cost.CostQuote;
+import net.sabafly.clickportals.dialog.WarpSortOrder;
 import net.sabafly.clickportals.economy.EconomyProvider;
 import net.sabafly.clickportals.economy.NoopEconomyProvider;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
@@ -61,9 +68,11 @@ import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Marker;
 import org.bukkit.entity.Player;
@@ -91,6 +100,22 @@ public final class AetheryteService {
      * Player {@link PersistentDataContainer} key storing recently processed pending refund transaction IDs for idempotency (#15).
      */
     public static final NamespacedKey PROCESSED_REFUNDS_KEY = new NamespacedKey("clickportals", "processed_refunds");
+
+    /**
+     * Player {@link PersistentDataContainer} key storing favorited Aetheryte UUIDs (#56).
+     */
+    public static final NamespacedKey FAVORITES_KEY = new NamespacedKey("clickportals", "favorites");
+
+    /**
+     * Player {@link PersistentDataContainer} key storing the player's last selected warp sort order (#55).
+     */
+    public static final NamespacedKey WARP_SORT_KEY = new NamespacedKey("clickportals", "warp_sort");
+
+    /**
+     * Resolved player identity used for ownership transfers (#57).
+     */
+    public record ResolvedPlayer(UUID id, String name) {
+    }
 
     private static final int MAX_TRACKED_PROCESSED_REFUNDS = 100;
 
@@ -238,10 +263,13 @@ public final class AetheryteService {
     private final IntSupplier globalMaxPerPlayerSupplier;
     private final IntSupplier globalCooldownTicksSupplier;
     private volatile DoubleSupplier globalMinDistanceSupplier = () -> 0.0;
+    private volatile IntSupplier maxFavoritesPerPlayerSupplier = () -> -1;
     private final ToLongFunction<Player> tickSupplier;
     private final CooldownPacketSender cooldownPacketSender;
     private volatile WarpCostEvaluator costEvaluator;
     private volatile EconomyProvider economyProvider = NoopEconomyProvider.INSTANCE;
+    private volatile Function<UUID, @Nullable String> ownerNameLookup = AetheryteService::defaultOwnerNameLookup;
+    private volatile Function<String, @Nullable ResolvedPlayer> playerByNameLookup = AetheryteService::defaultPlayerByNameLookup;
     private final Set<UUID> pendingPlacements = ConcurrentHashMap.newKeySet();
     private final Set<UUID> inFlightWarps = ConcurrentHashMap.newKeySet();
     private final Map<UUID, List<CostItemQuote>> pendingRefunds = new ConcurrentHashMap<>();
@@ -518,6 +546,22 @@ public final class AetheryteService {
      */
     public void setGlobalMinDistanceSupplier(final DoubleSupplier globalMinDistanceSupplier) {
         this.globalMinDistanceSupplier = globalMinDistanceSupplier != null ? globalMinDistanceSupplier : () -> 0.0;
+    }
+
+    /**
+     * Updates the global maximum favorites per player supplier on reload.
+     */
+    public void setMaxFavoritesPerPlayerSupplier(final IntSupplier maxFavoritesPerPlayerSupplier) {
+        this.maxFavoritesPerPlayerSupplier = maxFavoritesPerPlayerSupplier != null
+                ? maxFavoritesPerPlayerSupplier
+                : () -> -1;
+    }
+
+    /**
+     * Returns the configured maximum number of favorites per player (-1 for unlimited, 0 to disable).
+     */
+    public int getMaxFavoritesPerPlayer() {
+        return Math.max(-1, maxFavoritesPerPlayerSupplier.getAsInt());
     }
 
     /**
@@ -920,6 +964,309 @@ public final class AetheryteService {
     }
 
     /**
+     * Overrides the fallback UUID-to-name lookup used when an {@link Aetheryte} has no cached {@code ownerName} (#53).
+     */
+    public void setOwnerNameLookup(final Function<UUID, @Nullable String> ownerNameLookup) {
+        this.ownerNameLookup = ownerNameLookup != null ? ownerNameLookup : AetheryteService::defaultOwnerNameLookup;
+    }
+
+    private static @Nullable String defaultOwnerNameLookup(final UUID ownerId) {
+        try {
+            if (Bukkit.getServer() == null) {
+                return null;
+            }
+            final Player online = Bukkit.getPlayer(ownerId);
+            if (online != null) {
+                return online.getName();
+            }
+            final OfflinePlayer offline = Bukkit.getOfflinePlayer(ownerId);
+            return offline != null ? offline.getName() : null;
+        } catch (final Throwable ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * Resolves a human-readable owner name for {@code aetheryte}, falling back to a localized unknown label (#53).
+     */
+    public String resolveOwnerName(final Aetheryte aetheryte, final CommandSender viewer) {
+        return resolveOwnerName(aetheryte, viewer, null);
+    }
+
+    /**
+     * Resolves a human-readable owner name using an optional per-render cache to avoid repeated lookups (#53).
+     */
+    public String resolveOwnerName(
+            final Aetheryte aetheryte,
+            final CommandSender viewer,
+            @Nullable final Map<UUID, String> cache
+    ) {
+        final UUID ownerId = aetheryte.ownerId();
+        if (cache != null) {
+            final String cached = cache.get(ownerId);
+            if (cached != null) {
+                return cached;
+            }
+        }
+        String resolved = null;
+        try {
+            if (Bukkit.getServer() != null) {
+                final Player online = Bukkit.getPlayer(ownerId);
+                if (online != null) {
+                    resolved = online.getName();
+                }
+            }
+        } catch (final Throwable ignored) {
+            // Fall back to stored name / lookup in unit test environments
+        }
+        if (resolved == null || resolved.isBlank()) {
+            resolved = aetheryte.ownerName();
+        }
+        if (resolved == null || resolved.isBlank()) {
+            resolved = ownerNameLookup.apply(ownerId);
+        }
+        final String finalName = (resolved != null && !resolved.isBlank())
+                ? resolved
+                : PlainTextComponentSerializer.plainText().serialize(messages.get(viewer, MessageKey.DIALOG_WARP_UNKNOWN_OWNER));
+        if (cache != null) {
+            cache.put(ownerId, finalName);
+        }
+        return finalName;
+    }
+
+    /**
+     * Lazily refreshes the stored {@code ownerName} when the owner interacts with their own Aetheryte after a rename (#53).
+     */
+    public Aetheryte refreshOwnerNameIfNeeded(final Player player, final Aetheryte aetheryte) {
+        if (!aetheryte.ownerId().equals(player.getUniqueId())) {
+            return aetheryte;
+        }
+        final String currentName = player.getName();
+        if (currentName.equals(aetheryte.ownerName())) {
+            return aetheryte;
+        }
+        final Aetheryte updatedPreview = aetheryte.withOwnerName(currentName);
+        try {
+            if (Bukkit.getServer() == null) {
+                return updatedPreview;
+            }
+            final World world = Bukkit.getWorld(aetheryte.worldId());
+            if (world == null) {
+                return updatedPreview;
+            }
+            final UUID expectedOwnerId = player.getUniqueId();
+            Bukkit.getRegionScheduler().execute(plugin, aetheryte.blockLocation(world), () -> {
+                final Optional<Aetheryte> updated = registry.update(
+                        world,
+                        aetheryte.id(),
+                        a -> a.ownerId().equals(expectedOwnerId) ? a.withOwnerName(currentName) : a
+                );
+                updated.filter(value -> value.ownerId().equals(expectedOwnerId) && currentName.equals(value.ownerName()))
+                        .ifPresent(value -> updateMarkerDataAt(world, value));
+            });
+        } catch (final Throwable ignored) {
+            // Non-fatal in test environments without a live Bukkit server/scheduler
+        }
+        return updatedPreview;
+    }
+
+    /**
+     * Overrides the player name-to-identity lookup used for Admin ownership transfers (#57).
+     */
+    public void setPlayerByNameLookup(final Function<String, @Nullable ResolvedPlayer> playerByNameLookup) {
+        this.playerByNameLookup = playerByNameLookup != null ? playerByNameLookup : AetheryteService::defaultPlayerByNameLookup;
+    }
+
+    private static @Nullable ResolvedPlayer defaultPlayerByNameLookup(final String playerName) {
+        if (playerName == null || playerName.isBlank()) {
+            return null;
+        }
+        final String trimmed = playerName.strip();
+        try {
+            if (Bukkit.getServer() == null) {
+                return null;
+            }
+            final Player online = Bukkit.getPlayerExact(trimmed);
+            if (online != null) {
+                return new ResolvedPlayer(online.getUniqueId(), online.getName());
+            }
+            final OfflinePlayer offline = Bukkit.getOfflinePlayerIfCached(trimmed);
+            if (offline != null && offline.getName() != null) {
+                return new ResolvedPlayer(offline.getUniqueId(), offline.getName());
+            }
+            return null;
+        } catch (final Throwable ignored) {
+            return null;
+        }
+    }
+
+    private record FavoriteEntry(UUID id, @Nullable UUID worldId) {
+        String serialize() {
+            return worldId != null ? id + ":" + worldId : id.toString();
+        }
+    }
+
+    private record LoadedFavorites(Map<UUID, FavoriteEntry> entries, boolean changedOnRead) {
+    }
+
+    /**
+     * Returns the player's favorited Aetheryte UUIDs from their PDC, excluding entries confirmed deleted in loaded worlds (#56).
+     */
+    public Set<UUID> getFavorites(final Player player) {
+        final PersistentDataContainer pdc = player.getPersistentDataContainer();
+        if (pdc == null) {
+            return Set.of();
+        }
+        return Set.copyOf(loadFavorites(pdc).entries().keySet());
+    }
+
+    /**
+     * Returns whether {@code aetheryteId} is favorited by {@code player} (#56).
+     */
+    public boolean isFavorite(final Player player, final UUID aetheryteId) {
+        return getFavorites(player).contains(aetheryteId);
+    }
+
+    /**
+     * Toggles favorite state for {@code aetheryteId} in {@code player}'s PDC and returns the new state (#56).
+     */
+    public boolean toggleFavorite(final Player player, final UUID aetheryteId) {
+        final PersistentDataContainer pdc = player.getPersistentDataContainer();
+        if (pdc == null) {
+            return false;
+        }
+        final LoadedFavorites loaded = loadFavorites(pdc);
+        final Map<UUID, FavoriteEntry> updated = loaded.entries();
+        final boolean added;
+        if (updated.containsKey(aetheryteId)) {
+            updated.remove(aetheryteId);
+            added = false;
+        } else {
+            final Optional<Aetheryte> liveTarget = registry.getById(aetheryteId);
+            if (registry.hasLoadedWorlds() && liveTarget.isEmpty()) {
+                if (loaded.changedOnRead()) {
+                    writeFavorites(pdc, updated);
+                }
+                messages.send(player, MessageKey.ERROR_NOT_FOUND);
+                return false;
+            }
+            final int maxFavorites = getMaxFavoritesPerPlayer();
+            if (maxFavorites >= 0 && updated.size() >= maxFavorites) {
+                if (loaded.changedOnRead()) {
+                    writeFavorites(pdc, updated);
+                }
+                messages.send(
+                        player,
+                        MessageKey.ERROR_FAVORITES_LIMIT_REACHED,
+                        Placeholder.unparsed("max", Integer.toString(maxFavorites))
+                );
+                return false;
+            }
+            updated.put(aetheryteId, new FavoriteEntry(aetheryteId, liveTarget.map(Aetheryte::worldId).orElse(null)));
+            added = true;
+        }
+        writeFavorites(pdc, updated);
+        return added;
+    }
+
+    private LoadedFavorites loadFavorites(final PersistentDataContainer pdc) {
+        final List<String> raw = pdc.get(FAVORITES_KEY, PersistentDataType.LIST.strings());
+        if (raw == null || raw.isEmpty()) {
+            return new LoadedFavorites(new LinkedHashMap<>(), false);
+        }
+        final Map<UUID, FavoriteEntry> valid = new LinkedHashMap<>(raw.size());
+        final boolean hasLoadedWorlds = registry.hasLoadedWorlds();
+        boolean changed = false;
+        for (final String entryStr : raw) {
+            final FavoriteEntry parsed = parseFavoriteEntry(entryStr);
+            if (parsed == null) {
+                changed = true;
+                continue;
+            }
+            final Optional<Aetheryte> live = registry.getById(parsed.id());
+            final FavoriteEntry resolved;
+            if (live.isPresent()) {
+                final UUID liveWorldId = live.get().worldId();
+                if (!liveWorldId.equals(parsed.worldId())) {
+                    changed = true;
+                }
+                resolved = new FavoriteEntry(parsed.id(), liveWorldId);
+            } else if (parsed.worldId() != null) {
+                if (registry.isWorldLoaded(parsed.worldId())) {
+                    changed = true;
+                    continue;
+                }
+                resolved = parsed;
+            } else if (hasLoadedWorlds) {
+                changed = true;
+                continue;
+            } else {
+                resolved = parsed;
+            }
+            if (valid.putIfAbsent(resolved.id(), resolved) != null) {
+                changed = true;
+            }
+        }
+        return new LoadedFavorites(valid, changed);
+    }
+
+    private static @Nullable FavoriteEntry parseFavoriteEntry(@Nullable final String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        final int sep = raw.indexOf(':');
+        if (sep < 0) {
+            try {
+                return new FavoriteEntry(UUID.fromString(raw), null);
+            } catch (final IllegalArgumentException ignored) {
+                return null;
+            }
+        }
+        try {
+            final UUID id = UUID.fromString(raw.substring(0, sep));
+            final UUID worldId = UUID.fromString(raw.substring(sep + 1));
+            return new FavoriteEntry(id, worldId);
+        } catch (final IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private static void writeFavorites(
+            final PersistentDataContainer pdc,
+            final Map<UUID, FavoriteEntry> entries
+    ) {
+        if (entries.isEmpty()) {
+            pdc.remove(FAVORITES_KEY);
+        } else {
+            final List<String> serialized = entries.values().stream()
+                    .map(FavoriteEntry::serialize)
+                    .toList();
+            pdc.set(FAVORITES_KEY, PersistentDataType.LIST.strings(), serialized);
+        }
+    }
+
+    /**
+     * Returns the player's persisted warp sort order, defaulting to {@link WarpSortOrder#DISTANCE} (#55).
+     */
+    public WarpSortOrder getWarpSortOrder(final Player player) {
+        final PersistentDataContainer pdc = player.getPersistentDataContainer();
+        if (pdc == null) {
+            return WarpSortOrder.DISTANCE;
+        }
+        return WarpSortOrder.fromId(pdc.get(WARP_SORT_KEY, PersistentDataType.STRING));
+    }
+
+    /**
+     * Persists the player's selected warp sort order in their PDC (#55).
+     */
+    public void setWarpSortOrder(final Player player, final WarpSortOrder sortOrder) {
+        final PersistentDataContainer pdc = player.getPersistentDataContainer();
+        if (pdc != null) {
+            pdc.set(WARP_SORT_KEY, PersistentDataType.STRING, sortOrder.id());
+        }
+    }
+
+    /**
      * Validates and sanitizes an Aetheryte name.
      */
     public static Optional<String> sanitizeName(final String rawName) {
@@ -949,6 +1296,20 @@ public final class AetheryteService {
      */
     public static boolean canRemove(final Player player, final Aetheryte aetheryte) {
         return Permissions.canRemove(player, player.getUniqueId(), aetheryte);
+    }
+
+    /**
+     * Checks whether the given player is allowed to rename the specified Aetheryte (#57).
+     */
+    public static boolean canRename(final Player player, final Aetheryte aetheryte) {
+        return Permissions.canRename(player, player.getUniqueId(), aetheryte);
+    }
+
+    /**
+     * Checks whether the given player holds administrative privileges (#57).
+     */
+    public static boolean canAdmin(final Player player) {
+        return Permissions.canAdmin(player);
     }
 
     /**
@@ -1297,7 +1658,8 @@ public final class AetheryteService {
                             blockZ,
                             ownerId,
                             System.currentTimeMillis(),
-                            normalizedVar
+                            normalizedVar,
+                            player.getName()
                     );
 
                     final int effectiveMaxGlobal = bypassLimit ? -1 : globalMaxPerPlayerSupplier.getAsInt();
@@ -1494,12 +1856,23 @@ public final class AetheryteService {
      * of the matching variation to the player if permitted (#38).
      */
     public void removeAetheryte(final Player player, final UUID aetheryteId) {
+        removeAetheryte(player, aetheryteId, true);
+    }
+
+    /**
+     * Removes an existing Aetheryte, optionally refunding its creation item (#38, #57).
+     */
+    public void removeAetheryte(final Player player, final UUID aetheryteId, final boolean refundItem) {
         final Optional<Aetheryte> opt = registry.getById(aetheryteId);
         if (opt.isEmpty()) {
             messages.send(player, MessageKey.ERROR_NOT_FOUND);
             return;
         }
         final Aetheryte aetheryte = opt.get();
+        if (!refundItem && !canAdmin(player)) {
+            messages.send(player, MessageKey.ERROR_NO_PERMISSION);
+            return;
+        }
         if (!canRemove(player, aetheryte)) {
             messages.send(player, MessageKey.ERROR_NOT_OWNER);
             return;
@@ -1512,44 +1885,280 @@ public final class AetheryteService {
 
         final Location blockLoc = aetheryte.blockLocation(world);
         Bukkit.getRegionScheduler().execute(plugin, blockLoc, () -> {
-            final Optional<Aetheryte> removed = registry.unregister(world, aetheryte.id());
+            final Optional<Aetheryte> latestOpt = registry.getById(aetheryte.id());
+            if (latestOpt.isEmpty()) {
+                messages.send(player, MessageKey.ERROR_NOT_FOUND);
+                return;
+            }
+            final Aetheryte latest = latestOpt.get();
+            if (!refundItem && !canAdmin(player)) {
+                messages.send(player, MessageKey.ERROR_NO_PERMISSION);
+                return;
+            }
+            if (!canRemove(player, latest)) {
+                messages.send(player, MessageKey.ERROR_NOT_OWNER);
+                return;
+            }
+            final Optional<Aetheryte> removed = registry.unregister(world, latest.id());
             if (removed.isEmpty()) {
                 messages.send(player, MessageKey.ERROR_NOT_FOUND);
                 return;
             }
+            final Aetheryte removedTarget = removed.get();
 
-            removeMarkerEntitiesAt(world, aetheryte);
+            removeMarkerEntitiesAt(world, removedTarget);
 
             // Clean up legacy Lodestone block if present from v0.1 worlds
-            final Block block = world.getBlockAt(aetheryte.blockX(), aetheryte.blockY(), aetheryte.blockZ());
+            final Block block = world.getBlockAt(removedTarget.blockX(), removedTarget.blockY(), removedTarget.blockZ());
             if (block.getType() == Material.LODESTONE) {
                 block.setType(Material.AIR, true);
             }
 
-            modelService.unregisterAetheryte(aetheryte.id());
-            hologramService.hideAetheryte(aetheryte.id());
-            world.playSound(blockLoc, Sound.BLOCK_LODESTONE_BREAK, 1.0f, 1.0f);
+            modelService.unregisterAetheryte(removedTarget.id());
+            hologramService.hideAetheryte(removedTarget.id());
+            playSoundSafely(() -> world.playSound(blockLoc, Sound.BLOCK_LODESTONE_BREAK, 1.0f, 1.0f));
 
-            if (player.getGameMode() != GameMode.CREATIVE) {
-                refundItemToPlayer(player, blockLoc, aetheryte.variation());
+            if (refundItem && player.getGameMode() != GameMode.CREATIVE) {
+                refundItemToPlayer(player, blockLoc, removedTarget.variation());
             }
-            player.sendMessage(messages.aetheryteRemoved(player, aetheryte.name()));
+            if (refundItem) {
+                player.sendMessage(messages.aetheryteRemoved(player, removedTarget.name()));
+            } else {
+                player.sendMessage(messages.get(player, MessageKey.AETHERYTE_FORCE_REMOVED, Placeholder.unparsed("name", removedTarget.name())));
+            }
         });
+    }
+
+    /**
+     * Renames an existing Aetheryte if the player is its owner or holds {@link Permissions#RENAME_ANY} (#57).
+     */
+    public void renameAetheryte(final Player player, final UUID aetheryteId, final String rawName) {
+        final Optional<Aetheryte> opt = registry.getById(aetheryteId);
+        if (opt.isEmpty()) {
+            messages.send(player, MessageKey.ERROR_NOT_FOUND);
+            return;
+        }
+        final Aetheryte current = opt.get();
+        if (!canRename(player, current)) {
+            messages.send(player, MessageKey.ERROR_NO_PERMISSION);
+            return;
+        }
+        final Optional<String> validName = sanitizeName(rawName);
+        if (validName.isEmpty()) {
+            messages.send(player, MessageKey.ERROR_INVALID_NAME);
+            return;
+        }
+        final String newName = validName.get();
+        executeAetheryteUpdate(
+                player,
+                current,
+                latest -> canRename(player, latest) ? null : MessageKey.ERROR_NO_PERMISSION,
+                a -> a.withName(newName),
+                (world, previous, updated) -> {
+                    hologramService.hideAetheryte(updated.id());
+                    hologramService.showAetheryte(updated);
+                    player.sendMessage(messages.get(
+                            player,
+                            MessageKey.AETHERYTE_RENAMED,
+                            Placeholder.unparsed("old_name", previous.name()),
+                            Placeholder.unparsed("name", updated.name())
+                    ));
+                }
+        );
+    }
+
+    /**
+     * Transfers ownership of an Aetheryte to another player (Admin only) (#57).
+     */
+    public void transferOwnership(final Player actor, final UUID aetheryteId, final String targetPlayerName) {
+        if (!canAdmin(actor)) {
+            messages.send(actor, MessageKey.ERROR_NO_PERMISSION);
+            return;
+        }
+        final Optional<Aetheryte> opt = registry.getById(aetheryteId);
+        if (opt.isEmpty()) {
+            messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+            return;
+        }
+        final ResolvedPlayer target = playerByNameLookup.apply(targetPlayerName);
+        if (target == null) {
+            actor.sendMessage(messages.get(actor, MessageKey.ERROR_PLAYER_NOT_FOUND, Placeholder.unparsed("player", targetPlayerName.strip())));
+            return;
+        }
+        executeAetheryteUpdate(
+                actor,
+                opt.get(),
+                latest -> canAdmin(actor) ? null : MessageKey.ERROR_NO_PERMISSION,
+                a -> a.withOwner(target.id(), target.name()),
+                (world, previous, updated) -> actor.sendMessage(messages.get(
+                        actor,
+                        MessageKey.AETHERYTE_OWNER_TRANSFERRED,
+                        Placeholder.unparsed("name", updated.name()),
+                        Placeholder.unparsed("owner", target.name())
+                ))
+        );
+    }
+
+    /**
+     * Changes the variation of an existing Aetheryte and refreshes its visuals (Admin only) (#57).
+     */
+    public void changeVariation(final Player actor, final UUID aetheryteId, final String variationId) {
+        if (!canAdmin(actor)) {
+            messages.send(actor, MessageKey.ERROR_NO_PERMISSION);
+            return;
+        }
+        final Optional<Aetheryte> opt = registry.getById(aetheryteId);
+        if (opt.isEmpty()) {
+            messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+            return;
+        }
+        final String normalizedVar = Aetheryte.normalizeVariation(variationId);
+        final Optional<AetheryteVariation> variationOpt = variationRegistry.find(normalizedVar);
+        if (variationOpt.isEmpty()) {
+            actor.sendMessage(messages.commandUnknownVariation(actor, variationId));
+            return;
+        }
+        final AetheryteVariation variation = variationOpt.get();
+        executeAetheryteUpdate(
+                actor,
+                opt.get(),
+                latest -> canAdmin(actor) ? null : MessageKey.ERROR_NO_PERMISSION,
+                a -> a.withVariation(normalizedVar),
+                (world, previous, updated) -> {
+                    refreshAllVisuals(world, updated, variation);
+                    actor.sendMessage(messages.get(
+                            actor,
+                            MessageKey.AETHERYTE_VARIATION_CHANGED,
+                            Placeholder.unparsed("name", updated.name()),
+                            Placeholder.unparsed("variation", normalizedVar)
+                    ));
+                }
+        );
+    }
+
+    /**
+     * Re-registers client-side hologram and BetterModel entities for an Aetheryte (Admin only) (#57).
+     */
+    public void resyncVisuals(final Player actor, final UUID aetheryteId) {
+        if (!canAdmin(actor)) {
+            messages.send(actor, MessageKey.ERROR_NO_PERMISSION);
+            return;
+        }
+        final Optional<Aetheryte> opt = registry.getById(aetheryteId);
+        if (opt.isEmpty()) {
+            messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+            return;
+        }
+        final Aetheryte target = opt.get();
+        final World world = Bukkit.getWorld(target.worldId());
+        if (world == null) {
+            messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+            return;
+        }
+        Bukkit.getRegionScheduler().execute(plugin, target.blockLocation(world), () -> {
+            final Optional<Aetheryte> latestOpt = registry.getById(target.id());
+            if (latestOpt.isEmpty()) {
+                messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+                return;
+            }
+            if (!canAdmin(actor)) {
+                messages.send(actor, MessageKey.ERROR_NO_PERMISSION);
+                return;
+            }
+            final Aetheryte latest = latestOpt.get();
+            final AetheryteVariation variation = variationRegistry.getOrDefault(latest.variation());
+            refreshAllVisuals(world, latest, variation);
+            actor.sendMessage(messages.get(actor, MessageKey.AETHERYTE_VISUALS_RESYNCED, Placeholder.unparsed("name", latest.name())));
+        });
+    }
+
+    @FunctionalInterface
+    private interface AetheryteUpdateCallback {
+        void onUpdated(World world, Aetheryte previous, Aetheryte updated);
+    }
+
+    private void executeAetheryteUpdate(
+            final Player actor,
+            final Aetheryte target,
+            final Function<Aetheryte, @Nullable MessageKey> regionValidator,
+            final UnaryOperator<Aetheryte> updater,
+            final AetheryteUpdateCallback onUpdated
+    ) {
+        final World world = Bukkit.getWorld(target.worldId());
+        if (world == null) {
+            messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+            return;
+        }
+        Bukkit.getRegionScheduler().execute(plugin, target.blockLocation(world), () -> {
+            final Optional<Aetheryte> latestOpt = registry.getById(target.id());
+            if (latestOpt.isEmpty()) {
+                messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+                return;
+            }
+            final MessageKey validationError = regionValidator.apply(latestOpt.get());
+            if (validationError != null) {
+                messages.send(actor, validationError);
+                return;
+            }
+            final AtomicReference<@Nullable Aetheryte> previousRef = new AtomicReference<>();
+            final Optional<Aetheryte> updatedOpt = registry.update(world, target.id(), existing -> {
+                previousRef.set(existing);
+                return updater.apply(existing);
+            });
+            final Aetheryte previous = previousRef.get();
+            if (updatedOpt.isEmpty() || previous == null) {
+                messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+                return;
+            }
+            final Aetheryte updated = updatedOpt.get();
+            updateMarkerDataAt(world, updated);
+            onUpdated.onUpdated(world, previous, updated);
+        });
+    }
+
+    private static void playSoundSafely(final Runnable action) {
+        try {
+            action.run();
+        } catch (final Throwable ignored) {
+            // Sound playback is non-fatal if sound registry is unavailable in test environments
+        }
+    }
+
+    private void refreshAllVisuals(final World world, final Aetheryte aetheryte, final AetheryteVariation variation) {
+        modelService.unregisterAetheryte(aetheryte.id());
+        modelService.registerAetheryte(aetheryte, variation, world);
+        hologramService.hideAetheryte(aetheryte.id());
+        hologramService.showAetheryte(aetheryte);
     }
 
     /**
      * Removes all backing {@link Marker} entities associated with the given Aetheryte in its chunk.
      */
     private static void removeMarkerEntitiesAt(final World world, final Aetheryte target) {
+        forEachMarkerEntityAt(world, target, Entity::remove);
+    }
+
+    /**
+     * Updates PDC data on all backing {@link Marker} entities associated with the given Aetheryte in its chunk.
+     */
+    private static void updateMarkerDataAt(final World world, final Aetheryte updated) {
+        forEachMarkerEntityAt(world, updated, marker -> AetheryteRegistry.writeMarkerData(marker, updated));
+    }
+
+    private static void forEachMarkerEntityAt(
+            final World world,
+            final Aetheryte target,
+            final Consumer<Marker> action
+    ) {
         final @Nullable Chunk chunk = world.getChunkAt(target.blockX() >> 4, target.blockZ() >> 4);
         if (chunk == null) {
             return;
         }
         for (final Entity entity : chunk.getEntities()) {
-            if (entity instanceof Marker) {
-                final Optional<Aetheryte> data = AetheryteRegistry.readMarkerData(entity);
+            if (entity instanceof Marker marker) {
+                final Optional<Aetheryte> data = AetheryteRegistry.readMarkerData(marker);
                 if (data.isPresent() && data.get().id().equals(target.id())) {
-                    entity.remove();
+                    action.accept(marker);
                 }
             }
         }
@@ -1714,11 +2323,7 @@ public final class AetheryteService {
                                 modelService.triggerAnimation(destination.id(), ModelAnimationTrigger.ON_WARP_ARRIVE);
                                 player.sendMessage(messages.warpedTo(player, destination));
                                 player.getScheduler().run(plugin, postTask -> {
-                                    try {
-                                        player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
-                                    } catch (final Throwable ignored) {
-                                        // Sound playback is non-fatal if sound registry is unavailable in test environments
-                                    }
+                                    playSoundSafely(() -> player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f));
                                     refreshPlayerVisuals(player, targetWorld);
                                 }, null);
                             } else {
