@@ -154,6 +154,11 @@ public enum MessageKey {
 
     WARP_SUCCESS("warp.success"),
     WARP_COST_PAID("warp.cost-paid"),
+    WARP_CAST_STARTED("warp.cast-started"),
+    WARP_CAST_PROGRESS("warp.cast-progress"),
+    WARP_CAST_CANCELLED("warp.cast-cancelled"),
+    WARP_CAST_CANCELLED_MOVE("warp.cast-cancelled-move"),
+    WARP_CAST_CANCELLED_DAMAGE("warp.cast-cancelled-damage"),
 
     ERROR_INVALID_NAME("error.invalid-name"),
     ERROR_SPACE_NOT_EMPTY("error.space-not-empty"),

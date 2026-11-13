@@ -84,7 +84,7 @@ limit:
 
 # BetterModel animated 3D model engine settings (#46)
 bettermodel:
-  # Whether to render this variation using BetterModel (falls back to model.block if false or BetterModel is absent)
+  # Whether to render this variation using BetterModel (falls back to model.block if false or the model is not found)
   enabled: true
   # Model identifier registered in BetterModel
   model-id: "grand_aetheryte_crystal"
@@ -103,7 +103,7 @@ bettermodel:
 ## Key Behaviors
 
 - **Backward Compatibility (`#37`)**: Existing Aetherytes placed in v0.2 worlds without a stored variation tag automatically resolve to `default`. If a custom variation file is deleted later, any placed Aetherytes of that variation safely fall back to `default` (logging a warning once).
-- **BetterModel 3D Animation Support (`#46`)**: ClickPortals supports [BetterModel](https://github.com/toxicity188/BetterModel) as a soft dependency. When BetterModel is enabled for a variation, ClickPortals renders the Blockbench model with looping idle animations and triggers event animations on interaction, warp departure, and warp arrival. When BetterModel is not installed or `bettermodel.enabled` is false, ClickPortals automatically falls back to standard `BLOCK_DISPLAY` rendering with zero overhead.
+- **BetterModel 3D Animation Support (`#46`)**: ClickPortals requires [BetterModel](https://github.com/toxicity188/BetterModel). When `bettermodel.enabled` is true for a variation, ClickPortals renders the Blockbench model with looping idle animations and triggers event animations on interaction, warp departure, and warp arrival. When `bettermodel.enabled` is false, or when the configured `model-id` is not found in BetterModel or a tracker cannot be created, ClickPortals renders the variation using standard `BLOCK_DISPLAY` via PacketEvents.
 - **Ring-Shaped Landing Spread (`#41`)**: When `teleport.max-radius` is `1`–`8`, ClickPortals searches all columns within the Euclidean ring between the effective inner radius `max(teleport.min-radius, max(0.5, (hitbox.width - 1.0) / 2))` and `teleport.max-radius` for a non-hazardous solid floor with 2 passable blocks above, picks one at random to spread arriving players, and optionally turns the player to face the Aetheryte (`face-aetheryte: true`). If no spot inside the ring is available, it falls back to checking the center origin column.
 - **Ring-Shaped Landing Spread (`#41`)**: When `teleport.max-radius` is `1`–`8`, ClickPortals searches all columns within the Euclidean ring between the effective inner radius `max(teleport.min-radius, max(0.5, (hitbox.width - 1.0) / 2))` and `teleport.max-radius` for a non-hazardous solid floor with 2 passable blocks above, picks one at random to spread arriving players, and optionally turns the player to face the Aetheryte (`face-aetheryte: true`). If no spot inside the ring is available, it falls back to checking the center origin column.
 - **Surrounding Space Clearance (`#42`)**: Before opening the creation dialog—and again on the target region thread before consuming the item—ClickPortals checks that all blocks in the `(2 * radius + 1) x height x (2 * radius + 1)` volume around the placement origin are replaceable (air, short grass, snow layer, etc., excluding water/lava).

@@ -39,6 +39,22 @@ warp:
   cost: []
   # Whether non-mandatory costs (required: false) are shown in destination menus and tooltips
   show-optional-costs: true
+  # Default warp casting (cast time and BetterModel player animation) settings (#65)
+  cast:
+    # Cast time in ticks before warping (0 or less for instant warp)
+    ticks: 0
+    # BetterModel player limb model name used for player animations (e.g. steve)
+    player-model: "steve"
+    # BetterModel player animation played during casting (HOLD_ON_LAST; empty to disable)
+    cast-animation: ""
+    # BetterModel player animation played after teleport arrival (PLAY_ONCE; empty to disable)
+    arrive-animation: ""
+    # Cancellation conditions while casting
+    cancel:
+      # Cancel casting when the player moves (coordinate change; head rotation is allowed)
+      on-move: true
+      # Cancel casting when the player takes damage
+      on-damage: true
 
 # Cross-dimension warping routes, distance origins, and dimension pricing (#9)
 dimensions:

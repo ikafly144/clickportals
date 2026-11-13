@@ -80,6 +80,38 @@ public interface AetheryteModelService {
     }
 
     /**
+     * Playback mode for BetterModel {@code PlayerAnimation} (#65).
+     */
+    enum PlayerAnimationMode {
+        /**
+         * Plays the animation once and holds the last frame until explicitly stopped.
+         */
+        HOLD_ON_LAST,
+        /**
+         * Plays the animation once and automatically cleans up upon completion.
+         */
+        PLAY_ONCE
+    }
+
+    /**
+     * Plays a player animation (e.g. BetterModel {@code PlayerAnimation}) for the given player (#65).
+     * Implementations safely no-op when the animation name is blank or BetterModel is unavailable.
+     */
+    default void playPlayerAnimation(
+            final Player player,
+            final String limbModel,
+            final String animationName,
+            final PlayerAnimationMode mode
+    ) {
+    }
+
+    /**
+     * Stops any active player animation previously started for the given player (#65).
+     */
+    default void stopPlayerAnimation(final Player player) {
+    }
+
+    /**
      * Destroys and cleans up all active model trackers across all worlds.
      */
     void destroyAll();

@@ -21,6 +21,7 @@ import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -29,6 +30,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -40,11 +42,13 @@ import java.util.function.ToLongFunction;
 import java.util.function.UnaryOperator;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry.RegistrationOutcome;
+import net.sabafly.clickportals.config.CastSection;
 import net.sabafly.clickportals.cost.CostBundle;
 import net.sabafly.clickportals.cost.CostFormatter;
 import net.sabafly.clickportals.cost.CostItemQuote;
@@ -278,6 +282,36 @@ public final class AetheryteService {
     private volatile Function<String, @Nullable ResolvedPlayer> playerByNameLookup = AetheryteService::defaultPlayerByNameLookup;
     private final Set<UUID> pendingPlacements = ConcurrentHashMap.newKeySet();
     private final Set<UUID> inFlightWarps = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, ActiveCastSession> activeCasts = new ConcurrentHashMap<>();
+    private volatile Supplier<CastSection> globalCastSupplier = CastSection::defaults;
+
+    /**
+     * Reasons why an in-progress warp cast can be cancelled (#65).
+     */
+    public enum CastCancelReason {
+        MOVED,
+        DAMAGED,
+        DIED,
+        QUIT,
+        NEW_WARP,
+        OUT_OF_REACH,
+        OTHER
+    }
+
+    private record ActiveCastSession(
+            Player player,
+            @Nullable UUID playerId,
+            @Nullable Aetheryte source,
+            Aetheryte destination,
+            World targetWorld,
+            Location destinationLoc,
+            CastSection.Resolved castSettings,
+            AtomicInteger remainingTicks,
+            AtomicBoolean cancelled,
+            AtomicBoolean completed,
+            AtomicReference<@Nullable ScheduledTask> taskRef
+    ) {
+    }
     private final Map<UUID, List<CostItemQuote>> pendingRefunds = new ConcurrentHashMap<>();
     private final PendingRefundStorage pendingRefundStorage;
     private final Object refundPersistLock = new Object();
@@ -697,11 +731,107 @@ public final class AetheryteService {
     }
 
     /**
-     * Cleans up transient in-flight placement reservations for the given player UUID when quitting or reloading (#43).
+     * Cleans up transient in-flight placement reservations and any active warp cast for the given player UUID (#43, #65).
      */
     public void removePlayer(final UUID playerId) {
         pendingPlacements.remove(playerId);
+        final ActiveCastSession session = activeCasts.remove(playerId);
+        if (session != null && session.cancelled.compareAndSet(false, true)) {
+            final ScheduledTask task = session.taskRef.get();
+            if (task != null) {
+                task.cancel();
+            }
+            modelService.stopPlayerAnimation(session.player);
+        }
         inFlightWarps.remove(playerId);
+    }
+
+    /**
+     * Sets the supplier for global warp casting configuration (#65).
+     */
+    public void setGlobalCastSupplier(final Supplier<CastSection> globalCastSupplier) {
+        this.globalCastSupplier = globalCastSupplier;
+    }
+
+    /**
+     * Returns whether the given player currently has an active warp cast in progress (#65).
+     */
+    public boolean isCasting(final UUID playerId) {
+        final ActiveCastSession session = activeCasts.get(playerId);
+        return session != null && !session.cancelled.get() && !session.completed.get();
+    }
+
+    /**
+     * Cancels the player's active cast if movement cancellation is enabled (#65).
+     */
+    public void onPlayerMoveDuringCast(final Player player) {
+        final UUID playerId = player.getUniqueId();
+        if (playerId == null) {
+            return;
+        }
+        final ActiveCastSession session = activeCasts.get(playerId);
+        if (session != null && session.castSettings.cancelOnMove()) {
+            cancelCast(player, CastCancelReason.MOVED);
+        }
+    }
+
+    /**
+     * Cancels the player's active cast if damage cancellation is enabled (#65).
+     */
+    public void onPlayerDamageDuringCast(final Player player) {
+        final UUID playerId = player.getUniqueId();
+        if (playerId == null) {
+            return;
+        }
+        final ActiveCastSession session = activeCasts.get(playerId);
+        if (session != null && session.castSettings.cancelOnDamage()) {
+            cancelCast(player, CastCancelReason.DAMAGED);
+        }
+    }
+
+    /**
+     * Cancels an active warp cast for {@code player} if one is in progress (#65).
+     *
+     * @return {@code true} if an active cast was cancelled
+     */
+    public boolean cancelCast(final Player player, final CastCancelReason reason) {
+        final UUID playerId = player.getUniqueId();
+        if (playerId == null) {
+            return false;
+        }
+        final ActiveCastSession session = activeCasts.get(playerId);
+        if (session == null || session.completed.get() || !session.cancelled.compareAndSet(false, true)) {
+            return false;
+        }
+        activeCasts.remove(playerId, session);
+        inFlightWarps.remove(playerId);
+        final ScheduledTask task = session.taskRef.get();
+        if (task != null) {
+            task.cancel();
+        }
+        modelService.stopPlayerAnimation(player);
+        if (reason != CastCancelReason.QUIT && reason != CastCancelReason.NEW_WARP && player.isOnline()) {
+            final MessageKey key = switch (reason) {
+                case MOVED -> MessageKey.WARP_CAST_CANCELLED_MOVE;
+                case DAMAGED -> MessageKey.WARP_CAST_CANCELLED_DAMAGE;
+                case OUT_OF_REACH -> MessageKey.ERROR_TOO_FAR;
+                case DIED, OTHER, QUIT, NEW_WARP -> MessageKey.WARP_CAST_CANCELLED;
+            };
+            messages.send(player, key);
+        }
+        return true;
+    }
+
+    /**
+     * Cancels all active warp casts (e.g. on plugin disable or reload) (#65).
+     */
+    public void cancelAllCasts() {
+        for (final UUID playerId : List.copyOf(activeCasts.keySet())) {
+            final ActiveCastSession session = activeCasts.get(playerId);
+            if (session != null) {
+                cancelCast(session.player, CastCancelReason.OTHER);
+            }
+        }
     }
 
     /**
@@ -2347,6 +2477,9 @@ public final class AetheryteService {
             final UUID destinationId
     ) {
         final UUID playerId = player.getUniqueId();
+        if (playerId != null && activeCasts.containsKey(playerId)) {
+            cancelCast(player, CastCancelReason.NEW_WARP);
+        }
         if (playerId != null && !inFlightWarps.add(playerId)) {
             return;
         }
@@ -2394,6 +2527,10 @@ public final class AetheryteService {
         final float yaw = player.getYaw();
         final float pitch = player.getPitch();
         final AetheryteVariation destVariation = variationRegistry.getOrDefault(destination.variation());
+        final CastSection globalCast = globalCastSupplier.get();
+        final CastSection.Resolved resolvedCast = source != null
+                ? variationRegistry.getOrDefault(source.variation()).warp().cast().resolve(globalCast)
+                : globalCast.resolveGlobal();
 
         final AtomicBoolean regionTaskEntered = new AtomicBoolean(false);
         try {
@@ -2419,115 +2556,10 @@ public final class AetheryteService {
                 final Location destinationLoc = safeLanding.get();
 
                 final ScheduledTask warpTask = player.getScheduler().run(plugin, task -> {
-                    final WarpCostEvaluator activeEvaluator = this.costEvaluator;
-                    final boolean bypassCost = Permissions.canBypassWarpCost(player);
-                    boolean paid = false;
-                    try {
-                        if (source != null && !isWithinReach(player, source)) {
-                            if (playerId != null) {
-                                inFlightWarps.remove(playerId);
-                            }
-                            messages.send(player, MessageKey.ERROR_TOO_FAR);
-                            return;
-                        }
-
-                        final WarpEvaluation finalEval = evaluateWarp(player, source, destination);
-                        if (!finalEval.allowed()) {
-                            if (playerId != null) {
-                                inFlightWarps.remove(playerId);
-                            }
-                            final Component reason = finalEval.denyReason() != null
-                                    ? finalEval.denyReason()
-                                    : messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST);
-                            player.sendMessage(messages.errorWarpDenied(player, reason));
-                            return;
-                        }
-
-                        if (!bypassCost) {
-                            paid = activeEvaluator.charge(player, source, destination);
-                            if (!paid) {
-                                final List<CostItemQuote> unrefunded = activeEvaluator.popFailedChargeUnrefunded(player, destination);
-                                if (!unrefunded.isEmpty()) {
-                                    recordPendingRefund(player.getUniqueId(), unrefunded);
-                                    plugin.getSLF4JLogger().warn(
-                                            "Warp charge rollback partially failed for player {}. Queued {} unrefunded item(s) for next login.",
-                                            player.getUniqueId(),
-                                            unrefunded.size()
-                                    );
-                                }
-                                if (playerId != null) {
-                                    inFlightWarps.remove(playerId);
-                                }
-                                player.sendMessage(messages.errorWarpDenied(player, messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST)));
-                                return;
-                            }
-                        } else {
-                            paid = true;
-                        }
-
-                        if (source != null) {
-                            modelService.triggerAnimation(source.id(), ModelAnimationTrigger.ON_WARP_DEPART);
-                        }
-                        final CompletableFuture<Void> unused = player.teleportAsync(destinationLoc).thenAccept(success -> {
-                            if (playerId != null) {
-                                inFlightWarps.remove(playerId);
-                            }
-                            if (Boolean.TRUE.equals(success)) {
-                                if (!bypassCost) {
-                                    final List<CostItemQuote> peeked = activeEvaluator.peekPendingCharge(player, destination);
-                                    final List<CostItemQuote> chargedItems = !peeked.isEmpty()
-                                            ? peeked
-                                            : activeEvaluator.popPendingCharge(player, destination);
-                                    activeEvaluator.commit(player, source, destination);
-                                    final CostQuote paidQuote = new CostQuote(chargedItems);
-                                    if (!paidQuote.isFree()) {
-                                        final Component paidDisplay = CostFormatter.format(player, paidQuote, this.economyProvider, messages, true);
-                                        player.sendMessage(messages.get(player, MessageKey.WARP_COST_PAID, Placeholder.component("cost", paidDisplay)));
-                                    }
-                                }
-                                modelService.triggerAnimation(destination.id(), ModelAnimationTrigger.ON_WARP_ARRIVE);
-                                player.sendMessage(messages.warpedTo(player, destination));
-                                player.getScheduler().run(plugin, postTask -> {
-                                    playSoundSafely(() -> player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f));
-                                    refreshPlayerVisuals(player, targetWorld);
-                                }, null);
-                            } else {
-                                handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_DESTINATION_UNSAFE);
-                            }
-                        }).exceptionally(ex -> {
-                            if (playerId != null) {
-                                inFlightWarps.remove(playerId);
-                            }
-                            plugin.getSLF4JLogger().warn(
-                                    "Failed to teleport player {} to aetheryte {}",
-                                    player.getName(),
-                                    destination.id(),
-                                    ex
-                            );
-                            handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
-                            return null;
-                        });
-                        if (unused.isCancelled()) {
-                            if (playerId != null) {
-                                inFlightWarps.remove(playerId);
-                            }
-                            handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
-                        }
-                    } catch (final Throwable t) {
-                        if (playerId != null) {
-                            inFlightWarps.remove(playerId);
-                        }
-                        plugin.getSLF4JLogger().error(
-                                "Unexpected error during warp charge or execution for player {} to {}",
-                                player.getName(),
-                                destination.id(),
-                                t
-                        );
-                        if (paid) {
-                            handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
-                        } else {
-                            messages.send(player, MessageKey.ERROR_NOT_FOUND);
-                        }
+                    if (resolvedCast.hasCastTime()) {
+                        startWarpCast(player, playerId, source, destination, targetWorld, destinationLoc, resolvedCast);
+                    } else {
+                        executeWarpTeleport(player, playerId, source, destination, targetWorld, destinationLoc, resolvedCast);
                     }
                 }, () -> {
                     if (playerId != null) {
@@ -2564,6 +2596,302 @@ public final class AetheryteService {
                 messages.send(player, MessageKey.ERROR_NOT_FOUND);
             }
         }
+    }
+
+    private void startWarpCast(
+            final Player player,
+            final @Nullable UUID playerId,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination,
+            final World targetWorld,
+            final Location destinationLoc,
+            final CastSection.Resolved castSettings
+    ) {
+        if (!player.isOnline() || player.isDead()) {
+            if (playerId != null) {
+                inFlightWarps.remove(playerId);
+            }
+            return;
+        }
+        if (source != null && !isWithinReach(player, source)) {
+            if (playerId != null) {
+                inFlightWarps.remove(playerId);
+            }
+            messages.send(player, MessageKey.ERROR_TOO_FAR);
+            return;
+        }
+
+        final ActiveCastSession session = new ActiveCastSession(
+                player,
+                playerId,
+                source,
+                destination,
+                targetWorld,
+                destinationLoc,
+                castSettings,
+                new AtomicInteger(castSettings.ticks()),
+                new AtomicBoolean(false),
+                new AtomicBoolean(false),
+                new AtomicReference<>(null)
+        );
+        if (playerId != null) {
+            activeCasts.put(playerId, session);
+        }
+
+        modelService.playPlayerAnimation(
+                player,
+                castSettings.playerModel(),
+                castSettings.castAnimation(),
+                AetheryteModelService.PlayerAnimationMode.HOLD_ON_LAST
+        );
+        player.sendMessage(messages.get(
+                player,
+                MessageKey.WARP_CAST_STARTED,
+                Placeholder.unparsed("name", destination.name()),
+                Placeholder.unparsed("seconds", formatCastSeconds(castSettings.ticks()))
+        ));
+        sendCastActionBar(player, destination.name(), castSettings.ticks(), castSettings.ticks());
+
+        final ScheduledTask castTask = player.getScheduler().runAtFixedRate(
+                plugin,
+                task -> tickWarpCast(session, task),
+                () -> {
+                    if (session.cancelled.compareAndSet(false, true)) {
+                        if (playerId != null) {
+                            activeCasts.remove(playerId, session);
+                            inFlightWarps.remove(playerId);
+                        }
+                        modelService.stopPlayerAnimation(player);
+                    }
+                },
+                1L,
+                1L
+        );
+        if (castTask == null) {
+            if (session.cancelled.compareAndSet(false, true)) {
+                if (playerId != null) {
+                    activeCasts.remove(playerId, session);
+                    inFlightWarps.remove(playerId);
+                }
+                modelService.stopPlayerAnimation(player);
+            }
+            return;
+        }
+        session.taskRef.set(castTask);
+        if (session.cancelled.get()) {
+            castTask.cancel();
+        }
+    }
+
+    private void tickWarpCast(final ActiveCastSession session, final ScheduledTask task) {
+        if (session.cancelled.get() || session.completed.get()) {
+            task.cancel();
+            return;
+        }
+        final Player player = session.player;
+        if (!player.isOnline()) {
+            cancelCast(player, CastCancelReason.QUIT);
+            task.cancel();
+            return;
+        }
+        if (player.isDead()) {
+            cancelCast(player, CastCancelReason.DIED);
+            task.cancel();
+            return;
+        }
+        if (session.source != null && !isWithinReach(player, session.source)) {
+            cancelCast(player, CastCancelReason.OUT_OF_REACH);
+            task.cancel();
+            return;
+        }
+
+        final int remaining = session.remainingTicks.decrementAndGet();
+        if (remaining > 0) {
+            sendCastActionBar(player, session.destination.name(), remaining, session.castSettings.ticks());
+            return;
+        }
+        sendCastActionBar(player, session.destination.name(), 0, session.castSettings.ticks());
+
+        if (!session.completed.compareAndSet(false, true) || session.cancelled.get()) {
+            task.cancel();
+            return;
+        }
+        task.cancel();
+        if (session.playerId != null) {
+            activeCasts.remove(session.playerId, session);
+        }
+        modelService.stopPlayerAnimation(player);
+        executeWarpTeleport(
+                player,
+                session.playerId,
+                session.source,
+                session.destination,
+                session.targetWorld,
+                session.destinationLoc,
+                session.castSettings
+        );
+    }
+
+    private void executeWarpTeleport(
+            final Player player,
+            final @Nullable UUID playerId,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination,
+            final World targetWorld,
+            final Location destinationLoc,
+            final CastSection.Resolved castSettings
+    ) {
+        final WarpCostEvaluator activeEvaluator = this.costEvaluator;
+        final boolean bypassCost = Permissions.canBypassWarpCost(player);
+        boolean paid = false;
+        try {
+            if (source != null && !isWithinReach(player, source)) {
+                if (playerId != null) {
+                    inFlightWarps.remove(playerId);
+                }
+                messages.send(player, MessageKey.ERROR_TOO_FAR);
+                return;
+            }
+
+            final WarpEvaluation finalEval = evaluateWarp(player, source, destination);
+            if (!finalEval.allowed()) {
+                if (playerId != null) {
+                    inFlightWarps.remove(playerId);
+                }
+                final Component reason = finalEval.denyReason() != null
+                        ? finalEval.denyReason()
+                        : messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST);
+                player.sendMessage(messages.errorWarpDenied(player, reason));
+                return;
+            }
+
+            if (!bypassCost) {
+                paid = activeEvaluator.charge(player, source, destination);
+                if (!paid) {
+                    final List<CostItemQuote> unrefunded = activeEvaluator.popFailedChargeUnrefunded(player, destination);
+                    if (!unrefunded.isEmpty()) {
+                        recordPendingRefund(player.getUniqueId(), unrefunded);
+                        plugin.getSLF4JLogger().warn(
+                                "Warp charge rollback partially failed for player {}. Queued {} unrefunded item(s) for next login.",
+                                player.getUniqueId(),
+                                unrefunded.size()
+                        );
+                    }
+                    if (playerId != null) {
+                        inFlightWarps.remove(playerId);
+                    }
+                    player.sendMessage(messages.errorWarpDenied(player, messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST)));
+                    return;
+                }
+            } else {
+                paid = true;
+            }
+
+            if (source != null) {
+                modelService.triggerAnimation(source.id(), ModelAnimationTrigger.ON_WARP_DEPART);
+            }
+            final CompletableFuture<Void> unused = player.teleportAsync(destinationLoc).thenAccept(success -> {
+                if (playerId != null) {
+                    inFlightWarps.remove(playerId);
+                }
+                if (Boolean.TRUE.equals(success)) {
+                    if (!bypassCost) {
+                        final List<CostItemQuote> peeked = activeEvaluator.peekPendingCharge(player, destination);
+                        final List<CostItemQuote> chargedItems = !peeked.isEmpty()
+                                ? peeked
+                                : activeEvaluator.popPendingCharge(player, destination);
+                        activeEvaluator.commit(player, source, destination);
+                        final CostQuote paidQuote = new CostQuote(chargedItems);
+                        if (!paidQuote.isFree()) {
+                            final Component paidDisplay = CostFormatter.format(player, paidQuote, this.economyProvider, messages, true);
+                            player.sendMessage(messages.get(player, MessageKey.WARP_COST_PAID, Placeholder.component("cost", paidDisplay)));
+                        }
+                    }
+                    modelService.triggerAnimation(destination.id(), ModelAnimationTrigger.ON_WARP_ARRIVE);
+                    player.sendMessage(messages.warpedTo(player, destination));
+                    player.getScheduler().run(plugin, postTask -> {
+                        playSoundSafely(() -> player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f));
+                        refreshPlayerVisuals(player, targetWorld);
+                        modelService.playPlayerAnimation(
+                                player,
+                                castSettings.playerModel(),
+                                castSettings.arriveAnimation(),
+                                AetheryteModelService.PlayerAnimationMode.PLAY_ONCE
+                        );
+                    }, null);
+                } else {
+                    handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_DESTINATION_UNSAFE);
+                }
+            }).exceptionally(ex -> {
+                if (playerId != null) {
+                    inFlightWarps.remove(playerId);
+                }
+                plugin.getSLF4JLogger().warn(
+                        "Failed to teleport player {} to aetheryte {}",
+                        player.getName(),
+                        destination.id(),
+                        ex
+                );
+                handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
+                return null;
+            });
+            if (unused.isCancelled()) {
+                if (playerId != null) {
+                    inFlightWarps.remove(playerId);
+                }
+                handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
+            }
+        } catch (final Throwable t) {
+            if (playerId != null) {
+                inFlightWarps.remove(playerId);
+            }
+            plugin.getSLF4JLogger().error(
+                    "Unexpected error during warp charge or execution for player {} to {}",
+                    player.getName(),
+                    destination.id(),
+                    t
+            );
+            if (paid) {
+                handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
+            } else {
+                messages.send(player, MessageKey.ERROR_NOT_FOUND);
+            }
+        }
+    }
+
+    private static final int CAST_BAR_SEGMENTS = 16;
+
+    private void sendCastActionBar(
+            final Player player,
+            final String destinationName,
+            final int remainingTicks,
+            final int totalTicks
+    ) {
+        player.sendActionBar(messages.get(
+                player,
+                MessageKey.WARP_CAST_PROGRESS,
+                Placeholder.unparsed("name", destinationName),
+                Placeholder.component("bar", buildCastBar(remainingTicks, totalTicks)),
+                Placeholder.unparsed("seconds", formatCastSeconds(remainingTicks))
+        ));
+    }
+
+    static Component buildCastBar(final int remainingTicks, final int totalTicks) {
+        final int safeTotal = Math.max(1, totalTicks);
+        final int elapsed = Math.max(0, Math.min(safeTotal, safeTotal - remainingTicks));
+        final int filled = Math.max(0, Math.min(
+                CAST_BAR_SEGMENTS,
+                (int) Math.round(((double) elapsed / safeTotal) * CAST_BAR_SEGMENTS)
+        ));
+        final int empty = CAST_BAR_SEGMENTS - filled;
+        return Component.text("[", NamedTextColor.GRAY)
+                .append(Component.text("█".repeat(filled), NamedTextColor.AQUA))
+                .append(Component.text("░".repeat(empty), NamedTextColor.DARK_GRAY))
+                .append(Component.text("]", NamedTextColor.GRAY));
+    }
+
+    private static String formatCastSeconds(final int ticks) {
+        return String.format(Locale.ROOT, "%.1f", Math.max(0, ticks) / 20.0);
     }
 
     private void handleWarpFailure(

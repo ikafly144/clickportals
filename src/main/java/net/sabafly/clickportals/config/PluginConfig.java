@@ -173,7 +173,11 @@ public record PluginConfig(
 
             @Setting("show-optional-costs")
             @Comment("Whether non-mandatory costs are shown in destination menus and tooltips (default true)")
-            boolean showOptionalCosts
+            boolean showOptionalCosts,
+
+            @Setting("cast")
+            @Comment("Default warp casting (cast time and BetterModel player animation) settings (#65)")
+            CastSection cast
     ) {
         public WarpSection {
             if (distance == null) {
@@ -182,10 +186,21 @@ public record PluginConfig(
             if (cost == null) {
                 cost = List.of();
             }
+            if (cast == null) {
+                cast = CastSection.defaults();
+            }
+        }
+
+        public WarpSection(
+                final DistanceSection distance,
+                final List<CostEntry> cost,
+                final boolean showOptionalCosts
+        ) {
+            this(distance, cost, showOptionalCosts, CastSection.defaults());
         }
 
         public static WarpSection defaults() {
-            return new WarpSection(DistanceSection.defaults(), List.of(), true);
+            return new WarpSection(DistanceSection.defaults(), List.of(), true, CastSection.defaults());
         }
     }
 
@@ -329,7 +344,33 @@ public record PluginConfig(
             }
         }
 
-        final WarpSection validWarp = new WarpSection(validDist, warp.cost(), warp.showOptionalCosts());
+        final CastSection rawCast = warp.cast() != null ? warp.cast() : CastSection.defaults();
+        final int validCastTicks;
+        if (rawCast.ticks() == null) {
+            validCastTicks = 0;
+        } else if (rawCast.ticks() < 0) {
+            logger.warn("Invalid warp.cast.ticks {} (must be >= 0); falling back to 0 (instant warp)", rawCast.ticks());
+            validCastTicks = 0;
+        } else {
+            validCastTicks = rawCast.ticks();
+        }
+        final String rawPlayerModel = rawCast.playerModel();
+        final String validPlayerModel = (rawPlayerModel == null || rawPlayerModel.isBlank()) ? "steve" : rawPlayerModel.strip();
+        final String validCastAnim = rawCast.castAnimation() == null ? "" : rawCast.castAnimation().strip();
+        final String validArriveAnim = rawCast.arriveAnimation() == null ? "" : rawCast.arriveAnimation().strip();
+        final CastSection.CastCancelSection validCancel = new CastSection.CastCancelSection(
+                rawCast.cancelOnMoveOrDefault(true),
+                rawCast.cancelOnDamageOrDefault(true)
+        );
+        final CastSection validCast = new CastSection(
+                validCastTicks,
+                validPlayerModel,
+                validCastAnim,
+                validArriveAnim,
+                validCancel
+        );
+
+        final WarpSection validWarp = new WarpSection(validDist, warp.cost(), warp.showOptionalCosts(), validCast);
 
         final DimensionRoutesConfig validDimensions;
         if (dimensions == null) {

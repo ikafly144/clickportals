@@ -29,7 +29,8 @@
 - **Java**: 25+
 - **Server**: Paper or Folia `26.3`+
 - **Dependencies**:
-  - [PacketEvents](https://modrinth.com/plugin/packetevents) (optional, recommended for client-side Aetheryte visuals and interaction)
+  - [PacketEvents](https://modrinth.com/plugin/packetevents) (required for client-side Aetheryte visuals and interaction)
+  - [BetterModel](https://github.com/toxicity188/BetterModel) (required for 3D animated Aetheryte models and warp casting player animations)
   - [Vault](https://www.spigotmc.org/resources/vault.34315/) (optional, required only if using currency-based costs)
 
 ## Building

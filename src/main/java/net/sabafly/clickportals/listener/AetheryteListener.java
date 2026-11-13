@@ -20,6 +20,7 @@ package net.sabafly.clickportals.listener;
 import io.papermc.paper.event.packet.PlayerChunkLoadEvent;
 import io.papermc.paper.event.packet.PlayerChunkUnloadEvent;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import net.kyori.adventure.text.Component;
 import net.sabafly.clickportals.ClickPortals;
@@ -37,6 +38,7 @@ import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.visual.HologramService;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
+import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
@@ -49,11 +51,14 @@ import org.bukkit.event.block.BlockExplodeEvent;
 import org.bukkit.event.block.BlockPistonExtendEvent;
 import org.bukkit.event.block.BlockPistonRetractEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
+import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerLocaleChangeEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.server.ServerLoadEvent;
@@ -413,6 +418,64 @@ public final class AetheryteListener implements Listener {
         if (models != null) {
             models.removePlayer(event.getPlayer());
         }
+    }
+
+    /**
+     * Cancels an in-progress warp cast if the player changes coordinates (head rotation is allowed) (#65).
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPlayerMove(final PlayerMoveEvent event) {
+        final Player player = event.getPlayer();
+        final java.util.UUID playerId = player.getUniqueId();
+        if (playerId == null || !service.isCasting(playerId)) {
+            return;
+        }
+        final Location from = event.getFrom();
+        final Location to = event.getTo();
+        if (to == null) {
+            return;
+        }
+        if (hasCoordinateChanged(from, to)) {
+            service.onPlayerMoveDuringCast(player);
+        }
+    }
+
+    /**
+     * Cancels an in-progress warp cast if the player takes damage (#65).
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onEntityDamage(final EntityDamageEvent event) {
+        if (!(event.getEntity() instanceof Player player)) {
+            return;
+        }
+        final java.util.UUID playerId = player.getUniqueId();
+        if (playerId == null || !service.isCasting(playerId)) {
+            return;
+        }
+        service.onPlayerDamageDuringCast(player);
+    }
+
+    /**
+     * Cancels an in-progress warp cast if the player dies (#65).
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerDeath(final PlayerDeathEvent event) {
+        final Player player = event.getEntity();
+        final java.util.UUID playerId = player.getUniqueId();
+        if (playerId == null || !service.isCasting(playerId)) {
+            return;
+        }
+        service.cancelCast(player, AetheryteService.CastCancelReason.DIED);
+    }
+
+    private static boolean hasCoordinateChanged(final Location from, final Location to) {
+        if (!Objects.equals(from.getWorld(), to.getWorld())) {
+            return true;
+        }
+        final double dx = from.getX() - to.getX();
+        final double dy = from.getY() - to.getY();
+        final double dz = from.getZ() - to.getZ();
+        return (dx * dx) + (dy * dy) + (dz * dz) > 0.0025;
     }
 
     /**

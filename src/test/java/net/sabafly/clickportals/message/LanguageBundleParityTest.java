@@ -170,7 +170,7 @@ class LanguageBundleParityTest {
                 """
                   lore:
                     - "<!italic><gray>Right-click a block to place</gray>"
-                    - "<!italic><gray>an Aetheryte (warp point).</gray>"
+                    - "<!italic><gray>an Aetheryte (teleport point).</gray>"
                 """,
                 """
                   lore:

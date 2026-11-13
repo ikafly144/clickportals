@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.config.CastSection;
 import net.sabafly.clickportals.config.DistanceSection;
 import net.sabafly.clickportals.cost.CostEntry;
 import net.sabafly.clickportals.cost.expr.ExpressionException;
@@ -487,18 +488,31 @@ public record AetheryteVariation(
 
             @Setting("cost")
             @Comment("Optional cost overrides for warps originating from this variation (null to inherit global, [] for free) (#14)")
-            @Nullable List<CostEntry> cost
+            @Nullable List<CostEntry> cost,
+
+            @Setting("cast")
+            @Comment("Optional warp casting (cast time and player animation) overrides for warps originating from this variation (#65)")
+            CastSection cast
     ) {
         public WarpOverrideSection(
                 @Nullable final DistanceSection distance,
                 @Nullable final List<CostEntry> cost
         ) {
+            this(distance, cost, CastSection.inherit());
+        }
+
+        public WarpOverrideSection(
+                @Nullable final DistanceSection distance,
+                @Nullable final List<CostEntry> cost,
+                @Nullable final CastSection cast
+        ) {
             this.distance = distance == null ? DistanceSection.inherit() : distance;
             this.cost = cost == null ? null : List.copyOf(cost);
+            this.cast = cast == null ? CastSection.inherit() : cast;
         }
 
         public static WarpOverrideSection defaults() {
-            return new WarpOverrideSection(DistanceSection.inherit(), null);
+            return new WarpOverrideSection(DistanceSection.inherit(), null, CastSection.inherit());
         }
     }
 
@@ -522,7 +536,11 @@ public record AetheryteVariation(
             } else {
                 cost = null;
             }
-            return new WarpOverrideSection(distance, cost);
+            final ConfigurationNode castNode = node.node("cast");
+            final CastSection cast = (castNode.virtual() || castNode.isNull() || castNode.raw() == null)
+                    ? CastSection.inherit()
+                    : castNode.get(CastSection.class, CastSection.inherit());
+            return new WarpOverrideSection(distance, cost, cast);
         }
 
         @Override
@@ -541,6 +559,7 @@ public record AetheryteVariation(
             } else {
                 node.node("cost").setList(CostEntry.class, obj.cost());
             }
+            node.node("cast").set(CastSection.class, obj.cast());
         }
     }
 
@@ -988,7 +1007,26 @@ public record AetheryteVariation(
                 }
             }
         }
-        final WarpOverrideSection validatedWarp = new WarpOverrideSection(validatedWarpDist, warp.cost());
+        final CastSection rawWarpCast = warp.cast() != null ? warp.cast() : CastSection.inherit();
+        final Integer rawCastTicks = rawWarpCast.ticks();
+        final Integer validCastTicks;
+        if (rawCastTicks != null && rawCastTicks < -1) {
+            logger.warn("Invalid warp.cast.ticks {} in variation '{}' (must be >= -1); falling back to -1 (inherit)", rawCastTicks, cleanId);
+            validCastTicks = -1;
+        } else {
+            validCastTicks = rawCastTicks;
+        }
+        final String validPlayerModel = rawWarpCast.playerModel() == null ? null : rawWarpCast.playerModel().strip();
+        final String validCastAnim = rawWarpCast.castAnimation() == null ? null : rawWarpCast.castAnimation().strip();
+        final String validArriveAnim = rawWarpCast.arriveAnimation() == null ? null : rawWarpCast.arriveAnimation().strip();
+        final CastSection validatedWarpCast = new CastSection(
+                validCastTicks,
+                validPlayerModel,
+                validCastAnim,
+                validArriveAnim,
+                rawWarpCast.cancel()
+        );
+        final WarpOverrideSection validatedWarp = new WarpOverrideSection(validatedWarpDist, warp.cost(), validatedWarpCast);
 
         // 9. Validate BetterModel section (#46)
         final boolean bmEnabled = Boolean.TRUE.equals(bettermodel.enabled());
