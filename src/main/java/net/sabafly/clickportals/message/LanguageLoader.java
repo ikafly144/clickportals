@@ -18,9 +18,11 @@
 package net.sabafly.clickportals.message;
 
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,11 +35,13 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
+import net.sabafly.clickportals.config.YamlSchemaSync;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.spongepowered.configurate.CommentedConfigurationNode;
 import org.spongepowered.configurate.ConfigurationNode;
 import org.spongepowered.configurate.serialize.SerializationException;
+import org.spongepowered.configurate.yaml.NodeStyle;
 import org.spongepowered.configurate.yaml.YamlConfigurationLoader;
 
 /**
@@ -124,22 +128,40 @@ public final class LanguageLoader {
     }
 
     /**
-     * Copies missing bundled language files into {@code langDir} and loads all {@code *.yml} translation bundles,
-     * merging user overrides on top of the bundled defaults (#19).
+     * Copies missing bundled language files into {@code langDir}, synchronizes existing bundled language files
+     * to the latest schema (with {@code .bak} backups), and loads all {@code *.yml} translation bundles (#19, #60).
      */
     public static Map<Locale, TranslationBundle> loadDirectory(final Path langDir, final Logger logger) {
+        return loadDirectory(langDir, logger, true);
+    }
+
+    /**
+     * Copies missing bundled language files into {@code langDir} and loads all {@code *.yml} translation bundles,
+     * merging user overrides on top of the bundled defaults (#19) and optionally synchronizing bundled files on disk.
+     */
+    public static Map<Locale, TranslationBundle> loadDirectory(
+            final Path langDir,
+            final Logger logger,
+            final boolean syncSchema
+    ) {
         final Map<Locale, TranslationBundle> bundled = loadBundledOnly(logger);
         final Map<Locale, TranslationBundle> result = new LinkedHashMap<>(bundled);
 
         try {
-            if (!Files.exists(langDir)) {
-                Files.createDirectories(langDir);
-            }
-            for (final String code : BUNDLED_LOCALES) {
-                final Path target = langDir.resolve(code + ".yml");
-                if (!Files.exists(target)) {
-                    copyBundledResource("/lang/" + code + ".yml", target, logger);
+            if (syncSchema) {
+                if (!Files.exists(langDir)) {
+                    Files.createDirectories(langDir);
                 }
+                for (final String code : BUNDLED_LOCALES) {
+                    final Path target = langDir.resolve(code + ".yml");
+                    if (!Files.exists(target)) {
+                        copyBundledResource("/lang/" + code + ".yml", target, logger);
+                    } else {
+                        syncBundledLanguageFile("/lang/" + code + ".yml", target, logger);
+                    }
+                }
+            } else if (!Files.isDirectory(langDir)) {
+                return Map.copyOf(result);
             }
 
             try (final Stream<Path> paths = Files.list(langDir)) {
@@ -191,6 +213,103 @@ public final class LanguageLoader {
         } catch (final IOException e) {
             logger.warn("Failed to copy default language file {} to {}", resourcePath, target, e);
         }
+    }
+
+    /**
+     * Synchronizes an existing bundled language file on disk with its classpath template, preserving valid
+     * user-customized values while adding missing keys and removing obsolete keys (#60).
+     */
+    private static void syncBundledLanguageFile(final String resourcePath, final Path target, final Logger logger) {
+        final CommentedConfigurationNode templateRoot = loadClasspathNode(resourcePath, logger);
+        if (templateRoot == null) {
+            return;
+        }
+        final CommentedConfigurationNode existingRoot;
+        try {
+            existingRoot = YamlConfigurationLoader.builder()
+                    .path(target)
+                    .build()
+                    .load();
+        } catch (final IOException e) {
+            logger.warn("Failed to parse language file {} during schema sync; leaving file untouched", target, e);
+            return;
+        }
+
+        final String header = templateRoot.options().header();
+        final YamlConfigurationLoader nodeLoader = YamlConfigurationLoader.builder()
+                .indent(YamlSchemaSync.DEFAULT_INDENT_SPACES)
+                .nodeStyle(NodeStyle.BLOCK)
+                .defaultOptions(opts -> header != null ? opts.header(header) : opts)
+                .build();
+        final CommentedConfigurationNode mergedRoot = nodeLoader.createNode();
+        try {
+            mergeLanguageTree(templateRoot, existingRoot, mergedRoot);
+        } catch (final SerializationException e) {
+            logger.warn("Failed to merge language file {} during schema sync: {}", target, e.getMessage(), e);
+            return;
+        }
+
+        if (!YamlSchemaSync.hasSchemaDiff(existingRoot, mergedRoot)) {
+            return;
+        }
+
+        if (!YamlSchemaSync.backupFile(target, logger)) {
+            return;
+        }
+
+        try {
+            final StringWriter stringWriter = new StringWriter();
+            final YamlConfigurationLoader stringLoader = YamlConfigurationLoader.builder()
+                    .sink(() -> new BufferedWriter(stringWriter))
+                    .indent(YamlSchemaSync.DEFAULT_INDENT_SPACES)
+                    .nodeStyle(NodeStyle.BLOCK)
+                    .defaultOptions(opts -> header != null ? opts.header(header) : opts)
+                    .build();
+            stringLoader.save(mergedRoot);
+            final String formatted = YamlSchemaSync.addTopLevelSectionSpacing(stringWriter.toString());
+            Files.writeString(target, formatted, StandardCharsets.UTF_8);
+        } catch (final IOException e) {
+            logger.warn("Failed to write updated language file {}: {}", target, e.getMessage(), e);
+        }
+    }
+
+    private static void mergeLanguageTree(
+            final ConfigurationNode templateNode,
+            final ConfigurationNode existingNode,
+            final ConfigurationNode targetNode
+    ) throws SerializationException {
+        if (templateNode.isMap()) {
+            for (final Map.Entry<Object, ? extends ConfigurationNode> entry : templateNode.childrenMap().entrySet()) {
+                final Object key = entry.getKey();
+                mergeLanguageTree(entry.getValue(), existingNode.node(key), targetNode.node(key));
+            }
+            return;
+        }
+
+        if (!existingNode.virtual() && !existingNode.isMap() && existingNode.raw() != null) {
+            if (templateNode.isList()) {
+                if (existingNode.isList()) {
+                    final List<String> existingList = existingNode.getList(String.class);
+                    if (existingList != null) {
+                        targetNode.setList(String.class, existingList);
+                        return;
+                    }
+                } else {
+                    final String single = existingNode.getString();
+                    if (single != null) {
+                        targetNode.setList(String.class, List.of(single));
+                        return;
+                    }
+                }
+            } else if (!existingNode.isList()) {
+                final String existingValue = existingNode.getString();
+                if (existingValue != null) {
+                    targetNode.set(existingValue);
+                    return;
+                }
+            }
+        }
+        targetNode.raw(templateNode.raw());
     }
 
     /**

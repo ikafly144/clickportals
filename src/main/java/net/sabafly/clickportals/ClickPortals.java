@@ -89,7 +89,8 @@ public final class ClickPortals extends JavaPlugin {
 
         final VariationRegistry variations = VariationRegistry.load(
                 getDataPath().resolve("aetheryte"),
-                getSLF4JLogger()
+                getSLF4JLogger(),
+                !cfgManager.pendingLegacyMigration() && cfgManager.lastLoadSuccessful()
         );
         this.variationRegistry = variations;
 
@@ -258,7 +259,7 @@ public final class ClickPortals extends JavaPlugin {
         }
 
         Bukkit.getGlobalRegionScheduler().execute(this, () -> {
-            final PluginConfig reloadedConfig = cfgManager.load();
+            final PluginConfig reloadedConfig = cfgManager.reload();
             if (!cfgManager.lastLoadSuccessful()) {
                 msgService.send(sender, MessageKey.COMMAND_RELOAD_FAILED);
                 return;

@@ -216,7 +216,7 @@ public final class Messages {
     }
 
     /**
-     * Reloads translation bundles and locale settings atomically from {@code langDir}.
+     * Reloads translation bundles and locale settings atomically from {@code langDir} without modifying files on disk.
      */
     public void reload(
             final Path langDir,
@@ -224,7 +224,7 @@ public final class Messages {
             final boolean useClientLocale,
             final Logger logger
     ) {
-        final Map<Locale, TranslationBundle> bundles = LanguageLoader.loadDirectory(langDir, logger);
+        final Map<Locale, TranslationBundle> bundles = LanguageLoader.loadDirectory(langDir, logger, false);
         this.state = State.create(bundles, defaultLocale, useClientLocale);
     }
 

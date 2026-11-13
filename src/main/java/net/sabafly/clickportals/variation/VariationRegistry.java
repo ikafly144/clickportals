@@ -61,14 +61,26 @@ public final class VariationRegistry {
      * Loads a {@link VariationRegistry} from {@code aetheryteDir}.
      */
     public static VariationRegistry load(final Path aetheryteDir, final Logger logger) {
-        return new VariationRegistry(VariationLoader.loadDirectory(aetheryteDir, logger), logger);
+        return load(aetheryteDir, logger, true);
     }
 
     /**
-     * Reloads all variation definitions from {@code aetheryteDir} atomically.
+     * Loads a {@link VariationRegistry} from {@code aetheryteDir}, optionally creating missing defaults and
+     * synchronizing schema changes back to disk when {@code syncSchema} is {@code true}.
+     */
+    public static VariationRegistry load(
+            final Path aetheryteDir,
+            final Logger logger,
+            final boolean syncSchema
+    ) {
+        return new VariationRegistry(VariationLoader.loadDirectory(aetheryteDir, logger, syncSchema), logger);
+    }
+
+    /**
+     * Reloads all variation definitions from {@code aetheryteDir} atomically without modifying files on disk.
      */
     public void reload(final Path aetheryteDir, final Logger reloadLogger) {
-        this.variations = VariationLoader.loadDirectory(aetheryteDir, reloadLogger);
+        this.variations = VariationLoader.loadDirectory(aetheryteDir, reloadLogger, false);
         this.warnedUnknownIds.clear();
     }
 
