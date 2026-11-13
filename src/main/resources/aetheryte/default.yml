@@ -101,6 +101,8 @@ warp:
     cast-animation: null
     # BetterModel arrival animation override (null to inherit global, "" to disable)
     arrive-animation: null
+    # Immobilize override while casting (null to inherit global)
+    immobilize: null
     # Cancellation overrides (null to inherit global)
     cancel:
       on-move: null

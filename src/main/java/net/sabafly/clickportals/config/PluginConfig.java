@@ -367,6 +367,7 @@ public record PluginConfig(
                 validPlayerModel,
                 validCastAnim,
                 validArriveAnim,
+                rawCast.immobilizeOrDefault(true),
                 validCancel
         );
 

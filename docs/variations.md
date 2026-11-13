@@ -82,6 +82,14 @@ limit:
   # Placement cooldown in ticks for this variation (-1 to inherit global config.yml limits.placement-cooldown-ticks, 0 to disable)
   cooldown-ticks: -1
 
+# Optional warp overrides applied when warping from this variation (#14, #26, #65, #67)
+warp:
+  cast:
+    # Cast time in ticks (-1 to inherit global warp.cast.ticks, 0 for instant warp)
+    ticks: -1
+    # Whether to immobilize the player via PacketEvents while casting (null to inherit global)
+    immobilize: null
+
 # BetterModel animated 3D model engine settings (#46)
 bettermodel:
   # Whether to render this variation using BetterModel (falls back to model.block if false or the model is not found)

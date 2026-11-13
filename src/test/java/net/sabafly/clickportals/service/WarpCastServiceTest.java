@@ -54,6 +54,7 @@ import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.AetheryteVariation.WarpOverrideSection;
 import net.sabafly.clickportals.variation.VariationRegistry;
+import net.sabafly.clickportals.visual.CastImmobilizeService;
 import net.sabafly.clickportals.visual.NoopHologramService;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -368,5 +369,37 @@ class WarpCastServiceTest {
         assertThat(plain.serialize(AetheryteService.buildCastBar(20, 20))).isEqualTo("[░░░░░░░░░░░░░░░░]");
         assertThat(plain.serialize(AetheryteService.buildCastBar(10, 20))).isEqualTo("[████████░░░░░░░░]");
         assertThat(plain.serialize(AetheryteService.buildCastBar(0, 20))).isEqualTo("[████████████████]");
+    }
+
+    @Test
+    void immobilizesOnCastStartAndReleasesOnCompleteAndCancel() {
+        final WarpCostEvaluator evaluator = mock(WarpCostEvaluator.class);
+        when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
+        when(evaluator.charge(any(), any(), any())).thenReturn(true);
+
+        final CastImmobilizeService immobilizeService = mock(CastImmobilizeService.class);
+        final CastSection castEnabled = new CastSection(2, "steve", "", "", true, CastCancelSection.defaults());
+        final AetheryteService service = createService(castEnabled, VariationRegistry.defaults(), evaluator);
+        service.setCastImmobilizeService(immobilizeService);
+
+        service.warpToAetheryte(player, sourceAetheryte, destAetheryte.id());
+        verify(immobilizeService).immobilize(player);
+        verify(immobilizeService, never()).release(any());
+
+        activeTickConsumer.get().accept(activeTickTask);
+        activeTickConsumer.get().accept(activeTickTask);
+        verify(immobilizeService).release(player);
+
+        // Cancel releases immobilization
+        service.warpToAetheryte(player, sourceAetheryte, destAetheryte.id());
+        verify(immobilizeService, times(2)).immobilize(player);
+        service.cancelCast(player, CastCancelReason.DAMAGED);
+        verify(immobilizeService, times(2)).release(player);
+
+        // Disabled immobilize skips immobilizer
+        final CastSection castDisabled = new CastSection(2, "steve", "", "", false, CastCancelSection.defaults());
+        service.setGlobalCastSupplier(() -> castDisabled);
+        service.warpToAetheryte(player, sourceAetheryte, destAetheryte.id());
+        verify(immobilizeService, times(2)).immobilize(player);
     }
 }

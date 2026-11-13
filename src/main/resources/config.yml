@@ -49,6 +49,8 @@ warp:
     cast-animation: ""
     # BetterModel player animation played after teleport arrival (PLAY_ONCE; empty to disable)
     arrive-animation: ""
+    # Whether to prevent the player from moving via PacketEvents while casting (head rotation remains allowed)
+    immobilize: true
     # Cancellation conditions while casting
     cancel:
       # Cancel casting when the player moves (coordinate change; head rotation is allowed)
