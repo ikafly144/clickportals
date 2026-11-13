@@ -43,8 +43,10 @@ import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.ConfiguredWarpCostEvaluator;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.VariationRegistry;
+import net.sabafly.clickportals.visual.CastImmobilizeService;
 import net.sabafly.clickportals.visual.HologramService;
 import net.sabafly.clickportals.visual.NoopHologramService;
+import net.sabafly.clickportals.visual.PacketEventsCastImmobilizeService;
 import net.sabafly.clickportals.visual.PacketEventsHologramService;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
@@ -65,6 +67,7 @@ public final class ClickPortals extends JavaPlugin {
     private @Nullable Messages messages;
     private @Nullable AetheryteRegistry registry;
     private @Nullable HologramService hologramService;
+    private @Nullable CastImmobilizeService castImmobilizeService;
     private @Nullable AetheryteModelService modelService;
     private @Nullable AetheryteService aetheryteService;
     private @Nullable AetheryteDialogFactory dialogFactory;
@@ -140,11 +143,15 @@ public final class ClickPortals extends JavaPlugin {
                 PacketEventsHologramService::sendPlacementCooldown,
                 (player, source, destination) -> AetheryteService.WarpEvaluation.permitted(msgService.freeCostLabel(player))
         );
+        final CastImmobilizeService immobilizeService = new PacketEventsCastImmobilizeService();
+        this.castImmobilizeService = immobilizeService;
+
         service.setCostEvaluator(warpEvaluator);
         service.setEconomyProvider(this.economyProvider);
         service.setMaxFavoritesPerPlayerSupplier(() -> cfgManager.config().maxFavoritesPerPlayer());
         service.setGlobalCastSupplier(() -> cfgManager.config().warp().cast());
         service.setDimensionConfigSupplier(() -> cfgManager.config().dimensions());
+        service.setCastImmobilizeService(immobilizeService);
         this.aetheryteService = service;
         final AetheryteDialogFactory dialogs = new AetheryteDialogFactory(service, msgService);
         this.dialogFactory = dialogs;
@@ -224,6 +231,10 @@ public final class ClickPortals extends JavaPlugin {
             }
             aetheryteService = null;
         }
+        if (castImmobilizeService != null) {
+            castImmobilizeService.destroy();
+            castImmobilizeService = null;
+        }
         variationRegistry = null;
         messages = null;
         configManager = null;
@@ -255,6 +266,7 @@ public final class ClickPortals extends JavaPlugin {
         }
 
         Bukkit.getGlobalRegionScheduler().execute(this, () -> {
+            service.cancelAllCasts();
             final PluginConfig reloadedConfig = cfgManager.reload();
             if (!cfgManager.lastLoadSuccessful()) {
                 msgService.send(sender, MessageKey.COMMAND_RELOAD_FAILED);

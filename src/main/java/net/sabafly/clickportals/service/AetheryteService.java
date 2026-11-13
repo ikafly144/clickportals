@@ -68,7 +68,9 @@ import net.sabafly.clickportals.route.DimensionWorldConfig;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.AetheryteVariation.ClearanceSection;
 import net.sabafly.clickportals.variation.VariationRegistry;
+import net.sabafly.clickportals.visual.CastImmobilizeService;
 import net.sabafly.clickportals.visual.HologramService;
+import net.sabafly.clickportals.visual.NoopCastImmobilizeService;
 import net.sabafly.clickportals.visual.PacketEventsHologramService;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
@@ -284,6 +286,7 @@ public final class AetheryteService {
     private final Set<UUID> inFlightWarps = ConcurrentHashMap.newKeySet();
     private final Map<UUID, ActiveCastSession> activeCasts = new ConcurrentHashMap<>();
     private volatile Supplier<CastSection> globalCastSupplier = CastSection::defaults;
+    private volatile CastImmobilizeService castImmobilizeService = NoopCastImmobilizeService.INSTANCE;
 
     /**
      * Reasons why an in-progress warp cast can be cancelled (#65).
@@ -742,8 +745,20 @@ public final class AetheryteService {
                 task.cancel();
             }
             modelService.stopPlayerAnimation(session.player);
+            if (session.castSettings.immobilize()) {
+                castImmobilizeService.release(session.player);
+            }
         }
         inFlightWarps.remove(playerId);
+    }
+
+    /**
+     * Sets the service responsible for immobilizing casting players (#67).
+     */
+    public void setCastImmobilizeService(final CastImmobilizeService castImmobilizeService) {
+        this.castImmobilizeService = castImmobilizeService != null
+                ? castImmobilizeService
+                : NoopCastImmobilizeService.INSTANCE;
     }
 
     /**
@@ -810,6 +825,9 @@ public final class AetheryteService {
             task.cancel();
         }
         modelService.stopPlayerAnimation(player);
+        if (session.castSettings.immobilize()) {
+            castImmobilizeService.release(player);
+        }
         if (reason != CastCancelReason.QUIT && reason != CastCancelReason.NEW_WARP && player.isOnline()) {
             final MessageKey key = switch (reason) {
                 case MOVED -> MessageKey.WARP_CAST_CANCELLED_MOVE;
@@ -832,6 +850,7 @@ public final class AetheryteService {
                 cancelCast(session.player, CastCancelReason.OTHER);
             }
         }
+        castImmobilizeService.releaseAll();
     }
 
     /**
@@ -2637,6 +2656,9 @@ public final class AetheryteService {
         if (playerId != null) {
             activeCasts.put(playerId, session);
         }
+        if (castSettings.immobilize()) {
+            castImmobilizeService.immobilize(player);
+        }
 
         modelService.playPlayerAnimation(
                 player,
@@ -2662,6 +2684,9 @@ public final class AetheryteService {
                             inFlightWarps.remove(playerId);
                         }
                         modelService.stopPlayerAnimation(player);
+                        if (session.castSettings.immobilize()) {
+                            castImmobilizeService.release(player);
+                        }
                     }
                 },
                 1L,
@@ -2674,6 +2699,9 @@ public final class AetheryteService {
                     inFlightWarps.remove(playerId);
                 }
                 modelService.stopPlayerAnimation(player);
+                if (session.castSettings.immobilize()) {
+                    castImmobilizeService.release(player);
+                }
             }
             return;
         }
@@ -2721,6 +2749,9 @@ public final class AetheryteService {
             activeCasts.remove(session.playerId, session);
         }
         modelService.stopPlayerAnimation(player);
+        if (session.castSettings.immobilize()) {
+            castImmobilizeService.release(player);
+        }
         executeWarpTeleport(
                 player,
                 session.playerId,
