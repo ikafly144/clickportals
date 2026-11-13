@@ -61,7 +61,19 @@ public final class VariationRegistry {
      * Loads a {@link VariationRegistry} from {@code aetheryteDir}.
      */
     public static VariationRegistry load(final Path aetheryteDir, final Logger logger) {
-        return new VariationRegistry(VariationLoader.loadDirectory(aetheryteDir, logger), logger);
+        return load(aetheryteDir, logger, true);
+    }
+
+    /**
+     * Loads a {@link VariationRegistry} from {@code aetheryteDir}, optionally creating missing defaults and
+     * synchronizing schema changes back to disk when {@code syncSchema} is {@code true}.
+     */
+    public static VariationRegistry load(
+            final Path aetheryteDir,
+            final Logger logger,
+            final boolean syncSchema
+    ) {
+        return new VariationRegistry(VariationLoader.loadDirectory(aetheryteDir, logger, syncSchema), logger);
     }
 
     /**

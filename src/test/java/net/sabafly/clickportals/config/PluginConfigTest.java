@@ -462,4 +462,84 @@ class PluginConfigTest {
         assertThat(legacyDir.resolve("config.yml.bak")).doesNotExist();
         assertThat(Files.readString(legacyConfig, StandardCharsets.UTF_8)).isEqualTo(legacyYaml);
     }
+
+    @Test
+    void failedLegacyMigrationRemainsPendingAcrossStartupsUntilResolved() throws IOException {
+        final Path configDir = tempDir.resolve("pending_migration_retry");
+        final Path aetheryteDir = configDir.resolve("aetheryte");
+        Files.createDirectories(configDir);
+
+        final Path configFile = configDir.resolve("config.yml");
+        final String brokenLegacyYaml = """
+                language:
+                  default-locale: en_US
+                recipe:
+                  enabled: true
+                  shape:
+                    invalid: true
+                hologram:
+                  enabled: true
+                  view-distance: 32.0
+                  display-block: minecraft:emerald_block
+                """;
+        Files.writeString(configFile, brokenLegacyYaml, StandardCharsets.UTF_8);
+
+        // First startup: migration fails -> pendingLegacyMigration is true and no fallback default.yml is created
+        final ConfigManager manager1 = new ConfigManager(configFile, mock(Logger.class));
+        manager1.load();
+        net.sabafly.clickportals.variation.VariationRegistry.load(
+                aetheryteDir,
+                mock(Logger.class),
+                !manager1.pendingLegacyMigration()
+        );
+        assertThat(manager1.pendingLegacyMigration()).isTrue();
+        assertThat(aetheryteDir.resolve("default.yml")).doesNotExist();
+        assertThat(configDir.resolve("config.yml.bak")).doesNotExist();
+        assertThat(Files.readString(configFile, StandardCharsets.UTF_8)).isEqualTo(brokenLegacyYaml);
+
+        // Second startup (still unfixed): must NOT delete legacy config keys either
+        final ConfigManager manager2 = new ConfigManager(configFile, mock(Logger.class));
+        manager2.load();
+        net.sabafly.clickportals.variation.VariationRegistry.load(
+                aetheryteDir,
+                mock(Logger.class),
+                !manager2.pendingLegacyMigration()
+        );
+        assertThat(manager2.pendingLegacyMigration()).isTrue();
+        assertThat(aetheryteDir.resolve("default.yml")).doesNotExist();
+        assertThat(configDir.resolve("config.yml.bak")).doesNotExist();
+        assertThat(Files.readString(configFile, StandardCharsets.UTF_8)).isEqualTo(brokenLegacyYaml);
+
+        // After fixing recipe.shape, next startup migrates display-block into default.yml and cleans config.yml
+        final String fixedLegacyYaml = """
+                language:
+                  default-locale: en_US
+                recipe:
+                  enabled: false
+                  shape:
+                    - "SSS"
+                    - "SAS"
+                    - "SSS"
+                hologram:
+                  enabled: true
+                  view-distance: 32.0
+                  display-block: minecraft:emerald_block
+                """;
+        Files.writeString(configFile, fixedLegacyYaml, StandardCharsets.UTF_8);
+
+        final ConfigManager manager3 = new ConfigManager(configFile, mock(Logger.class));
+        manager3.load();
+        final var registry = net.sabafly.clickportals.variation.VariationRegistry.load(
+                aetheryteDir,
+                mock(Logger.class),
+                !manager3.pendingLegacyMigration()
+        );
+
+        assertThat(manager3.pendingLegacyMigration()).isFalse();
+        assertThat(aetheryteDir.resolve("default.yml")).exists();
+        assertThat(registry.getOrDefault(net.sabafly.clickportals.aetheryte.Aetheryte.DEFAULT_VARIATION).model().block())
+                .isEqualTo("minecraft:emerald_block");
+        assertThat(configDir.resolve("config.yml.bak")).exists();
+        assertThat(Files.readString(configFile, StandardCharsets.UTF_8)).doesNotContain("display-block");
+    }
 }

@@ -41,6 +41,7 @@ public final class ConfigManager {
     private final YamlConfigurationLoader loader;
     private PluginConfig currentConfig;
     private boolean lastLoadSuccessful = true;
+    private boolean pendingLegacyMigration;
 
     /**
      * Creates a new {@link ConfigManager} for the given configuration file path.
@@ -96,6 +97,7 @@ public final class ConfigManager {
                 save(defaultConfig);
                 currentConfig = defaultConfig;
                 lastLoadSuccessful = true;
+                pendingLegacyMigration = false;
                 return currentConfig;
             }
 
@@ -123,6 +125,7 @@ public final class ConfigManager {
             }
             final PluginConfig validated = parsed.validated(logger);
             if (syncSchema) {
+                pendingLegacyMigration = !migrationSucceeded;
                 if (!migrationSucceeded) {
                     logger.warn("Skipping schema sync overwrite of {} because legacy migration failed; legacy settings are preserved.", configFile);
                 } else {
@@ -156,6 +159,14 @@ public final class ConfigManager {
      */
     public boolean lastLoadSuccessful() {
         return lastLoadSuccessful;
+    }
+
+    /**
+     * Returns whether legacy config migration to {@code aetheryte/default.yml} failed during the last startup load
+     * and remains pending for retry on the next startup.
+     */
+    public boolean pendingLegacyMigration() {
+        return pendingLegacyMigration;
     }
 
     /**

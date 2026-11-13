@@ -235,8 +235,7 @@ public final class VariationLoader {
             logger.info("Migrated legacy recipe and hologram display-block from config.yml into {}", defaultFile);
             return true;
         } catch (final Exception e) {
-            logger.warn("Failed to migrate legacy settings from config.yml to {}; copying default template", defaultFile, e);
-            copyDefaultResource(defaultFile, logger);
+            logger.warn("Failed to migrate legacy settings from config.yml to {}; legacy settings will remain in config.yml for retry on next startup", defaultFile, e);
             return false;
         }
     }

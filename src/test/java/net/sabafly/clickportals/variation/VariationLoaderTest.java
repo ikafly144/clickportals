@@ -298,4 +298,19 @@ class VariationLoaderTest {
         // Already migrated on subsequent invocation -> also returns true
         assertThat(VariationLoader.migrateLegacyConfig(legacyRoot, validDir, mock(Logger.class))).isTrue();
     }
+
+    @Test
+    void migrateLegacyConfigFailureDoesNotCreateFallbackDefaultFile() throws IOException {
+        final Path writableDir = tempDir.resolve("writable_failed_migration");
+        Files.createDirectories(writableDir);
+
+        final org.spongepowered.configurate.CommentedConfigurationNode badLegacyRoot =
+                org.spongepowered.configurate.CommentedConfigurationNode.root();
+        // Non-list map under recipe.shape triggers SerializationException in getList(String.class, ...)
+        badLegacyRoot.node("recipe", "shape", "invalid").set(true);
+        badLegacyRoot.node("hologram", "display-block").set("minecraft:emerald_block");
+
+        assertThat(VariationLoader.migrateLegacyConfig(badLegacyRoot, writableDir, mock(Logger.class))).isFalse();
+        assertThat(writableDir.resolve("default.yml")).doesNotExist();
+    }
 }
