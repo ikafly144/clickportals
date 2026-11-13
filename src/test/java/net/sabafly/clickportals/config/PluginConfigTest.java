@@ -372,4 +372,94 @@ class PluginConfigTest {
         assertThat(tempDir.resolve("config.yml.bak")).doesNotExist();
         assertThat(Files.readString(configFile, StandardCharsets.UTF_8)).isEqualTo(partialYaml);
     }
+
+    @Test
+    void syncsConfigWhenOnlyMissingKeysExist() throws IOException {
+        final Path configFile = tempDir.resolve("config.yml");
+        final Path backupFile = tempDir.resolve("config.yml.bak");
+        final String partialOnlyYaml = """
+                language:
+                  default-locale: ja_JP
+                limits:
+                  max-aetherytes-per-player: 5
+                """;
+        Files.writeString(configFile, partialOnlyYaml, StandardCharsets.UTF_8);
+
+        final ConfigManager manager = new ConfigManager(configFile, mock(Logger.class));
+        final PluginConfig loaded = manager.load();
+
+        assertThat(loaded.defaultLocale()).isEqualTo(Locale.JAPAN);
+        assertThat(loaded.maxAetherytesPerPlayer()).isEqualTo(5);
+        assertThat(backupFile).exists().hasContent(partialOnlyYaml);
+        assertThat(Files.readString(configFile, StandardCharsets.UTF_8))
+                .contains("default-locale: ja_JP")
+                .contains("max-aetherytes-per-player: 5")
+                .contains("min-distance-between-aetherytes: 0.0")
+                .contains("max-favorites-per-player: -1")
+                .contains("dimensions:");
+    }
+
+    @Test
+    void preservesLegacyKeysInConfigWhenMigrationFails() throws IOException {
+        final Path configDir = tempDir.resolve("migration_fail");
+        Files.createDirectories(configDir);
+        // Block aetheryte directory creation with a regular file so migration fails
+        Files.writeString(configDir.resolve("aetheryte"), "not-a-directory", StandardCharsets.UTF_8);
+
+        final Path configFile = configDir.resolve("config.yml");
+        final String legacyYaml = """
+                language:
+                  default-locale: en_US
+                recipe:
+                  enabled: false
+                hologram:
+                  enabled: true
+                  view-distance: 32.0
+                  display-block: minecraft:emerald_block
+                """;
+        Files.writeString(configFile, legacyYaml, StandardCharsets.UTF_8);
+
+        final ConfigManager manager = new ConfigManager(configFile, mock(Logger.class));
+        final PluginConfig loaded = manager.load();
+
+        assertThat(loaded.defaultLocale()).isEqualTo(Locale.US);
+        assertThat(configDir.resolve("config.yml.bak")).doesNotExist();
+        assertThat(Files.readString(configFile, StandardCharsets.UTF_8)).isEqualTo(legacyYaml);
+    }
+
+    @Test
+    void reloadOnMissingDirectoryOrLegacyConfigIsStrictlyReadOnly() throws IOException {
+        final Path missingDir = tempDir.resolve("missing_dir");
+        final Path missingConfig = missingDir.resolve("config.yml");
+        final ConfigManager missingManager = new ConfigManager(missingConfig, mock(Logger.class));
+
+        final PluginConfig missingReload = missingManager.reload();
+        assertThat(missingManager.lastLoadSuccessful()).isFalse();
+        assertThat(missingReload).isEqualTo(PluginConfig.defaultConfig());
+        assertThat(missingDir).doesNotExist();
+        assertThat(missingConfig).doesNotExist();
+
+        final Path legacyDir = tempDir.resolve("legacy_reload");
+        Files.createDirectories(legacyDir);
+        final Path legacyConfig = legacyDir.resolve("config.yml");
+        final String legacyYaml = """
+                language:
+                  default-locale: en_US
+                recipe:
+                  enabled: false
+                hologram:
+                  enabled: true
+                  view-distance: 32.0
+                  display-block: minecraft:diamond_block
+                """;
+        Files.writeString(legacyConfig, legacyYaml, StandardCharsets.UTF_8);
+
+        final ConfigManager legacyManager = new ConfigManager(legacyConfig, mock(Logger.class));
+        legacyManager.reload();
+
+        assertThat(legacyManager.lastLoadSuccessful()).isTrue();
+        assertThat(legacyDir.resolve("aetheryte")).doesNotExist();
+        assertThat(legacyDir.resolve("config.yml.bak")).doesNotExist();
+        assertThat(Files.readString(legacyConfig, StandardCharsets.UTF_8)).isEqualTo(legacyYaml);
+    }
 }

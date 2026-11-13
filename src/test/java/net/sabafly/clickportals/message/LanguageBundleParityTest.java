@@ -149,4 +149,67 @@ class LanguageBundleParityTest {
         assertThat(langDir.resolve("en_US.yml.bak")).doesNotExist();
         assertThat(Files.readString(langDir.resolve("en_US.yml"), StandardCharsets.UTF_8)).isEqualTo(partialEnUs);
     }
+
+    @Test
+    void loadDirectoryWithSyncFalseDoesNotCreateMissingDirectoryOrBundledFiles() {
+        final Path missingLangDir = tempDir.resolve("missing_lang");
+        final var loaded = LanguageLoader.loadDirectory(missingLangDir, mock(Logger.class), false);
+
+        assertThat(missingLangDir).doesNotExist();
+        assertThat(loaded).containsKey(Locale.US);
+    }
+
+    @Test
+    void syncBundledLanguageFileIsIdempotentWithCustomizedListLength() throws IOException {
+        final Path langDir = tempDir.resolve("lang_custom_lore");
+        LanguageLoader.loadDirectory(langDir, mock(Logger.class), true);
+
+        final Path enFile = langDir.resolve("en_US.yml");
+        final String original = Files.readString(enFile, StandardCharsets.UTF_8);
+        final String customized = original.replace(
+                """
+                  lore:
+                    - "<!italic><gray>Right-click a block to place</gray>"
+                    - "<!italic><gray>an Aetheryte (warp point).</gray>"
+                """,
+                """
+                  lore:
+                    - "<!italic><gray>Line one</gray>"
+                    - "<!italic><gray>Line two</gray>"
+                    - "<!italic><gray>Line three</gray>"
+                """
+        );
+        assertThat(customized).isNotEqualTo(original);
+        Files.writeString(enFile, customized, StandardCharsets.UTF_8);
+
+        final var loaded = LanguageLoader.loadDirectory(langDir, mock(Logger.class), true);
+        final var enBundle = java.util.Objects.requireNonNull(loaded.get(Locale.US));
+        assertThat(enBundle.lists().get(MessageKey.ITEM_LORE))
+                .containsExactly(
+                        "<!italic><gray>Line one</gray>",
+                        "<!italic><gray>Line two</gray>",
+                        "<!italic><gray>Line three</gray>"
+                );
+        assertThat(langDir.resolve("en_US.yml.bak")).doesNotExist();
+        assertThat(Files.readString(enFile, StandardCharsets.UTF_8)).isEqualTo(customized);
+
+        // Also verify when a schema sync actually runs (extra obsolete key), custom 3-line list is preserved
+        // and the subsequent startup load does NOT rewrite or create a new backup.
+        final String withObsolete = customized + "\nobsolete-custom-list-test: \"remove\"\n";
+        Files.writeString(enFile, withObsolete, StandardCharsets.UTF_8);
+
+        final var afterSync = LanguageLoader.loadDirectory(langDir, mock(Logger.class), true);
+        final var syncedEnBundle = java.util.Objects.requireNonNull(afterSync.get(Locale.US));
+        assertThat(syncedEnBundle.lists().get(MessageKey.ITEM_LORE))
+                .containsExactly(
+                        "<!italic><gray>Line one</gray>",
+                        "<!italic><gray>Line two</gray>",
+                        "<!italic><gray>Line three</gray>"
+                );
+        assertThat(langDir.resolve("en_US.yml.bak")).exists();
+
+        Files.writeString(langDir.resolve("en_US.yml.bak"), "sentinel", StandardCharsets.UTF_8);
+        LanguageLoader.loadDirectory(langDir, mock(Logger.class), true);
+        assertThat(Files.readString(langDir.resolve("en_US.yml.bak"), StandardCharsets.UTF_8)).isEqualTo("sentinel");
+    }
 }

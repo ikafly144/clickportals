@@ -148,16 +148,20 @@ public final class LanguageLoader {
         final Map<Locale, TranslationBundle> result = new LinkedHashMap<>(bundled);
 
         try {
-            if (!Files.exists(langDir)) {
-                Files.createDirectories(langDir);
-            }
-            for (final String code : BUNDLED_LOCALES) {
-                final Path target = langDir.resolve(code + ".yml");
-                if (!Files.exists(target)) {
-                    copyBundledResource("/lang/" + code + ".yml", target, logger);
-                } else if (syncSchema) {
-                    syncBundledLanguageFile("/lang/" + code + ".yml", target, logger);
+            if (syncSchema) {
+                if (!Files.exists(langDir)) {
+                    Files.createDirectories(langDir);
                 }
+                for (final String code : BUNDLED_LOCALES) {
+                    final Path target = langDir.resolve(code + ".yml");
+                    if (!Files.exists(target)) {
+                        copyBundledResource("/lang/" + code + ".yml", target, logger);
+                    } else {
+                        syncBundledLanguageFile("/lang/" + code + ".yml", target, logger);
+                    }
+                }
+            } else if (!Files.isDirectory(langDir)) {
+                return Map.copyOf(result);
             }
 
             try (final Stream<Path> paths = Files.list(langDir)) {
@@ -231,10 +235,6 @@ public final class LanguageLoader {
             return;
         }
 
-        if (!YamlSchemaSync.hasSchemaDiff(existingRoot, templateRoot)) {
-            return;
-        }
-
         final String header = templateRoot.options().header();
         final YamlConfigurationLoader nodeLoader = YamlConfigurationLoader.builder()
                 .indent(YamlSchemaSync.DEFAULT_INDENT_SPACES)
@@ -246,6 +246,10 @@ public final class LanguageLoader {
             mergeLanguageTree(templateRoot, existingRoot, mergedRoot);
         } catch (final SerializationException e) {
             logger.warn("Failed to merge language file {} during schema sync: {}", target, e.getMessage(), e);
+            return;
+        }
+
+        if (!YamlSchemaSync.hasSchemaDiff(existingRoot, mergedRoot)) {
             return;
         }
 

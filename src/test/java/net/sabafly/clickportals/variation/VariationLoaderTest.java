@@ -271,4 +271,31 @@ class VariationLoaderTest {
         assertThat(aetheryteDir.resolve("broken.yml.bak")).doesNotExist();
         assertThat(Files.readString(aetheryteDir.resolve("broken.yml"), StandardCharsets.UTF_8)).isEqualTo(brokenYaml);
     }
+
+    @Test
+    void loadDirectoryWithSyncFalseDoesNotCreateMissingDirectoryOrDefaultFile() {
+        final Path missingDir = tempDir.resolve("missing_aetheryte");
+        final var loaded = VariationLoader.loadDirectory(missingDir, mock(Logger.class), false);
+
+        assertThat(missingDir).doesNotExist();
+        assertThat(loaded).containsKey(Aetheryte.DEFAULT_VARIATION);
+    }
+
+    @Test
+    void migrateLegacyConfigReturnsSuccessOrFailureStatus() throws IOException {
+        final org.spongepowered.configurate.CommentedConfigurationNode legacyRoot =
+                org.spongepowered.configurate.CommentedConfigurationNode.root();
+        legacyRoot.node("recipe", "enabled").set(false);
+        legacyRoot.node("hologram", "display-block").set("minecraft:diamond_block");
+
+        final Path blockedDir = tempDir.resolve("blocked_aetheryte");
+        Files.writeString(blockedDir, "not-a-directory", StandardCharsets.UTF_8);
+        assertThat(VariationLoader.migrateLegacyConfig(legacyRoot, blockedDir, mock(Logger.class))).isFalse();
+
+        final Path validDir = tempDir.resolve("migrated_aetheryte");
+        assertThat(VariationLoader.migrateLegacyConfig(legacyRoot, validDir, mock(Logger.class))).isTrue();
+        assertThat(validDir.resolve("default.yml")).exists();
+        // Already migrated on subsequent invocation -> also returns true
+        assertThat(VariationLoader.migrateLegacyConfig(legacyRoot, validDir, mock(Logger.class))).isTrue();
+    }
 }

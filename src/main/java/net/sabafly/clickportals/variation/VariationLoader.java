@@ -87,12 +87,17 @@ public final class VariationLoader {
         final Map<String, AetheryteVariation> loaded = new LinkedHashMap<>();
 
         try {
-            if (!Files.exists(aetheryteDir)) {
-                Files.createDirectories(aetheryteDir);
-            }
-            final Path defaultFile = aetheryteDir.resolve(Aetheryte.DEFAULT_VARIATION + ".yml");
-            if (!Files.exists(defaultFile)) {
-                copyDefaultResource(defaultFile, logger);
+            if (syncSchema) {
+                if (!Files.exists(aetheryteDir)) {
+                    Files.createDirectories(aetheryteDir);
+                }
+                final Path defaultFile = aetheryteDir.resolve(Aetheryte.DEFAULT_VARIATION + ".yml");
+                if (!Files.exists(defaultFile)) {
+                    copyDefaultResource(defaultFile, logger);
+                }
+            } else if (!Files.isDirectory(aetheryteDir)) {
+                loaded.putIfAbsent(Aetheryte.DEFAULT_VARIATION, AetheryteVariation.defaultVariation());
+                return Map.copyOf(loaded);
             }
 
             try (final Stream<Path> stream = Files.list(aetheryteDir)) {
@@ -163,20 +168,22 @@ public final class VariationLoader {
     /**
      * Migrates legacy v0.2 {@code recipe} and {@code hologram.display-block} settings from {@code config.yml}'s root node
      * to {@code <dataDir>/aetheryte/default.yml} if {@code default.yml} does not exist yet (#37).
+     *
+     * @return {@code true} if no migration was needed or migration succeeded; {@code false} if writing failed
      */
-    public static void migrateLegacyConfig(
+    public static boolean migrateLegacyConfig(
             final CommentedConfigurationNode configRoot,
             final Path aetheryteDir,
             final Logger logger
     ) {
         final Path defaultFile = aetheryteDir.resolve(Aetheryte.DEFAULT_VARIATION + ".yml");
         if (Files.exists(defaultFile)) {
-            return;
+            return true;
         }
         final boolean hasLegacyRecipe = configRoot.hasChild("recipe");
         final boolean hasLegacyDisplay = configRoot.node("hologram").hasChild("display-block");
         if (!hasLegacyRecipe && !hasLegacyDisplay) {
-            return;
+            return true;
         }
 
         try {
@@ -226,9 +233,11 @@ public final class VariationLoader {
 
             writeVariation(defaultFile, Aetheryte.DEFAULT_VARIATION, migrated);
             logger.info("Migrated legacy recipe and hologram display-block from config.yml into {}", defaultFile);
+            return true;
         } catch (final Exception e) {
             logger.warn("Failed to migrate legacy settings from config.yml to {}; copying default template", defaultFile, e);
             copyDefaultResource(defaultFile, logger);
+            return false;
         }
     }
 

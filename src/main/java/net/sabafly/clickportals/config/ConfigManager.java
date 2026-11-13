@@ -74,16 +74,24 @@ public final class ConfigManager {
     }
 
     /**
-     * Loads the configuration from disk (creating the default file if missing), optionally synchronizing
-     * missing or obsolete schema keys back to disk.
+     * Loads the configuration from disk (creating the default file if missing when {@code syncSchema} is {@code true}),
+     * optionally migrating legacy settings and synchronizing missing or obsolete schema keys back to disk.
      */
     public PluginConfig load(final boolean syncSchema) {
         try {
             final Path parent = configFile.getParent();
-            if (parent != null && !Files.exists(parent)) {
-                Files.createDirectories(parent);
-            }
             if (!Files.exists(configFile)) {
+                if (!syncSchema) {
+                    logger.error("Configuration file {} does not exist; retaining active configuration.", configFile);
+                    lastLoadSuccessful = false;
+                    if (currentConfig == null) {
+                        currentConfig = PluginConfig.defaultConfig();
+                    }
+                    return currentConfig;
+                }
+                if (parent != null && !Files.exists(parent)) {
+                    Files.createDirectories(parent);
+                }
                 final PluginConfig defaultConfig = PluginConfig.defaultConfig();
                 save(defaultConfig);
                 currentConfig = defaultConfig;
@@ -92,18 +100,19 @@ public final class ConfigManager {
             }
 
             final CommentedConfigurationNode root = loader.load();
-            if (root.hasChild("recipe") || root.node("hologram").hasChild("display-block")) {
+            boolean migrationSucceeded = true;
+            if (syncSchema && (root.hasChild("recipe") || root.node("hologram").hasChild("display-block"))) {
                 logger.info("Notice: Legacy 'recipe' and/or 'hologram.display-block' settings in config.yml "
                         + "have moved to plugins/ClickPortals/aetheryte/default.yml in v0.3.");
                 if (parent != null) {
-                    net.sabafly.clickportals.variation.VariationLoader.migrateLegacyConfig(
+                    migrationSucceeded = net.sabafly.clickportals.variation.VariationLoader.migrateLegacyConfig(
                             root,
                             parent.resolve("aetheryte"),
                             logger
                     );
                 }
             }
-            final PluginConfig parsed = root.get(PluginConfig.class);
+            final PluginConfig parsed = root.copy().get(PluginConfig.class);
             if (parsed == null) {
                 logger.error("Failed to parse configuration from {}; file appears empty or malformed. Retaining active configuration.", configFile);
                 lastLoadSuccessful = false;
@@ -114,13 +123,17 @@ public final class ConfigManager {
             }
             final PluginConfig validated = parsed.validated(logger);
             if (syncSchema) {
-                final CommentedConfigurationNode targetRoot = loader.createNode();
-                targetRoot.set(PluginConfig.class, validated);
-                if (YamlSchemaSync.hasSchemaDiff(root, targetRoot) && YamlSchemaSync.backupFile(configFile, logger)) {
-                    try {
-                        writeNodeToDisk(targetRoot, validated);
-                    } catch (final ConfigurateException e) {
-                        logger.warn("Failed to write updated configuration to {}: {}", configFile, e.getMessage(), e);
+                if (!migrationSucceeded) {
+                    logger.warn("Skipping schema sync overwrite of {} because legacy migration failed; legacy settings are preserved.", configFile);
+                } else {
+                    final CommentedConfigurationNode targetRoot = loader.createNode();
+                    targetRoot.set(PluginConfig.class, validated);
+                    if (YamlSchemaSync.hasSchemaDiff(root, targetRoot) && YamlSchemaSync.backupFile(configFile, logger)) {
+                        try {
+                            writeNodeToDisk(targetRoot, validated);
+                        } catch (final ConfigurateException e) {
+                            logger.warn("Failed to write updated configuration to {}: {}", configFile, e.getMessage(), e);
+                        }
                     }
                 }
             }
