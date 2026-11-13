@@ -72,9 +72,14 @@ public final class Permissions {
     public static final String BYPASS_COST_WARP = "clickportals.bypass.cost.warp";
 
     /**
-     * Allows bypassing Aetheryte placement costs (default: {@code op}) (#15).
+     * Allows bypassing placement costs (default: {@code op}) (#15).
      */
     public static final String BYPASS_COST_PLACE = "clickportals.bypass.cost.place";
+
+    /**
+     * Allows bypassing per-dimension Aetheryte placement and usage restrictions (default: {@code op}) (#63).
+     */
+    public static final String BYPASS_DIMENSION = "clickportals.bypass.dimension";
 
     /**
      * Grants all ClickPortals administrative and user permissions (default: {@code op}).
@@ -168,5 +173,12 @@ public final class Permissions {
      */
     public static boolean canBypassPlaceCost(final Permissible permissible) {
         return permissible.hasPermission(BYPASS_COST_PLACE);
+    }
+
+    /**
+     * Checks whether the given permissible bypasses per-dimension placement and usage restrictions (#63).
+     */
+    public static boolean canBypassDimension(final Permissible permissible) {
+        return permissible.hasPermission(BYPASS_DIMENSION);
     }
 }

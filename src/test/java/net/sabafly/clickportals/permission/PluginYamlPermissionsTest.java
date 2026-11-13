@@ -57,6 +57,7 @@ class PluginYamlPermissionsTest {
             assertThat(perms.node(Permissions.BYPASS_LIMIT, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.BYPASS_COST_WARP, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.BYPASS_COST_PLACE, "default").getString()).isEqualTo("op");
+            assertThat(perms.node(Permissions.BYPASS_DIMENSION, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.ADMIN, "default").getString()).isEqualTo("op");
 
             final ConfigurationNode children = perms.node(Permissions.ADMIN, "children");
@@ -69,6 +70,7 @@ class PluginYamlPermissionsTest {
             assertThat(children.node(Permissions.BYPASS_LIMIT).getBoolean()).isTrue();
             assertThat(children.node(Permissions.BYPASS_COST_WARP).getBoolean()).isTrue();
             assertThat(children.node(Permissions.BYPASS_COST_PLACE).getBoolean()).isTrue();
+            assertThat(children.node(Permissions.BYPASS_DIMENSION).getBoolean()).isTrue();
         }
     }
 
@@ -112,5 +114,10 @@ class PluginYamlPermissionsTest {
         assertThat(Permissions.canUseCommand(moderator)).isTrue();
         assertThat(Permissions.canReload(moderator)).isTrue();
         assertThat(Permissions.canGive(moderator)).isFalse();
+        assertThat(Permissions.canBypassDimension(moderator)).isFalse();
+
+        final Permissible dimensionBypass = mock(Permissible.class);
+        when(dimensionBypass.hasPermission(Permissions.BYPASS_DIMENSION)).thenReturn(true);
+        assertThat(Permissions.canBypassDimension(dimensionBypass)).isTrue();
     }
 }

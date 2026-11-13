@@ -638,10 +638,20 @@ public final class Messages {
             final int y,
             final int z
     ) {
+        return createDialogDescription(viewer, Component.text(worldName), x, y, z);
+    }
+
+    public Component createDialogDescription(
+            final CommandSender viewer,
+            final Component worldDisplay,
+            final int x,
+            final int y,
+            final int z
+    ) {
         return get(
                 viewer,
                 MessageKey.DIALOG_CREATE_DESCRIPTION,
-                Placeholder.unparsed("world", worldName),
+                Placeholder.component("world", worldDisplay),
                 Placeholder.unparsed("x", Integer.toString(x)),
                 Placeholder.unparsed("y", Integer.toString(y)),
                 Placeholder.unparsed("z", Integer.toString(z))
@@ -697,12 +707,21 @@ public final class Messages {
      * Returns the common warp dialog header showing the current Aetheryte's name, owner, and coordinates (#53, #54).
      */
     public Component warpDialogHeader(final CommandSender viewer, final Aetheryte current, final String ownerName) {
+        return warpDialogHeader(viewer, current, ownerName, Component.text(current.worldName()));
+    }
+
+    public Component warpDialogHeader(
+            final CommandSender viewer,
+            final Aetheryte current,
+            final String ownerName,
+            final Component worldDisplay
+    ) {
         return get(
                 viewer,
                 MessageKey.DIALOG_WARP_HEADER,
                 Placeholder.unparsed("name", current.name()),
                 Placeholder.unparsed("owner", ownerName),
-                Placeholder.unparsed("world", current.worldName()),
+                Placeholder.component("world", worldDisplay),
                 Placeholder.unparsed("x", Integer.toString(current.blockX())),
                 Placeholder.unparsed("y", Integer.toString(current.blockY())),
                 Placeholder.unparsed("z", Integer.toString(current.blockZ()))
@@ -907,6 +926,28 @@ public final class Messages {
             final boolean allowed,
             final @Nullable Component denyReason
     ) {
+        return warpDestinationTooltip(
+                viewer,
+                current,
+                destination,
+                Component.text(destination.worldName()),
+                ownerName,
+                costDisplay,
+                allowed,
+                denyReason
+        );
+    }
+
+    public Component warpDestinationTooltip(
+            final CommandSender viewer,
+            final Aetheryte current,
+            final Aetheryte destination,
+            final Component destinationWorldDisplay,
+            final String ownerName,
+            final Component costDisplay,
+            final boolean allowed,
+            final @Nullable Component denyReason
+    ) {
         final Locale loc = locale(viewer);
         final OptionalDouble distance = current.distanceTo(destination);
         final Component distanceText = distance.isPresent()
@@ -919,7 +960,7 @@ public final class Messages {
 
         final TagResolver.Builder resolvers = TagResolver.builder()
                 .resolver(Placeholder.unparsed("owner", ownerName))
-                .resolver(Placeholder.unparsed("world", destination.worldName()))
+                .resolver(Placeholder.component("world", destinationWorldDisplay))
                 .resolver(Placeholder.unparsed("x", Integer.toString(destination.blockX())))
                 .resolver(Placeholder.unparsed("y", Integer.toString(destination.blockY())))
                 .resolver(Placeholder.unparsed("z", Integer.toString(destination.blockZ())))
@@ -953,12 +994,21 @@ public final class Messages {
      * Returns the root menu body prompt message (#54).
      */
     public Component warpRootBody(final CommandSender viewer, final Aetheryte current, final String ownerName) {
+        return warpRootBody(viewer, current, ownerName, Component.text(current.worldName()));
+    }
+
+    public Component warpRootBody(
+            final CommandSender viewer,
+            final Aetheryte current,
+            final String ownerName,
+            final Component worldDisplay
+    ) {
         return get(
                 viewer,
                 MessageKey.DIALOG_WARP_ROOT_BODY,
                 Placeholder.unparsed("name", current.name()),
                 Placeholder.unparsed("owner", ownerName),
-                Placeholder.unparsed("world", current.worldName()),
+                Placeholder.component("world", worldDisplay),
                 Placeholder.unparsed("x", Integer.toString(current.blockX())),
                 Placeholder.unparsed("y", Integer.toString(current.blockY())),
                 Placeholder.unparsed("z", Integer.toString(current.blockZ()))
@@ -975,6 +1025,16 @@ public final class Messages {
             final int count,
             final boolean currentWorld
     ) {
+        return warpWorldCategoryLabel(viewer, environment, Component.text(worldName), count, currentWorld);
+    }
+
+    public Component warpWorldCategoryLabel(
+            final CommandSender viewer,
+            final World.Environment environment,
+            final Component worldDisplay,
+            final int count,
+            final boolean currentWorld
+    ) {
         final MessageKey key = switch (environment) {
             case NORMAL -> MessageKey.DIALOG_WARP_CATEGORY_WORLD_OVERWORLD;
             case NETHER -> MessageKey.DIALOG_WARP_CATEGORY_WORLD_NETHER;
@@ -987,7 +1047,7 @@ public final class Messages {
         return get(
                 viewer,
                 key,
-                Placeholder.unparsed("world", worldName),
+                Placeholder.component("world", worldDisplay),
                 Placeholder.unparsed("count", Integer.toString(count)),
                 Placeholder.component("current", currentBadge)
         );
@@ -1059,12 +1119,28 @@ public final class Messages {
             final String ownerName,
             final String variationDisplayNameMiniMessage
     ) {
+        return operationsDialogBody(
+                viewer,
+                current,
+                ownerName,
+                Component.text(current.worldName()),
+                variationDisplayNameMiniMessage
+        );
+    }
+
+    public Component operationsDialogBody(
+            final CommandSender viewer,
+            final Aetheryte current,
+            final String ownerName,
+            final Component worldDisplay,
+            final String variationDisplayNameMiniMessage
+    ) {
         return get(
                 viewer,
                 MessageKey.DIALOG_OPERATIONS_BODY,
                 Placeholder.unparsed("name", current.name()),
                 Placeholder.unparsed("owner", ownerName),
-                Placeholder.unparsed("world", current.worldName()),
+                Placeholder.component("world", worldDisplay),
                 Placeholder.unparsed("x", Integer.toString(current.blockX())),
                 Placeholder.unparsed("y", Integer.toString(current.blockY())),
                 Placeholder.unparsed("z", Integer.toString(current.blockZ())),
@@ -1204,6 +1280,26 @@ public final class Messages {
                 MessageKey.COMMAND_GIVEN_ITEM,
                 Placeholder.unparsed("player", playerName),
                 Placeholder.unparsed("amount", Integer.toString(amount))
+        );
+    }
+
+    public Component errorDimensionPlaceDisabled(final CommandSender viewer, final Component worldDisplay) {
+        return get(
+                viewer,
+                MessageKey.ERROR_DIMENSION_PLACE_DISABLED,
+                Placeholder.component("world", worldDisplay)
+        );
+    }
+
+    public Component errorDimensionUseDisabled(final CommandSender viewer, final Component worldDisplay) {
+        return errorDimensionUseDisabled(locale(viewer), worldDisplay);
+    }
+
+    public Component errorDimensionUseDisabled(final Locale locale, final Component worldDisplay) {
+        return get(
+                locale,
+                MessageKey.ERROR_DIMENSION_USE_DISABLED,
+                Placeholder.component("world", worldDisplay)
         );
     }
 }

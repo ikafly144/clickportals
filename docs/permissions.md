@@ -15,6 +15,7 @@ ClickPortals registers all permission nodes in `paper-plugin.yml` with sensible 
 | `clickportals.bypass.limit` | `op` | Bypasses per-player Aetheryte placement limits and placement cooldowns. |
 | `clickportals.bypass.cost.warp` | `op` | Bypasses warp costs when teleporting between Aetherytes. |
 | `clickportals.bypass.cost.place` | `op` | Bypasses placement costs when creating a new Aetheryte (#15). |
+| `clickportals.bypass.dimension` | `op` | Bypasses per-dimension placement and usage restrictions (#63). |
 | `clickportals.admin` | `op` | Grants all ClickPortals permissions listed above via child permission inheritance. |
 
 ## Commands

@@ -598,4 +598,45 @@ class PluginConfigTest {
         );
         assertThat(syntaxAetheryteDir.resolve("default.yml")).doesNotExist();
     }
+
+    @Test
+    void dimensionWorldsConfigLoadsValidatesAndPreservesCustomWorldEntriesAcrossSchemaSync() throws IOException {
+        final Path configFile = tempDir.resolve("dimension_worlds.yml");
+        final String yaml = """
+                dimensions:
+                  worlds:
+                    world:
+                      display-name: "<green>Overworld Hub</green>"
+                      allow-place: true
+                      allow-use: true
+                    custom_void:
+                      display-name: "  <dark_purple>Void</dark_purple>  "
+                      allow-place: false
+                      allow-use: false
+                """;
+        Files.writeString(configFile, yaml, StandardCharsets.UTF_8);
+
+        final ConfigManager manager = new ConfigManager(configFile, mock(Logger.class));
+        manager.load();
+
+        assertThat(manager.lastLoadSuccessful()).isTrue();
+        final var dimensions = manager.config().dimensions();
+        assertThat(dimensions.worlds()).containsKeys("world", "custom_void");
+        assertThat(dimensions.worldConfig("world").displayName()).isEqualTo("<green>Overworld Hub</green>");
+        assertThat(dimensions.isPlaceAllowed("world")).isTrue();
+        assertThat(dimensions.isUseAllowed("world")).isTrue();
+
+        assertThat(dimensions.worldConfig("custom_void").displayName()).isEqualTo("<dark_purple>Void</dark_purple>");
+        assertThat(dimensions.isPlaceAllowed("custom_void")).isFalse();
+        assertThat(dimensions.isUseAllowed("custom_void")).isFalse();
+        assertThat(dimensions.isPlaceAllowed("unconfigured_world")).isTrue();
+        assertThat(dimensions.isUseAllowed("unconfigured_world")).isTrue();
+
+        // Reload again to confirm YamlSchemaSync preserves dynamic world map keys
+        final ConfigManager reloaded = new ConfigManager(configFile, mock(Logger.class));
+        reloaded.load();
+        assertThat(reloaded.config().dimensions().worlds()).containsKey("custom_void");
+        assertThat(reloaded.config().dimensions().isPlaceAllowed("custom_void")).isFalse();
+        assertThat(reloaded.config().dimensions().isUseAllowed("custom_void")).isFalse();
+    }
 }

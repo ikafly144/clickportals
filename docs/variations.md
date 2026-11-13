@@ -58,11 +58,11 @@ hitbox:
   width: 2.0
   height: 3.0
 
-# Teleport destination spread and orientation settings (#41)
+# Teleport destination spread and orientation settings (#41, #62)
 teleport:
-  # Minimum inner horizontal distance in blocks from the Aetheryte center (0 = no inner exclusion beyond hitbox, max 8)
+  # Minimum inner horizontal distance in blocks from the Aetheryte center (1..max-radius)
   min-radius: 1
-  # Maximum outer horizontal radius in blocks around the Aetheryte to search for a safe landing spot (0 = center/top only, max 8)
+  # Maximum outer horizontal radius in blocks around the Aetheryte to search for a safe landing spot (1..8)
   max-radius: 3
   # Whether to orient the arriving player to face toward the Aetheryte when landing in the surrounding ring
   face-aetheryte: true

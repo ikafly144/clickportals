@@ -17,16 +17,18 @@
  */
 package net.sabafly.clickportals.route;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import net.sabafly.clickportals.cost.CostEntry;
 import net.sabafly.clickportals.cost.CostType;
+import org.jspecify.annotations.Nullable;
 import org.spongepowered.configurate.objectmapping.ConfigSerializable;
 import org.spongepowered.configurate.objectmapping.meta.Comment;
 import org.spongepowered.configurate.objectmapping.meta.Setting;
 
 /**
- * Configuration section governing cross-dimension routes and pricing (#9).
+ * Configuration section governing cross-dimension routes, per-world settings, and pricing (#9, #63).
  */
 @ConfigSerializable
 public record DimensionRoutesConfig(
@@ -40,8 +42,20 @@ public record DimensionRoutesConfig(
 
         @Setting("routes")
         @Comment("List of configured cross-dimension connections")
-        List<RouteEntryConfig> routes
+        List<RouteEntryConfig> routes,
+
+        @Setting("worlds")
+        @Comment("Per-world display names and placement/usage restrictions")
+        Map<String, DimensionWorldConfig> worlds
 ) {
+
+    public DimensionRoutesConfig(
+            final List<CostEntry> defaultCost,
+            final Map<String, Double> amounts,
+            final List<RouteEntryConfig> routes
+    ) {
+        this(defaultCost, amounts, routes, Map.of());
+    }
 
     public DimensionRoutesConfig {
         if (defaultCost == null) {
@@ -53,12 +67,52 @@ public record DimensionRoutesConfig(
         if (routes == null) {
             routes = List.of();
         }
+        if (worlds == null) {
+            worlds = Map.of();
+        }
+    }
+
+    /**
+     * Returns configured per-world settings for {@code worldName}, or defaults if unconfigured (#63).
+     */
+    public DimensionWorldConfig worldConfig(final @Nullable String worldName) {
+        if (worldName == null || worldName.isBlank()) {
+            return DimensionWorldConfig.defaults();
+        }
+        final DimensionWorldConfig config = worlds.get(worldName);
+        return config != null ? config : DimensionWorldConfig.defaults();
+    }
+
+    /**
+     * Returns the configured display name for {@code worldName}, falling back to {@code worldName} when blank (#63).
+     */
+    public String displayNameOrDefault(final String worldName) {
+        final String configured = worldConfig(worldName).displayName();
+        return (configured == null || configured.isBlank()) ? worldName : configured;
+    }
+
+    /**
+     * Returns whether Aetheryte placement is allowed in {@code worldName} (#63).
+     */
+    public boolean isPlaceAllowed(final @Nullable String worldName) {
+        return worldConfig(worldName).isPlaceAllowed();
+    }
+
+    /**
+     * Returns whether Aetheryte usage (origin or destination) is allowed in {@code worldName} (#63).
+     */
+    public boolean isUseAllowed(final @Nullable String worldName) {
+        return worldConfig(worldName).isUseAllowed();
     }
 
     /**
      * Default stock vanilla dimension routes configuration.
      */
     public static DimensionRoutesConfig defaults() {
+        final Map<String, DimensionWorldConfig> defaultWorlds = new LinkedHashMap<>();
+        defaultWorlds.put("world", DimensionWorldConfig.defaults());
+        defaultWorlds.put("world_nether", DimensionWorldConfig.defaults());
+        defaultWorlds.put("world_the_end", DimensionWorldConfig.defaults());
         return new DimensionRoutesConfig(
                 List.of(
                         CostEntry.of(CostType.VAULT, "$amount"),
@@ -88,7 +142,8 @@ public record DimensionRoutesConfig(
                                         "world_the_end", CostOverrideConfig.of("$default + 300")
                                 )
                         )
-                )
+                ),
+                Map.copyOf(defaultWorlds)
         );
     }
 }

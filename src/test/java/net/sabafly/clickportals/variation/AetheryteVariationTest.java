@@ -107,8 +107,8 @@ class AetheryteVariationTest {
         assertThat(hitboxNull.height()).isEqualTo(1.0f);
 
         final TeleportSection teleportNull = new TeleportSection(null, null, null);
-        assertThat(teleportNull.minRadius()).isEqualTo(0);
-        assertThat(teleportNull.maxRadius()).isEqualTo(0);
+        assertThat(teleportNull.minRadius()).isEqualTo(1);
+        assertThat(teleportNull.maxRadius()).isEqualTo(1);
         assertThat(teleportNull.faceAetheryte()).isTrue();
 
         final TeleportSection teleportExplicitZeroFalse = new TeleportSection(0, 0, false);
@@ -282,5 +282,41 @@ class AetheryteVariationTest {
         assertThat(validated.placement().minDistance()).isEqualTo(-1.0);
         assertThat(validated.warp().distance().min()).isEqualTo(-1.0);
         assertThat(validated.warp().distance().max()).isEqualTo(-1.0);
+    }
+
+    @Test
+    void zeroTeleportRadiiAreClampedToMinimumOne() {
+        final AetheryteVariation raw = new AetheryteVariation(
+                "Zero Radius",
+                ItemSection.defaults(),
+                RecipeSection.defaults(),
+                ModelSection.defaults(),
+                HitboxSection.defaults(),
+                new TeleportSection(0, 0, true),
+                PlacementSection.defaults(),
+                LimitSection.defaults()
+        );
+
+        final Logger logger = mock(Logger.class);
+        final AetheryteVariation validated = raw.validated("zero_radius", logger);
+
+        assertThat(validated.teleport().minRadius()).isEqualTo(1);
+        assertThat(validated.teleport().maxRadius()).isEqualTo(1);
+        org.mockito.Mockito.verify(logger).warn(
+                org.mockito.ArgumentMatchers.contains("teleport.max-radius"),
+                eq(0),
+                eq(1),
+                eq("zero_radius"),
+                eq(1),
+                eq(AetheryteVariation.MAX_HORIZONTAL_RADIUS)
+        );
+        org.mockito.Mockito.verify(logger).warn(
+                org.mockito.ArgumentMatchers.contains("teleport.min-radius"),
+                eq(0),
+                eq(1),
+                eq("zero_radius"),
+                eq(1),
+                eq(1)
+        );
     }
 }

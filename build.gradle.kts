@@ -195,6 +195,10 @@ paperPluginYaml {
             description = "Bypass Aetheryte placement costs"
             default = Permission.Default.OP
         }
+        register("clickportals.bypass.dimension") {
+            description = "Bypass per-dimension Aetheryte placement and usage restrictions"
+            default = Permission.Default.OP
+        }
         register("clickportals.admin") {
             description = "Full administrative access to ClickPortals"
             default = Permission.Default.OP
@@ -209,6 +213,7 @@ paperPluginYaml {
                 "clickportals.bypass.distance",
                 "clickportals.bypass.cost.warp",
                 "clickportals.bypass.cost.place",
+                "clickportals.bypass.dimension",
             )
         }
     }

@@ -264,6 +264,54 @@ class WarpDestinationQueryTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void worldGroupsSortByDisplayNameAndSearchMatchesDimensionDisplayName() {
+        final UUID worldId = UUID.randomUUID();
+        final UUID alphaWorldId = UUID.randomUUID();
+        final UUID zetaWorldId = UUID.randomUUID();
+        final UUID ownerId = UUID.randomUUID();
+
+        final Aetheryte current = aetheryte("Current", worldId, "world", 0, 64, 0, ownerId, "Alice", 10L);
+        final Aetheryte inZetaRawNamedAlpha = aetheryte("GateZ", zetaWorldId, "z_raw_world", 10, 64, 0, ownerId, "Alice", 20L);
+        final Aetheryte inAlphaRawNamedZeta = aetheryte("GateA", alphaWorldId, "a_raw_world", 20, 64, 0, ownerId, "Alice", 30L);
+
+        final Map<UUID, org.bukkit.World.Environment> envs = Map.of(
+                worldId, org.bukkit.World.Environment.NORMAL,
+                alphaWorldId, org.bukkit.World.Environment.CUSTOM,
+                zetaWorldId, org.bukkit.World.Environment.CUSTOM
+        );
+        final Map<String, String> displayNames = Map.of(
+                "z_raw_world", "Alpha Dimension",
+                "a_raw_world", "Zeta Dimension"
+        );
+
+        final List<WarpDestinationQuery.WorldGroup> groups = WarpDestinationQuery.groupReachableWorlds(
+                current,
+                List.of(current, inAlphaRawNamedZeta, inZetaRawNamedAlpha),
+                dest -> true,
+                envs::get,
+                name -> displayNames.getOrDefault(name, name)
+        );
+
+        assertThat(groups).extracting(WarpDestinationQuery.WorldGroup::displayName)
+                .containsExactly("Alpha Dimension", "Zeta Dimension");
+        assertThat(groups).extracting(WarpDestinationQuery.WorldGroup::worldName)
+                .containsExactly("z_raw_world", "a_raw_world");
+
+        final WarpDialogState searchDisplay = WarpDialogState.root(WarpSortOrder.NAME).toAll().withSearchQuery("alpha dim");
+        final List<WarpDestinationQuery.Candidate> matched = WarpDestinationQuery.queryCandidates(
+                current,
+                ownerId,
+                List.of(current, inAlphaRawNamedZeta, inZetaRawNamedAlpha),
+                searchDisplay,
+                Set.of(),
+                dest -> true,
+                a -> a.ownerName() != null ? a.ownerName() : "Unknown",
+                name -> displayNames.getOrDefault(name, name)
+        );
+        assertThat(matched).extracting(c -> c.aetheryte().name()).containsExactly("GateZ");
+    }
+
     private static Aetheryte aetheryte(
             final String name,
             final UUID worldId,
