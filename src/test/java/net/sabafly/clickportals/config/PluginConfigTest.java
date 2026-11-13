@@ -542,4 +542,60 @@ class PluginConfigTest {
         assertThat(configDir.resolve("config.yml.bak")).exists();
         assertThat(Files.readString(configFile, StandardCharsets.UTF_8)).doesNotContain("display-block");
     }
+
+    @Test
+    void failedLegacyMigrationFollowedByDeserializationFailurePreservesPendingState() throws IOException {
+        final Path configDir = tempDir.resolve("migration_and_deserialize_fail");
+        final Path aetheryteDir = configDir.resolve("aetheryte");
+        Files.createDirectories(configDir);
+
+        final Path configFile = configDir.resolve("config.yml");
+        final String doubleFailureYaml = """
+                language:
+                  default-locale: en_US
+                limits:
+                  max-aetherytes-per-player: "not-an-integer"
+                recipe:
+                  enabled: true
+                  shape:
+                    invalid: true
+                hologram:
+                  enabled: true
+                  view-distance: 32.0
+                  display-block: minecraft:emerald_block
+                """;
+        Files.writeString(configFile, doubleFailureYaml, StandardCharsets.UTF_8);
+
+        final ConfigManager manager = new ConfigManager(configFile, mock(Logger.class));
+        manager.load();
+
+        assertThat(manager.lastLoadSuccessful()).isFalse();
+        assertThat(manager.pendingLegacyMigration()).isTrue();
+
+        net.sabafly.clickportals.variation.VariationRegistry.load(
+                aetheryteDir,
+                mock(Logger.class),
+                !manager.pendingLegacyMigration() && manager.lastLoadSuccessful()
+        );
+        assertThat(aetheryteDir.resolve("default.yml")).doesNotExist();
+        assertThat(Files.readString(configFile, StandardCharsets.UTF_8)).isEqualTo(doubleFailureYaml);
+
+        // Also check syntax failure in config.yml avoids materializing fallback default.yml
+        final Path syntaxFailDir = tempDir.resolve("syntax_fail_no_default");
+        final Path syntaxAetheryteDir = syntaxFailDir.resolve("aetheryte");
+        Files.createDirectories(syntaxFailDir);
+        final Path brokenConfig = syntaxFailDir.resolve("config.yml");
+        Files.writeString(brokenConfig, "language: [unclosed\nhologram:\n  display-block: minecraft:gold_block\n", StandardCharsets.UTF_8);
+
+        final ConfigManager brokenManager = new ConfigManager(brokenConfig, mock(Logger.class));
+        brokenManager.load();
+        assertThat(brokenManager.lastLoadSuccessful()).isFalse();
+
+        net.sabafly.clickportals.variation.VariationRegistry.load(
+                syntaxAetheryteDir,
+                mock(Logger.class),
+                !brokenManager.pendingLegacyMigration() && brokenManager.lastLoadSuccessful()
+        );
+        assertThat(syntaxAetheryteDir.resolve("default.yml")).doesNotExist();
+    }
 }

@@ -103,15 +103,19 @@ public final class ConfigManager {
 
             final CommentedConfigurationNode root = loader.load();
             boolean migrationSucceeded = true;
-            if (syncSchema && (root.hasChild("recipe") || root.node("hologram").hasChild("display-block"))) {
-                logger.info("Notice: Legacy 'recipe' and/or 'hologram.display-block' settings in config.yml "
-                        + "have moved to plugins/ClickPortals/aetheryte/default.yml in v0.3.");
-                if (parent != null) {
-                    migrationSucceeded = net.sabafly.clickportals.variation.VariationLoader.migrateLegacyConfig(
-                            root,
-                            parent.resolve("aetheryte"),
-                            logger
-                    );
+            if (syncSchema) {
+                pendingLegacyMigration = false;
+                if (root.hasChild("recipe") || root.node("hologram").hasChild("display-block")) {
+                    logger.info("Notice: Legacy 'recipe' and/or 'hologram.display-block' settings in config.yml "
+                            + "have moved to plugins/ClickPortals/aetheryte/default.yml in v0.3.");
+                    if (parent != null) {
+                        migrationSucceeded = net.sabafly.clickportals.variation.VariationLoader.migrateLegacyConfig(
+                                root,
+                                parent.resolve("aetheryte"),
+                                logger
+                        );
+                    }
+                    pendingLegacyMigration = !migrationSucceeded;
                 }
             }
             final PluginConfig parsed = root.copy().get(PluginConfig.class);
@@ -125,7 +129,6 @@ public final class ConfigManager {
             }
             final PluginConfig validated = parsed.validated(logger);
             if (syncSchema) {
-                pendingLegacyMigration = !migrationSucceeded;
                 if (!migrationSucceeded) {
                     logger.warn("Skipping schema sync overwrite of {} because legacy migration failed; legacy settings are preserved.", configFile);
                 } else {

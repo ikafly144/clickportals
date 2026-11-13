@@ -90,7 +90,7 @@ public final class ClickPortals extends JavaPlugin {
         final VariationRegistry variations = VariationRegistry.load(
                 getDataPath().resolve("aetheryte"),
                 getSLF4JLogger(),
-                !cfgManager.pendingLegacyMigration()
+                !cfgManager.pendingLegacyMigration() && cfgManager.lastLoadSuccessful()
         );
         this.variationRegistry = variations;
 
