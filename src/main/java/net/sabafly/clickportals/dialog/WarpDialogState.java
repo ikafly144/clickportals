@@ -53,35 +53,49 @@ public record WarpDialogState(
      * Creates the initial root-menu state for the given player's persisted sort preference.
      */
     public static WarpDialogState root(final WarpSortOrder sortOrder) {
-        return new WarpDialogState(ViewMode.ROOT, null, "", sortOrder, 0, false);
+        return root(sortOrder, "");
     }
 
     /**
-     * Returns a state navigating to the specified world's destination page.
+     * Creates a root-menu state preserving {@code sortOrder} and an existing {@code searchQuery} (#55).
+     */
+    public static WarpDialogState root(final WarpSortOrder sortOrder, @Nullable final String searchQuery) {
+        return new WarpDialogState(ViewMode.ROOT, null, searchQuery == null ? "" : searchQuery, sortOrder, 0, false);
+    }
+
+    /**
+     * Returns a state returning to the root menu while preserving {@code sortOrder} and {@code searchQuery} (#55).
+     */
+    public WarpDialogState toRoot() {
+        return root(sortOrder, searchQuery);
+    }
+
+    /**
+     * Returns a state navigating to the specified world's destination page while preserving {@code searchQuery}.
      */
     public WarpDialogState toWorld(final UUID worldId) {
-        return new WarpDialogState(ViewMode.WORLD, worldId, "", sortOrder, 0, false);
+        return new WarpDialogState(ViewMode.WORLD, worldId, searchQuery, sortOrder, 0, false);
     }
 
     /**
-     * Returns a state navigating to the favorites destination page.
+     * Returns a state navigating to the favorites destination page while preserving {@code searchQuery}.
      */
     public WarpDialogState toFavorites() {
-        return new WarpDialogState(ViewMode.FAVORITES, null, "", sortOrder, 0, false);
+        return new WarpDialogState(ViewMode.FAVORITES, null, searchQuery, sortOrder, 0, false);
     }
 
     /**
-     * Returns a state navigating to the cross-world search/all-destinations page.
+     * Returns a state navigating to the cross-world search/all-destinations page while preserving {@code searchQuery}.
      */
     public WarpDialogState toAll() {
-        return new WarpDialogState(ViewMode.ALL, null, "", sortOrder, 0, false);
+        return new WarpDialogState(ViewMode.ALL, null, searchQuery, sortOrder, 0, false);
     }
 
     /**
-     * Returns a state navigating to the operations/management page.
+     * Returns a state navigating to the operations/management page while preserving {@code searchQuery}.
      */
     public WarpDialogState toOperations() {
-        return new WarpDialogState(ViewMode.OPERATIONS, null, "", sortOrder, 0, false);
+        return new WarpDialogState(ViewMode.OPERATIONS, null, searchQuery, sortOrder, 0, false);
     }
 
     /**

@@ -545,7 +545,7 @@ public final class AetheryteDialogFactory {
                     .action(DialogAction.customClick((view, audience) -> {
                         if (audience instanceof Player clicker) {
                             final String query = readSearchInput(view, state.searchQuery());
-                            final WarpDialogState next = preservePageIfQueryUnchanged(state, query).withPage(slice.page() - 1);
+                            final WarpDialogState next = navigateListPage(state, query, slice.page() - 1);
                             openWarpDialog(clicker, current, next);
                         }
                     }, SINGLE_USE_CALLBACK))
@@ -558,14 +558,14 @@ public final class AetheryteDialogFactory {
                     .action(DialogAction.customClick((view, audience) -> {
                         if (audience instanceof Player clicker) {
                             final String query = readSearchInput(view, state.searchQuery());
-                            final WarpDialogState next = preservePageIfQueryUnchanged(state, query).withPage(slice.page() + 1);
+                            final WarpDialogState next = navigateListPage(state, query, slice.page() + 1);
                             openWarpDialog(clicker, current, next);
                         }
                     }, SINGLE_USE_CALLBACK))
                     .build());
         }
 
-        buttons.add(createBackToRootButton(player, current, state.sortOrder()));
+        buttons.add(createBackToRootButton(player, current, state));
     }
 
     /**
@@ -624,7 +624,7 @@ public final class AetheryteDialogFactory {
             addAdminOperationButtons(buttons, player, current, state);
         }
 
-        buttons.add(createBackToRootButton(player, current, state.sortOrder()));
+        buttons.add(createBackToRootButton(player, current, state));
 
         final Dialog dialog = Dialog.create(factory -> factory.empty()
                 .base(DialogBase.builder(messages.operationsDialogTitle(player, current))
@@ -921,13 +921,13 @@ public final class AetheryteDialogFactory {
     private ActionButton createBackToRootButton(
             final Player player,
             final Aetheryte current,
-            final WarpSortOrder sortOrder
+            final WarpDialogState state
     ) {
         return ActionButton.builder(messages.get(player, MessageKey.DIALOG_BUTTON_BACK))
                 .width(BUTTON_WIDTH_PRIMARY)
                 .action(DialogAction.customClick((view, audience) -> {
                     if (audience instanceof Player clicker) {
-                        openWarpDialog(clicker, current, WarpDialogState.root(sortOrder));
+                        openWarpDialog(clicker, current, state.toRoot());
                     }
                 }, SINGLE_USE_CALLBACK))
                 .build();
@@ -1016,5 +1016,19 @@ public final class AetheryteDialogFactory {
 
     private static WarpDialogState preservePageIfQueryUnchanged(final WarpDialogState state, final String newQuery) {
         return newQuery.equals(state.searchQuery()) ? state : state.withSearchQuery(newQuery);
+    }
+
+    /**
+     * Applies {@code targetPage} only when {@code inputQuery} matches the active search query; otherwise resets to page 0.
+     */
+    static WarpDialogState navigateListPage(
+            final WarpDialogState state,
+            final String inputQuery,
+            final int targetPage
+    ) {
+        if (inputQuery.equals(state.searchQuery())) {
+            return state.withPage(targetPage);
+        }
+        return state.withSearchQuery(inputQuery);
     }
 }

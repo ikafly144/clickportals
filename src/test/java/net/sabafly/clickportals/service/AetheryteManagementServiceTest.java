@@ -31,10 +31,12 @@ import static org.mockito.Mockito.when;
 import io.papermc.paper.threadedregions.scheduler.EntityScheduler;
 import io.papermc.paper.threadedregions.scheduler.RegionScheduler;
 import java.lang.reflect.Field;
+import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -50,6 +52,7 @@ import net.sabafly.clickportals.variation.VariationRegistry;
 import net.sabafly.clickportals.visual.HologramService;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
+import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Server;
@@ -320,6 +323,90 @@ class AetheryteManagementServiceTest {
         assertThat(AetheryteService.canAdmin(stranger)).isTrue();
     }
 
+    @Test
+    void refreshOwnerNameIfNeededSkipsUpdateWhenOwnershipTransferredBeforeRegionCallback() throws Exception {
+        final Aetheryte target = createAetheryte("Hub", ownerId, "OldAlice");
+        registry.register(world, target);
+
+        final Player renamedOldOwner = mockPlayer(ownerId, "NewAlice");
+        final Queue<Runnable> regionTasks = new ArrayDeque<>();
+
+        withMockServer(regionTasks, () -> {
+            final Aetheryte preview = service.refreshOwnerNameIfNeeded(renamedOldOwner, target);
+            assertThat(preview.ownerName()).isEqualTo("NewAlice");
+            assertThat(regionTasks).hasSize(1);
+
+            // Simulate transferOwnership winning before the region callback executes
+            registry.update(world, target.id(), a -> a.withOwner(otherPlayerId, "NewOwner"));
+
+            regionTasks.remove().run();
+
+            final Aetheryte current = registry.getById(target.id()).orElseThrow();
+            assertThat(current.ownerId()).isEqualTo(otherPlayerId);
+            assertThat(current.ownerName()).isEqualTo("NewOwner");
+        });
+    }
+
+    @Test
+    void removeAetheryteRechecksOwnershipAndRefundsRemovedVariationWhenModifiedBeforeRegionCallback() throws Exception {
+        final Aetheryte target = createAetheryte("ToRemove", ownerId, "Alice");
+        registry.register(world, target);
+
+        final Player originalOwner = mockPlayer(ownerId, "Alice");
+        when(originalOwner.hasPermission(Permissions.PLACE)).thenReturn(true);
+        when(originalOwner.getGameMode()).thenReturn(GameMode.SURVIVAL);
+
+        final Queue<Runnable> regionTasks = new ArrayDeque<>();
+        withMockServer(regionTasks, () -> {
+            // 1. Old owner queues removal, but ownership transfers before region callback executes
+            service.removeAetheryte(originalOwner, target.id(), true);
+            assertThat(regionTasks).hasSize(1);
+
+            registry.update(world, target.id(), a -> a.withOwner(otherPlayerId, "NewOwner"));
+            regionTasks.remove().run();
+
+            assertThat(registry.getById(target.id())).isPresent();
+            verify(originalOwner, atLeastOnce()).sendMessage(any(Component.class));
+
+            // 2. New owner queues removal, and variation is updated before region callback executes
+            final Player newOwner = mockPlayer(otherPlayerId, "NewOwner");
+            when(newOwner.hasPermission(Permissions.PLACE)).thenReturn(true);
+            when(newOwner.getGameMode()).thenReturn(GameMode.SURVIVAL);
+            when(variationRegistry.getOrDefault("changed_var")).thenReturn(AetheryteVariation.defaultVariation());
+
+            service.removeAetheryte(newOwner, target.id(), true);
+            registry.update(world, target.id(), a -> a.withVariation("changed_var"));
+            regionTasks.remove().run();
+
+            assertThat(registry.getById(target.id())).isEmpty();
+            verify(variationRegistry).getOrDefault("changed_var");
+            verify(variationRegistry, never()).getOrDefault(Aetheryte.DEFAULT_VARIATION);
+        });
+    }
+
+    @Test
+    void resyncVisualsAbortsWhenAetheryteWasRemovedBeforeRegionCallback() throws Exception {
+        final Aetheryte target = createAetheryte("Vanishing", ownerId, "Alice");
+        registry.register(world, target);
+
+        final Player admin = mockPlayer(otherPlayerId, "Admin");
+        when(admin.hasPermission(Permissions.ADMIN)).thenReturn(true);
+
+        final Queue<Runnable> regionTasks = new ArrayDeque<>();
+        withMockServer(regionTasks, () -> {
+            service.resyncVisuals(admin, target.id());
+            assertThat(regionTasks).hasSize(1);
+
+            registry.unregister(world, target.id());
+            regionTasks.remove().run();
+
+            verify(modelService, never()).unregisterAetheryte(any());
+            verify(modelService, never()).registerAetheryte(any(), any(), any());
+            verify(hologramService, never()).showAetheryte(any());
+            verify(admin, atLeastOnce()).sendMessage(any(Component.class));
+        });
+    }
+
     private Aetheryte createAetheryte(final String name, final UUID owner, @Nullable final String ownerName) {
         return new Aetheryte(
                 UUID.randomUUID(),
@@ -359,17 +446,31 @@ class AetheryteManagementServiceTest {
     }
 
     private void withMockServer(final Runnable action) throws Exception {
+        withMockServer(null, action);
+    }
+
+    private void withMockServer(@Nullable final Queue<Runnable> deferredRegionTasks, final Runnable action) throws Exception {
         final Server server = mock(Server.class);
         when(server.getWorld(worldId)).thenReturn(world);
         when(server.getOnlinePlayers()).thenReturn(List.of());
         final RegionScheduler regionScheduler = mock(RegionScheduler.class);
         when(server.getRegionScheduler()).thenReturn(regionScheduler);
         doAnswer(inv -> {
-            ((Runnable) inv.getArgument(2)).run();
+            final Runnable task = inv.getArgument(2);
+            if (deferredRegionTasks != null) {
+                deferredRegionTasks.add(task);
+            } else {
+                task.run();
+            }
             return null;
         }).when(regionScheduler).execute(any(), any(Location.class), any());
         doAnswer(inv -> {
-            ((Runnable) inv.getArgument(4)).run();
+            final Runnable task = inv.getArgument(4);
+            if (deferredRegionTasks != null) {
+                deferredRegionTasks.add(task);
+            } else {
+                task.run();
+            }
             return null;
         }).when(regionScheduler).execute(any(), any(World.class), anyInt(), anyInt(), any());
 

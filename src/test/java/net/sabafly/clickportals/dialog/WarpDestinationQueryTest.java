@@ -72,11 +72,50 @@ class WarpDestinationQueryTest {
 
         final WarpDialogState editFav = sorted.toFavorites().withFavoriteEditMode(true);
         assertThat(editFav.mode()).isEqualTo(WarpDialogState.ViewMode.FAVORITES);
-        assertThat(editFav.searchQuery()).isEmpty();
+        assertThat(editFav.searchQuery()).isEqualTo("spawn");
+        assertThat(editFav.page()).isZero();
         assertThat(editFav.favoriteEditMode()).isTrue();
 
-        assertThat(editFav.toAll().mode()).isEqualTo(WarpDialogState.ViewMode.ALL);
-        assertThat(editFav.toOperations().mode()).isEqualTo(WarpDialogState.ViewMode.OPERATIONS);
+        final WarpDialogState allMode = editFav.toAll();
+        assertThat(allMode.mode()).isEqualTo(WarpDialogState.ViewMode.ALL);
+        assertThat(allMode.searchQuery()).isEqualTo("spawn");
+        assertThat(allMode.page()).isZero();
+
+        final WarpDialogState opsMode = editFav.toOperations();
+        assertThat(opsMode.mode()).isEqualTo(WarpDialogState.ViewMode.OPERATIONS);
+        assertThat(opsMode.searchQuery()).isEqualTo("spawn");
+        assertThat(opsMode.page()).isZero();
+
+        final WarpDialogState backToRoot = opsMode.withPage(4).toRoot();
+        assertThat(backToRoot.mode()).isEqualTo(WarpDialogState.ViewMode.ROOT);
+        assertThat(backToRoot.sortOrder()).isEqualTo(WarpSortOrder.OWNER);
+        assertThat(backToRoot.searchQuery()).isEqualTo("spawn");
+        assertThat(backToRoot.page()).isZero();
+
+        final WarpDialogState reopenedWorld = backToRoot.toWorld(NETHER_ID);
+        assertThat(reopenedWorld.mode()).isEqualTo(WarpDialogState.ViewMode.WORLD);
+        assertThat(reopenedWorld.targetWorldId()).isEqualTo(NETHER_ID);
+        assertThat(reopenedWorld.searchQuery()).isEqualTo("spawn");
+        assertThat(reopenedWorld.page()).isZero();
+    }
+
+    @Test
+    void navigateListPageResetsToZeroWhenSearchQueryChangesAndAdvancesWhenUnchanged() {
+        final WarpDialogState initial = WarpDialogState.root(WarpSortOrder.DISTANCE, "town")
+                .toAll()
+                .withPage(1);
+
+        final WarpDialogState nextPageSameQuery = AetheryteDialogFactory.navigateListPage(initial, "town", 2);
+        assertThat(nextPageSameQuery.searchQuery()).isEqualTo("town");
+        assertThat(nextPageSameQuery.page()).isEqualTo(2);
+
+        final WarpDialogState changedQuery = AetheryteDialogFactory.navigateListPage(initial, "nether", 2);
+        assertThat(changedQuery.searchQuery()).isEqualTo("nether");
+        assertThat(changedQuery.page()).isZero();
+
+        final WarpDialogState clearedQuery = AetheryteDialogFactory.navigateListPage(initial, "", 0);
+        assertThat(clearedQuery.searchQuery()).isEmpty();
+        assertThat(clearedQuery.page()).isZero();
     }
 
     @Test

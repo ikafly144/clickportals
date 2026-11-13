@@ -1037,9 +1037,15 @@ public final class AetheryteService {
             if (world == null) {
                 return updatedPreview;
             }
+            final UUID expectedOwnerId = player.getUniqueId();
             Bukkit.getRegionScheduler().execute(plugin, aetheryte.blockLocation(world), () -> {
-                final Optional<Aetheryte> updated = registry.update(world, aetheryte.id(), a -> a.withOwnerName(currentName));
-                updated.ifPresent(value -> updateMarkerDataAt(world, value));
+                final Optional<Aetheryte> updated = registry.update(
+                        world,
+                        aetheryte.id(),
+                        a -> a.ownerId().equals(expectedOwnerId) ? a.withOwnerName(currentName) : a
+                );
+                updated.filter(value -> value.ownerId().equals(expectedOwnerId) && currentName.equals(value.ownerName()))
+                        .ifPresent(value -> updateMarkerDataAt(world, value));
             });
         } catch (final Throwable ignored) {
             // Non-fatal in test environments without a live Bukkit server/scheduler
@@ -1773,31 +1779,46 @@ public final class AetheryteService {
 
         final Location blockLoc = aetheryte.blockLocation(world);
         Bukkit.getRegionScheduler().execute(plugin, blockLoc, () -> {
-            final Optional<Aetheryte> removed = registry.unregister(world, aetheryte.id());
+            final Optional<Aetheryte> latestOpt = registry.getById(aetheryte.id());
+            if (latestOpt.isEmpty()) {
+                messages.send(player, MessageKey.ERROR_NOT_FOUND);
+                return;
+            }
+            final Aetheryte latest = latestOpt.get();
+            if (!refundItem && !canAdmin(player)) {
+                messages.send(player, MessageKey.ERROR_NO_PERMISSION);
+                return;
+            }
+            if (!canRemove(player, latest)) {
+                messages.send(player, MessageKey.ERROR_NOT_OWNER);
+                return;
+            }
+            final Optional<Aetheryte> removed = registry.unregister(world, latest.id());
             if (removed.isEmpty()) {
                 messages.send(player, MessageKey.ERROR_NOT_FOUND);
                 return;
             }
+            final Aetheryte removedTarget = removed.get();
 
-            removeMarkerEntitiesAt(world, aetheryte);
+            removeMarkerEntitiesAt(world, removedTarget);
 
             // Clean up legacy Lodestone block if present from v0.1 worlds
-            final Block block = world.getBlockAt(aetheryte.blockX(), aetheryte.blockY(), aetheryte.blockZ());
+            final Block block = world.getBlockAt(removedTarget.blockX(), removedTarget.blockY(), removedTarget.blockZ());
             if (block.getType() == Material.LODESTONE) {
                 block.setType(Material.AIR, true);
             }
 
-            modelService.unregisterAetheryte(aetheryte.id());
-            hologramService.hideAetheryte(aetheryte.id());
+            modelService.unregisterAetheryte(removedTarget.id());
+            hologramService.hideAetheryte(removedTarget.id());
             playSoundSafely(() -> world.playSound(blockLoc, Sound.BLOCK_LODESTONE_BREAK, 1.0f, 1.0f));
 
             if (refundItem && player.getGameMode() != GameMode.CREATIVE) {
-                refundItemToPlayer(player, blockLoc, aetheryte.variation());
+                refundItemToPlayer(player, blockLoc, removedTarget.variation());
             }
             if (refundItem) {
-                player.sendMessage(messages.aetheryteRemoved(player, aetheryte.name()));
+                player.sendMessage(messages.aetheryteRemoved(player, removedTarget.name()));
             } else {
-                player.sendMessage(messages.get(player, MessageKey.AETHERYTE_FORCE_REMOVED, Placeholder.unparsed("name", aetheryte.name())));
+                player.sendMessage(messages.get(player, MessageKey.AETHERYTE_FORCE_REMOVED, Placeholder.unparsed("name", removedTarget.name())));
             }
         });
     }
@@ -1913,7 +1934,12 @@ public final class AetheryteService {
             return;
         }
         Bukkit.getRegionScheduler().execute(plugin, target.blockLocation(world), () -> {
-            final Aetheryte latest = registry.getById(target.id()).orElse(target);
+            final Optional<Aetheryte> latestOpt = registry.getById(target.id());
+            if (latestOpt.isEmpty()) {
+                messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+                return;
+            }
+            final Aetheryte latest = latestOpt.get();
             final AetheryteVariation variation = variationRegistry.getOrDefault(latest.variation());
             refreshAllVisuals(world, latest, variation);
             actor.sendMessage(messages.get(actor, MessageKey.AETHERYTE_VISUALS_RESYNCED, Placeholder.unparsed("name", latest.name())));
