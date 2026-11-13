@@ -450,6 +450,92 @@ class AetheryteManagementServiceTest {
         });
     }
 
+    @Test
+    void toggleFavoritePrunesDeletedFavoritesFromLoadedWorldBeforeEnforcingLimit() {
+        final Map<NamespacedKey, Object> backing = new HashMap<>();
+        final Player player = mockPlayer(ownerId, "Alice", createInMemoryPdc(backing));
+        final Aetheryte a1 = new Aetheryte(UUID.randomUUID(), "First", worldId, "world", 0, 64, 0, ownerId, 100L, Aetheryte.DEFAULT_VARIATION, "Alice");
+        final Aetheryte a2 = new Aetheryte(UUID.randomUUID(), "Second", worldId, "world", 10, 64, 0, ownerId, 200L, Aetheryte.DEFAULT_VARIATION, "Alice");
+        final Aetheryte a3 = new Aetheryte(UUID.randomUUID(), "Third", worldId, "world", 20, 64, 0, ownerId, 300L, Aetheryte.DEFAULT_VARIATION, "Alice");
+        registry.register(world, a1);
+        registry.register(world, a2);
+        registry.register(world, a3);
+
+        service.setMaxFavoritesPerPlayerSupplier(() -> 2);
+        assertThat(service.toggleFavorite(player, a1.id())).isTrue();
+        assertThat(service.toggleFavorite(player, a2.id())).isTrue();
+        assertThat(service.toggleFavorite(player, a3.id())).isFalse();
+
+        // Deleting a1 from the loaded world must free its favorite slot
+        registry.unregister(world, a1.id());
+        assertThat(service.getFavorites(player)).containsExactlyInAnyOrder(a2.id());
+        assertThat(service.toggleFavorite(player, a3.id())).isTrue();
+        assertThat(service.getFavorites(player)).containsExactlyInAnyOrder(a2.id(), a3.id());
+
+        // Attempting to favorite a non-existent Aetheryte while worlds are loaded is rejected
+        assertThat(service.toggleFavorite(player, UUID.randomUUID())).isFalse();
+        assertThat(service.getFavorites(player)).containsExactlyInAnyOrder(a2.id(), a3.id());
+    }
+
+    @Test
+    void toggleFavoritePreservesFavoritesInUnloadedWorld() {
+        final UUID world2Id = UUID.randomUUID();
+        final World world2 = mock(World.class);
+        final PersistentDataContainer world2Pdc = createInMemoryPdc();
+        when(world2.getUID()).thenReturn(world2Id);
+        when(world2.getName()).thenReturn("world_nether");
+        when(world2.getPersistentDataContainer()).thenReturn(world2Pdc);
+
+        final Aetheryte a1 = new Aetheryte(UUID.randomUUID(), "Overworld", worldId, "world", 0, 64, 0, ownerId, 100L, Aetheryte.DEFAULT_VARIATION, "Alice");
+        final Aetheryte a2 = new Aetheryte(UUID.randomUUID(), "Nether", world2Id, "world_nether", 0, 64, 0, ownerId, 200L, Aetheryte.DEFAULT_VARIATION, "Alice");
+        final Aetheryte a3 = new Aetheryte(UUID.randomUUID(), "Overworld2", worldId, "world", 10, 64, 0, ownerId, 300L, Aetheryte.DEFAULT_VARIATION, "Alice");
+        registry.register(world, a1);
+        registry.register(world2, a2);
+        registry.register(world, a3);
+
+        final Map<NamespacedKey, Object> backing = new HashMap<>();
+        final Player player = mockPlayer(ownerId, "Alice", createInMemoryPdc(backing));
+        service.setMaxFavoritesPerPlayerSupplier(() -> 2);
+
+        assertThat(service.toggleFavorite(player, a1.id())).isTrue();
+        assertThat(service.toggleFavorite(player, a2.id())).isTrue();
+
+        // Unloading world2 must NOT erase a2 from favorites when interacting in world
+        registry.unloadWorld(world2Id);
+        assertThat(service.toggleFavorite(player, a3.id())).isFalse();
+        assertThat(service.getFavorites(player)).containsExactlyInAnyOrder(a1.id(), a2.id());
+
+        registry.loadWorld(world2);
+        assertThat(service.getFavorites(player)).containsExactlyInAnyOrder(a1.id(), a2.id());
+
+        // Deleting a1 (in loaded world) still prunes a1 while preserving unloaded-world a2
+        registry.unloadWorld(world2Id);
+        registry.unregister(world, a1.id());
+        assertThat(service.toggleFavorite(player, a3.id())).isTrue();
+        assertThat(service.getFavorites(player)).containsExactlyInAnyOrder(a2.id(), a3.id());
+    }
+
+    @Test
+    void renameAetheryteRechecksPermissionsInsideRegionCallbackWhenOwnershipTransferred() throws Exception {
+        final Aetheryte target = createAetheryte("OldName", ownerId, "Alice");
+        registry.register(world, target);
+
+        final Player originalOwner = mockPlayer(ownerId, "Alice");
+        final Queue<Runnable> regionTasks = new ArrayDeque<>();
+        withMockServer(regionTasks, () -> {
+            service.renameAetheryte(originalOwner, target.id(), "HijackedName");
+            assertThat(regionTasks).hasSize(1);
+
+            registry.update(world, target.id(), a -> a.withOwner(otherPlayerId, "NewOwner"));
+            regionTasks.remove().run();
+
+            assertThat(registry.getById(target.id())).get()
+                    .extracting(Aetheryte::name)
+                    .isEqualTo("OldName");
+            verify(originalOwner, atLeastOnce()).sendMessage(any(Component.class));
+        });
+    }
+
     private Aetheryte createAetheryte(final String name, final UUID owner, @Nullable final String ownerName) {
         return new Aetheryte(
                 UUID.randomUUID(),
