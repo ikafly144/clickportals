@@ -263,6 +263,7 @@ public final class AetheryteService {
     private final IntSupplier globalMaxPerPlayerSupplier;
     private final IntSupplier globalCooldownTicksSupplier;
     private volatile DoubleSupplier globalMinDistanceSupplier = () -> 0.0;
+    private volatile IntSupplier maxFavoritesPerPlayerSupplier = () -> -1;
     private final ToLongFunction<Player> tickSupplier;
     private final CooldownPacketSender cooldownPacketSender;
     private volatile WarpCostEvaluator costEvaluator;
@@ -545,6 +546,22 @@ public final class AetheryteService {
      */
     public void setGlobalMinDistanceSupplier(final DoubleSupplier globalMinDistanceSupplier) {
         this.globalMinDistanceSupplier = globalMinDistanceSupplier != null ? globalMinDistanceSupplier : () -> 0.0;
+    }
+
+    /**
+     * Updates the global maximum favorites per player supplier on reload.
+     */
+    public void setMaxFavoritesPerPlayerSupplier(final IntSupplier maxFavoritesPerPlayerSupplier) {
+        this.maxFavoritesPerPlayerSupplier = maxFavoritesPerPlayerSupplier != null
+                ? maxFavoritesPerPlayerSupplier
+                : () -> -1;
+    }
+
+    /**
+     * Returns the configured maximum number of favorites per player (-1 for unlimited, 0 to disable).
+     */
+    public int getMaxFavoritesPerPlayer() {
+        return Math.max(-1, maxFavoritesPerPlayerSupplier.getAsInt());
     }
 
     /**
@@ -1127,6 +1144,15 @@ public final class AetheryteService {
             updated.remove(aetheryteId);
             added = false;
         } else {
+            final int maxFavorites = getMaxFavoritesPerPlayer();
+            if (maxFavorites >= 0 && updated.size() >= maxFavorites) {
+                messages.send(
+                        player,
+                        MessageKey.ERROR_FAVORITES_LIMIT_REACHED,
+                        Placeholder.unparsed("max", Integer.toString(maxFavorites))
+                );
+                return false;
+            }
             updated.add(aetheryteId);
             added = true;
         }

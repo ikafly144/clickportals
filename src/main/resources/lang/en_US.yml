@@ -152,6 +152,7 @@ error:
   already-exists: "<prefix><red>An Aetheryte already exists at that location.</red>"
   limit-reached-global: "<prefix><red>You have reached the maximum number of Aetherytes you can place (<max>).</red>"
   limit-reached-variation: "<prefix><red>You have reached the placement limit for <variation> (<max>).</red>"
+  favorites-limit-reached: "<prefix><red>You have reached the maximum number of favorites (<max>).</red>"
   placement-cooldown: "<prefix><red>You must wait <white><seconds>s</white> before placing another Aetheryte.</red>"
   placement-too-close: "<prefix><red>Another Aetheryte is too close! Must be at least <distance> blocks away.</red>"
   missing-item: "<prefix><red>You do not have an Aetheryte item.</red>"

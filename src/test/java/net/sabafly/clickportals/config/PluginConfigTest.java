@@ -51,6 +51,7 @@ class PluginConfigTest {
         assertThat(loaded.hologramViewDistance()).isEqualTo(32.0);
         assertThat(loaded.maxAetherytesPerPlayer()).isEqualTo(-1);
         assertThat(loaded.placementCooldownTicks()).isEqualTo(100);
+        assertThat(loaded.maxFavoritesPerPlayer()).isEqualTo(-1);
 
         final String rawYaml = Files.readString(configFile, StandardCharsets.UTF_8);
         assertThat(rawYaml)
@@ -85,10 +86,28 @@ class PluginConfigTest {
         assertThat(config.hologramViewDistance()).isEqualTo(48.0);
         assertThat(config.maxAetherytesPerPlayer()).isEqualTo(5);
         assertThat(config.placementCooldownTicks()).isEqualTo(200);
+        assertThat(config.maxFavoritesPerPlayer()).isEqualTo(-1);
 
         manager.save(config);
         final String savedYaml = Files.readString(configFile, StandardCharsets.UTF_8);
         assertThat(savedYaml).contains("# Maximum total Aetherytes a single player may own across all variations");
+    }
+
+    @Test
+    void maxFavoritesPerPlayerAcceptsZeroAndPositiveValues() throws IOException {
+        final Path zeroFile = tempDir.resolve("config-zero.yml");
+        Files.writeString(zeroFile, """
+                limits:
+                  max-favorites-per-player: 0
+                """, StandardCharsets.UTF_8);
+        assertThat(new ConfigManager(zeroFile, mock(Logger.class)).load().maxFavoritesPerPlayer()).isEqualTo(0);
+
+        final Path positiveFile = tempDir.resolve("config-positive.yml");
+        Files.writeString(positiveFile, """
+                limits:
+                  max-favorites-per-player: 12
+                """, StandardCharsets.UTF_8);
+        assertThat(new ConfigManager(positiveFile, mock(Logger.class)).load().maxFavoritesPerPlayer()).isEqualTo(12);
     }
 
     @Test
@@ -103,6 +122,7 @@ class PluginConfigTest {
                 limits:
                   max-aetherytes-per-player: -99
                   placement-cooldown-ticks: -50
+                  max-favorites-per-player: -5
                 """, StandardCharsets.UTF_8);
 
         final ConfigManager manager = new ConfigManager(configFile, mock(Logger.class));
@@ -112,6 +132,7 @@ class PluginConfigTest {
         assertThat(config.hologramViewDistance()).isEqualTo(4.0);
         assertThat(config.maxAetherytesPerPlayer()).isEqualTo(-1);
         assertThat(config.placementCooldownTicks()).isEqualTo(0);
+        assertThat(config.maxFavoritesPerPlayer()).isEqualTo(-1);
     }
 
     @Test

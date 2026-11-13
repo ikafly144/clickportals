@@ -41,6 +41,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.dialog.WarpSortOrder;
@@ -170,6 +171,48 @@ class AetheryteManagementServiceTest {
         assertThat(service.toggleFavorite(player, id2)).isFalse();
         assertThat(service.getFavorites(player)).isEmpty();
         assertThat(backing).doesNotContainKey(AetheryteService.FAVORITES_KEY);
+    }
+
+    @Test
+    void toggleFavoriteEnforcesConfiguredLimitWhileAllowingRemovals() {
+        final Map<NamespacedKey, Object> backing = new HashMap<>();
+        final Player player = mockPlayer(ownerId, "Alice", createInMemoryPdc(backing));
+        final UUID id1 = UUID.randomUUID();
+        final UUID id2 = UUID.randomUUID();
+        final UUID id3 = UUID.randomUUID();
+
+        service.setMaxFavoritesPerPlayerSupplier(() -> 2);
+
+        assertThat(service.toggleFavorite(player, id1)).isTrue();
+        assertThat(service.toggleFavorite(player, id2)).isTrue();
+        assertThat(service.toggleFavorite(player, id3)).isFalse();
+        assertThat(service.getFavorites(player)).containsExactlyInAnyOrder(id1, id2);
+        final ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(player, times(1)).sendMessage(captor.capture());
+        assertThat(PlainTextComponentSerializer.plainText().serialize(captor.getValue()))
+                .contains("(2)");
+
+        // Removing an existing favorite still succeeds when at the limit
+        assertThat(service.toggleFavorite(player, id1)).isFalse();
+        assertThat(service.getFavorites(player)).containsExactlyInAnyOrder(id2);
+
+        // Once below the limit, adding succeeds again
+        assertThat(service.toggleFavorite(player, id3)).isTrue();
+        assertThat(service.getFavorites(player)).containsExactlyInAnyOrder(id2, id3);
+
+        // Setting limit to 0 blocks new additions while existing ones can still be removed
+        service.setMaxFavoritesPerPlayerSupplier(() -> 0);
+        assertThat(service.toggleFavorite(player, id1)).isFalse();
+        verify(player, times(2)).sendMessage(captor.capture());
+        assertThat(PlainTextComponentSerializer.plainText().serialize(captor.getValue()))
+                .contains("(0)");
+        assertThat(service.toggleFavorite(player, id2)).isFalse();
+        assertThat(service.getFavorites(player)).containsExactlyInAnyOrder(id3);
+
+        // Setting limit back to -1 allows adding unlimited favorites again
+        service.setMaxFavoritesPerPlayerSupplier(() -> -1);
+        assertThat(service.toggleFavorite(player, id1)).isTrue();
+        assertThat(service.getFavorites(player)).containsExactlyInAnyOrder(id1, id3);
     }
 
     @Test
