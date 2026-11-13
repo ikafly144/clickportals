@@ -125,6 +125,10 @@ class PlacementCostTest {
 
         // Immediate scheduler execution for testing entity-thread steps
         when(plugin.getSLF4JLogger()).thenReturn(org.slf4j.LoggerFactory.getLogger("PlacementCostTest"));
+        when(plugin.isEnabled()).thenReturn(true);
+        final org.bukkit.Server defaultServer = mock(org.bukkit.Server.class);
+        stubImmediateAsyncScheduler(defaultServer);
+        when(plugin.getServer()).thenReturn(defaultServer);
         when(scheduler.run(eq(plugin), any(), any())).thenAnswer(inv -> {
             @SuppressWarnings("unchecked")
             final Consumer<Object> consumer = (Consumer<Object>) inv.getArgument(1);
@@ -713,10 +717,9 @@ class PlacementCostTest {
 
         final org.bukkit.Server server = mock(org.bukkit.Server.class);
         final io.papermc.paper.threadedregions.scheduler.AsyncScheduler asyncScheduler =
-                mock(io.papermc.paper.threadedregions.scheduler.AsyncScheduler.class);
+                stubImmediateAsyncScheduler(server);
         when(plugin.getServer()).thenReturn(server);
         when(plugin.isEnabled()).thenReturn(true);
-        when(server.getAsyncScheduler()).thenReturn(asyncScheduler);
 
         final AetheryteService customService = new AetheryteService(
                 plugin,
@@ -770,6 +773,7 @@ class PlacementCostTest {
         }).when(pdc).set(eq(AetheryteService.PROCESSED_REFUNDS_KEY), eq(PersistentDataType.LIST.strings()), any());
 
         final org.bukkit.Server server = mock(org.bukkit.Server.class);
+        stubImmediateAsyncScheduler(server);
         when(plugin.getServer()).thenReturn(server);
         when(plugin.isEnabled()).thenReturn(true);
         when(server.getPlayer(playerId)).thenReturn(player);
@@ -966,6 +970,7 @@ class PlacementCostTest {
         when(pdc.get(AetheryteService.PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings())).thenReturn(existing100);
 
         final org.bukkit.Server server = mock(org.bukkit.Server.class);
+        stubImmediateAsyncScheduler(server);
         when(plugin.getServer()).thenReturn(server);
         when(plugin.isEnabled()).thenReturn(true);
         when(server.getPlayer(playerId)).thenReturn(player);
@@ -1046,5 +1051,21 @@ class PlacementCostTest {
         } finally {
             serverField.set(null, null);
         }
+    }
+
+    private io.papermc.paper.threadedregions.scheduler.AsyncScheduler stubImmediateAsyncScheduler(
+            final org.bukkit.Server server
+    ) {
+        final io.papermc.paper.threadedregions.scheduler.AsyncScheduler asyncScheduler =
+                mock(io.papermc.paper.threadedregions.scheduler.AsyncScheduler.class);
+        when(server.getAsyncScheduler()).thenReturn(asyncScheduler);
+        org.mockito.Mockito.doAnswer(inv -> {
+            @SuppressWarnings("unchecked")
+            final Consumer<io.papermc.paper.threadedregions.scheduler.ScheduledTask> consumer =
+                    (Consumer<io.papermc.paper.threadedregions.scheduler.ScheduledTask>) inv.getArgument(1);
+            consumer.accept(mock(io.papermc.paper.threadedregions.scheduler.ScheduledTask.class));
+            return mock(io.papermc.paper.threadedregions.scheduler.ScheduledTask.class);
+        }).when(asyncScheduler).runNow(eq(plugin), any());
+        return asyncScheduler;
     }
 }

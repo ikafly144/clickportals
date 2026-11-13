@@ -40,6 +40,7 @@ import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEn
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSetCooldown;
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerSpawnEntity;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -87,9 +88,16 @@ public final class PacketEventsHologramService implements HologramService {
             new ResourceLocation("clickportals", "aetheryte_place");
 
     /**
-     * Bundle of client-side entity IDs allocated for a single Aetheryte.
+     * Bundle of client-side entity IDs and deterministic child UUIDs allocated for a single Aetheryte (#20).
      */
-    record ClientEntitySet(int bodyDisplayId, int textDisplayId, int interactionId) {
+    record ClientEntitySet(
+            int bodyDisplayId,
+            int textDisplayId,
+            int interactionId,
+            UUID bodyUuid,
+            UUID textUuid,
+            UUID interactionUuid
+    ) {
         /**
          * Returns the three allocated entity IDs as an int array.
          */
@@ -239,7 +247,14 @@ public final class PacketEventsHologramService implements HologramService {
             aetheryteByEntityId.put(bodyId, id);
             aetheryteByEntityId.put(textId, id);
             aetheryteByEntityId.put(interactionId, id);
-            return new ClientEntitySet(bodyId, textId, interactionId);
+            return new ClientEntitySet(
+                    bodyId,
+                    textId,
+                    interactionId,
+                    deriveChildUuid(id, "body"),
+                    deriveChildUuid(id, "text"),
+                    deriveChildUuid(id, "interaction")
+            );
         });
     }
 
@@ -359,9 +374,15 @@ public final class PacketEventsHologramService implements HologramService {
      * Flattens all currently allocated client-side entity IDs into a single primitive array.
      */
     private int[] collectAllEntityIds() {
-        return entitiesByAetheryte.values().stream()
-                .flatMapToInt(set -> java.util.Arrays.stream(set.toArray()))
-                .toArray();
+        final List<ClientEntitySet> snapshot = new ArrayList<>(entitiesByAetheryte.values());
+        final int[] ids = new int[snapshot.size() * 3];
+        int idx = 0;
+        for (final ClientEntitySet set : snapshot) {
+            ids[idx++] = set.bodyDisplayId();
+            ids[idx++] = set.textDisplayId();
+            ids[idx++] = set.interactionId();
+        }
+        return ids;
     }
 
     /**
@@ -452,7 +473,7 @@ public final class PacketEventsHologramService implements HologramService {
 
         final WrapperPlayServerSpawnEntity bodySpawn = new WrapperPlayServerSpawnEntity(
                 set.bodyDisplayId(),
-                Optional.of(deriveChildUuid(aetheryte.id(), "body")),
+                Optional.of(set.bodyUuid()),
                 EntityTypes.BLOCK_DISPLAY,
                 bodyPosition,
                 0.0f,
@@ -470,7 +491,7 @@ public final class PacketEventsHologramService implements HologramService {
         );
         final WrapperPlayServerSpawnEntity textSpawn = new WrapperPlayServerSpawnEntity(
                 set.textDisplayId(),
-                Optional.of(deriveChildUuid(aetheryte.id(), "text")),
+                Optional.of(set.textUuid()),
                 EntityTypes.TEXT_DISPLAY,
                 textPosition,
                 0.0f,
@@ -495,7 +516,7 @@ public final class PacketEventsHologramService implements HologramService {
         );
         final WrapperPlayServerSpawnEntity interactionSpawn = new WrapperPlayServerSpawnEntity(
                 set.interactionId(),
-                Optional.of(deriveChildUuid(aetheryte.id(), "interaction")),
+                Optional.of(set.interactionUuid()),
                 EntityTypes.INTERACTION,
                 interactionPosition,
                 0.0f,

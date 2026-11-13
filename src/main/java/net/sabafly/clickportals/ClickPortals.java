@@ -186,10 +186,10 @@ public final class ClickPortals extends JavaPlugin {
         });
 
         for (final Player player : Bukkit.getOnlinePlayers()) {
-            final Collection<Aetheryte> worldAetherytes =
-                    aetheryteRegistry.getByWorld(player.getWorld().getUID());
-            activeHologramService.refreshPlayer(player, worldAetherytes);
-            modelSvc.refreshPlayer(player, worldAetherytes);
+            final Collection<Aetheryte> visibleAetherytes =
+                    AetheryteService.collectVisibleAetherytes(aetheryteRegistry, player, player.getWorld().getUID());
+            activeHologramService.refreshPlayer(player, visibleAetherytes);
+            modelSvc.refreshPlayer(player, visibleAetherytes);
         }
 
         getComponentLogger().info(
@@ -343,10 +343,10 @@ public final class ClickPortals extends JavaPlugin {
             for (final Player player : Bukkit.getOnlinePlayers()) {
                 player.getScheduler().run(this, task -> {
                     if (player.isOnline()) {
-                        final Collection<Aetheryte> worldAetherytes =
-                                currentRegistry.getByWorld(player.getWorld().getUID());
-                        currentHologramService.refreshPlayer(player, worldAetherytes);
-                        currentModelService.refreshPlayer(player, worldAetherytes);
+                        final Collection<Aetheryte> visibleAetherytes =
+                                AetheryteService.collectVisibleAetherytes(currentRegistry, player, player.getWorld().getUID());
+                        currentHologramService.refreshPlayer(player, visibleAetherytes);
+                        currentModelService.refreshPlayer(player, visibleAetherytes);
                     }
                 }, null);
             }

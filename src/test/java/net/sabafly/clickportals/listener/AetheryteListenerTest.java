@@ -702,6 +702,18 @@ class AetheryteListenerTest {
                             net.sabafly.clickportals.cost.CostType.VAULT, 40.0, true, true, 40.0, false))
             );
 
+            when(plugin.getServer()).thenReturn(server);
+            when(plugin.isEnabled()).thenReturn(true);
+            final io.papermc.paper.threadedregions.scheduler.AsyncScheduler asyncScheduler =
+                    mock(io.papermc.paper.threadedregions.scheduler.AsyncScheduler.class);
+            when(server.getAsyncScheduler()).thenReturn(asyncScheduler);
+            doAnswer(inv -> {
+                @SuppressWarnings("unchecked")
+                final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+                consumer.accept(mock(ScheduledTask.class));
+                return mock(ScheduledTask.class);
+            }).when(asyncScheduler).runNow(eq(plugin), any());
+
             final net.sabafly.clickportals.service.PendingRefundStorage storage =
                     mock(net.sabafly.clickportals.service.PendingRefundStorage.class);
             when(storage.load()).thenReturn(java.util.Map.of());

@@ -27,6 +27,7 @@ import io.papermc.paper.registry.data.dialog.type.DialogType;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickCallback;
@@ -176,16 +177,19 @@ public final class AetheryteDialogFactory {
                 .filter(a -> !a.id().equals(current.id()))
                 .toList();
 
+        final List<WarpEvaluation> evaluations = service.evaluateWarps(player, current, allDestinations);
+        final Locale playerLocale = messages.locale(player);
         final List<ActionButton> buttons = new ArrayList<>(allDestinations.size() + 1);
-        for (final Aetheryte destination : allDestinations) {
-            final WarpEvaluation evaluation = service.evaluateWarp(player, current, destination);
+        for (int i = 0; i < allDestinations.size(); i++) {
+            final Aetheryte destination = allDestinations.get(i);
+            final WarpEvaluation evaluation = evaluations.get(i);
             // Exclude destinations with no connecting dimensional route (#9, #13)
             if (evaluation.denyReasonCode() == WarpEvaluation.DenyReason.NO_ROUTE) {
                 continue;
             }
             final Component label = evaluation.allowed()
-                    ? messages.warpDestinationLabel(player, destination, evaluation.costDisplay())
-                    : messages.warpDestinationUnavailableLabel(player, destination, evaluation.costDisplay());
+                    ? messages.warpDestinationLabel(playerLocale, destination, evaluation.costDisplay())
+                    : messages.warpDestinationUnavailableLabel(playerLocale, destination, evaluation.costDisplay());
             final Component tooltip = messages.warpDestinationTooltip(
                     player,
                     current,

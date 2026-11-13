@@ -31,6 +31,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.persistence.ListPersistentDataType;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Thread-safe in-memory index and World/Marker PDC persistence manager for {@link Aetheryte} instances (#6, #20, #21, #37, #43).
@@ -63,25 +64,33 @@ public final class AetheryteRegistry {
     public record ChunkPosKey(UUID worldId, int chunkX, int chunkZ) {
     }
 
+    private record OwnerVariationKey(UUID ownerId, String variation) {
+    }
+
     private final Map<UUID, Aetheryte> byId = new ConcurrentHashMap<>();
     private final Map<BlockPosKey, Aetheryte> byPos = new ConcurrentHashMap<>();
     private final Map<ChunkPosKey, List<Aetheryte>> byChunk = new ConcurrentHashMap<>();
+    private final Map<UUID, List<Aetheryte>> byWorldCache = new ConcurrentHashMap<>();
+    private final Map<UUID, Integer> ownerCounts = new ConcurrentHashMap<>();
+    private final Map<OwnerVariationKey, Integer> ownerVariationCounts = new ConcurrentHashMap<>();
+    private volatile List<Aetheryte> allCache = List.of();
 
     /**
      * Loads all Aetherytes stored in the given world's {@link PersistentDataContainer} into the in-memory index.
      */
-    public List<Aetheryte> loadWorld(final World world) {
+    public synchronized List<Aetheryte> loadWorld(final World world) {
         final PersistentDataContainer pdc = world.getPersistentDataContainer();
         final List<Aetheryte> stored = pdc.get(WORLD_AETHERYTES_KEY, LIST_TYPE);
         if (stored == null || stored.isEmpty()) {
             return List.of();
         }
         final List<Aetheryte> loaded = new ArrayList<>(stored.size());
+        final UUID worldId = world.getUID();
         for (final Aetheryte entry : stored) {
             final Aetheryte normalized = new Aetheryte(
                     entry.id(),
                     entry.name(),
-                    world.getUID(),
+                    worldId,
                     world.getName(),
                     entry.blockX(),
                     entry.blockY(),
@@ -90,12 +99,14 @@ public final class AetheryteRegistry {
                     entry.createdAt(),
                     entry.variation()
             );
-            byId.put(normalized.id(), normalized);
-            byPos.put(normalized.posKey(), normalized);
-            final ChunkPosKey chunkKey = new ChunkPosKey(world.getUID(), normalized.blockX() >> 4, normalized.blockZ() >> 4);
-            byChunk.computeIfAbsent(chunkKey, k -> new CopyOnWriteArrayList<>()).add(normalized);
+            final Aetheryte previous = indexEntry(normalized);
+            if (previous != null && !previous.worldId().equals(worldId)) {
+                rebuildWorldCache(previous.worldId());
+            }
             loaded.add(normalized);
         }
+        rebuildWorldCache(worldId);
+        rebuildAllCache();
         return List.copyOf(loaded);
     }
 
@@ -125,33 +136,34 @@ public final class AetheryteRegistry {
     /**
      * Removes all Aetherytes belonging to the specified world from the in-memory index.
      */
-    public void unloadWorld(final UUID worldId) {
+    public synchronized void unloadWorld(final UUID worldId) {
+        final List<Aetheryte> removed = new ArrayList<>();
         byId.values().removeIf(aetheryte -> {
             if (aetheryte.worldId().equals(worldId)) {
-                byPos.remove(aetheryte.posKey());
+                removed.add(aetheryte);
                 return true;
             }
             return false;
         });
-        byChunk.keySet().removeIf(k -> k.worldId().equals(worldId));
+        for (final Aetheryte entry : removed) {
+            removeFromIndexes(entry);
+        }
+        byWorldCache.remove(worldId);
+        if (!removed.isEmpty()) {
+            rebuildAllCache();
+        }
     }
 
     /**
      * Registers a new Aetheryte in memory and persists the updated list to the world's PDC.
      */
     public synchronized void register(final World world, final Aetheryte aetheryte) {
-        final Aetheryte existing = byId.put(aetheryte.id(), aetheryte);
-        if (existing != null) {
-            byPos.remove(existing.posKey(), existing);
-            final ChunkPosKey oldChunkKey = new ChunkPosKey(existing.worldId(), existing.blockX() >> 4, existing.blockZ() >> 4);
-            byChunk.computeIfPresent(oldChunkKey, (k, list) -> {
-                list.removeIf(a -> a.id().equals(existing.id()));
-                return list.isEmpty() ? null : list;
-            });
+        final Aetheryte existing = indexEntry(aetheryte);
+        if (existing != null && !existing.worldId().equals(world.getUID())) {
+            rebuildWorldCache(existing.worldId());
         }
-        byPos.put(aetheryte.posKey(), aetheryte);
-        final ChunkPosKey chunkKey = new ChunkPosKey(world.getUID(), aetheryte.blockX() >> 4, aetheryte.blockZ() >> 4);
-        byChunk.computeIfAbsent(chunkKey, k -> new CopyOnWriteArrayList<>()).add(aetheryte);
+        rebuildWorldCache(world.getUID());
+        rebuildAllCache();
         saveWorld(world);
     }
 
@@ -183,18 +195,12 @@ public final class AetheryteRegistry {
         if (maxVariation >= 0 && countByOwnerAndVariation(aetheryte.ownerId(), aetheryte.variation()) >= maxVariation) {
             return RegistrationOutcome.VARIATION_LIMIT_REACHED;
         }
-        final Aetheryte existing = byId.put(aetheryte.id(), aetheryte);
-        if (existing != null) {
-            byPos.remove(existing.posKey(), existing);
-            final ChunkPosKey oldChunkKey = new ChunkPosKey(existing.worldId(), existing.blockX() >> 4, existing.blockZ() >> 4);
-            byChunk.computeIfPresent(oldChunkKey, (k, list) -> {
-                list.removeIf(a -> a.id().equals(existing.id()));
-                return list.isEmpty() ? null : list;
-            });
+        final Aetheryte existing = indexEntry(aetheryte);
+        if (existing != null && !existing.worldId().equals(world.getUID())) {
+            rebuildWorldCache(existing.worldId());
         }
-        byPos.put(posKey, aetheryte);
-        final ChunkPosKey chunkKey = new ChunkPosKey(world.getUID(), aetheryte.blockX() >> 4, aetheryte.blockZ() >> 4);
-        byChunk.computeIfAbsent(chunkKey, k -> new CopyOnWriteArrayList<>()).add(aetheryte);
+        rebuildWorldCache(world.getUID());
+        rebuildAllCache();
         saveWorld(world);
         return RegistrationOutcome.REGISTERED;
     }
@@ -223,12 +229,12 @@ public final class AetheryteRegistry {
         if (removed == null) {
             return Optional.empty();
         }
-        byPos.remove(removed.posKey());
-        final ChunkPosKey chunkKey = new ChunkPosKey(world.getUID(), removed.blockX() >> 4, removed.blockZ() >> 4);
-        byChunk.computeIfPresent(chunkKey, (k, list) -> {
-            list.remove(removed);
-            return list.isEmpty() ? null : list;
-        });
+        removeFromIndexes(removed);
+        rebuildWorldCache(world.getUID());
+        if (!removed.worldId().equals(world.getUID())) {
+            rebuildWorldCache(removed.worldId());
+        }
+        rebuildAllCache();
         saveWorld(world);
         return Optional.of(removed);
     }
@@ -237,11 +243,7 @@ public final class AetheryteRegistry {
      * Persists all in-memory Aetherytes for the given world into its {@link PersistentDataContainer}.
      */
     public synchronized void saveWorld(final World world) {
-        final UUID worldId = world.getUID();
-        final List<Aetheryte> worldEntries = byId.values().stream()
-                .filter(a -> a.worldId().equals(worldId))
-                .sorted(DEFAULT_ORDER)
-                .toList();
+        final List<Aetheryte> worldEntries = getByWorld(world.getUID());
         final PersistentDataContainer pdc = world.getPersistentDataContainer();
         if (worldEntries.isEmpty()) {
             pdc.remove(WORLD_AETHERYTES_KEY);
@@ -254,13 +256,7 @@ public final class AetheryteRegistry {
      * Counts the total number of loaded Aetherytes owned by the specified player (#43).
      */
     public int countByOwner(final UUID ownerId) {
-        int count = 0;
-        for (final Aetheryte aetheryte : byId.values()) {
-            if (aetheryte.ownerId().equals(ownerId)) {
-                count++;
-            }
-        }
-        return count;
+        return ownerCounts.getOrDefault(ownerId, 0);
     }
 
     /**
@@ -268,13 +264,7 @@ public final class AetheryteRegistry {
      */
     public int countByOwnerAndVariation(final UUID ownerId, final String variation) {
         final String normalized = Aetheryte.normalizeVariation(variation);
-        int count = 0;
-        for (final Aetheryte aetheryte : byId.values()) {
-            if (aetheryte.ownerId().equals(ownerId) && aetheryte.variation().equals(normalized)) {
-                count++;
-            }
-        }
-        return count;
+        return ownerVariationCounts.getOrDefault(new OwnerVariationKey(ownerId, normalized), 0);
     }
 
     /**
@@ -299,22 +289,17 @@ public final class AetheryteRegistry {
     }
 
     /**
-     * Returns all Aetherytes registered in the specified world, ordered deterministically.
+     * Returns all Aetherytes registered in the specified world, ordered deterministically, in O(1) time via cache.
      */
     public List<Aetheryte> getByWorld(final UUID worldId) {
-        return byId.values().stream()
-                .filter(a -> a.worldId().equals(worldId))
-                .sorted(DEFAULT_ORDER)
-                .toList();
+        return byWorldCache.getOrDefault(worldId, List.of());
     }
 
     /**
-     * Returns all registered Aetherytes across all loaded worlds, ordered deterministically.
+     * Returns all registered Aetherytes across all loaded worlds, ordered deterministically, in O(1) time via cache.
      */
     public List<Aetheryte> getAll() {
-        return byId.values().stream()
-                .sorted(DEFAULT_ORDER)
-                .toList();
+        return allCache;
     }
 
     /**
@@ -353,15 +338,37 @@ public final class AetheryteRegistry {
         if (distance <= 0.0) {
             return Optional.empty();
         }
+        final List<Aetheryte> worldEntries = getByWorld(worldId);
+        if (worldEntries.isEmpty()) {
+            return Optional.empty();
+        }
         final double distSq = distance * distance;
-        for (final Aetheryte aetheryte : byId.values()) {
-            if (!aetheryte.worldId().equals(worldId)) {
-                continue;
+        final int span = (int) Math.ceil(distance);
+        final int minCX = (x - span) >> 4;
+        final int maxCX = (x + span) >> 4;
+        final int minCZ = (z - span) >> 4;
+        final int maxCZ = (z + span) >> 4;
+        final long chunkCount = (long) (maxCX - minCX + 1) * (long) (maxCZ - minCZ + 1);
+
+        if (chunkCount <= worldEntries.size()) {
+            for (int cx = minCX; cx <= maxCX; cx++) {
+                for (int cz = minCZ; cz <= maxCZ; cz++) {
+                    final List<Aetheryte> chunkList = byChunk.get(new ChunkPosKey(worldId, cx, cz));
+                    if (chunkList == null) {
+                        continue;
+                    }
+                    for (final Aetheryte aetheryte : chunkList) {
+                        if (isWithinDistanceSq(aetheryte, x, y, z, distSq)) {
+                            return Optional.of(aetheryte);
+                        }
+                    }
+                }
             }
-            final double dx = aetheryte.blockX() - x;
-            final double dy = aetheryte.blockY() - y;
-            final double dz = aetheryte.blockZ() - z;
-            if ((dx * dx + dy * dy + dz * dz) < distSq) {
+            return Optional.empty();
+        }
+
+        for (final Aetheryte aetheryte : worldEntries) {
+            if (isWithinDistanceSq(aetheryte, x, y, z, distSq)) {
                 return Optional.of(aetheryte);
             }
         }
@@ -371,9 +378,75 @@ public final class AetheryteRegistry {
     /**
      * Clears the in-memory index without modifying world PDC data.
      */
-    public void clear() {
+    public synchronized void clear() {
         byId.clear();
         byPos.clear();
         byChunk.clear();
+        byWorldCache.clear();
+        ownerCounts.clear();
+        ownerVariationCounts.clear();
+        allCache = List.of();
+    }
+
+    private @Nullable Aetheryte indexEntry(final Aetheryte aetheryte) {
+        final Aetheryte existing = byId.put(aetheryte.id(), aetheryte);
+        if (existing != null) {
+            removeFromIndexes(existing);
+        }
+        byPos.put(aetheryte.posKey(), aetheryte);
+        final ChunkPosKey chunkKey = new ChunkPosKey(aetheryte.worldId(), aetheryte.blockX() >> 4, aetheryte.blockZ() >> 4);
+        byChunk.computeIfAbsent(chunkKey, k -> new CopyOnWriteArrayList<>()).add(aetheryte);
+        ownerCounts.merge(aetheryte.ownerId(), 1, Integer::sum);
+        ownerVariationCounts.merge(new OwnerVariationKey(aetheryte.ownerId(), aetheryte.variation()), 1, Integer::sum);
+        return existing;
+    }
+
+    private void removeFromIndexes(final Aetheryte existing) {
+        byPos.remove(existing.posKey(), existing);
+        final ChunkPosKey oldChunkKey = new ChunkPosKey(existing.worldId(), existing.blockX() >> 4, existing.blockZ() >> 4);
+        byChunk.computeIfPresent(oldChunkKey, (k, list) -> {
+            list.removeIf(a -> a.id().equals(existing.id()));
+            return list.isEmpty() ? null : list;
+        });
+        ownerCounts.computeIfPresent(existing.ownerId(), (k, count) -> count > 1 ? count - 1 : null);
+        ownerVariationCounts.computeIfPresent(
+                new OwnerVariationKey(existing.ownerId(), existing.variation()),
+                (k, count) -> count > 1 ? count - 1 : null
+        );
+    }
+
+    private void rebuildWorldCache(final UUID worldId) {
+        final List<Aetheryte> sorted = byId.values().stream()
+                .filter(a -> a.worldId().equals(worldId))
+                .sorted(DEFAULT_ORDER)
+                .toList();
+        if (sorted.isEmpty()) {
+            byWorldCache.remove(worldId);
+        } else {
+            byWorldCache.put(worldId, sorted);
+        }
+    }
+
+    private void rebuildAllCache() {
+        if (byId.isEmpty()) {
+            allCache = List.of();
+            return;
+        }
+        allCache = byId.values().stream()
+                .sorted(DEFAULT_ORDER)
+                .toList();
+    }
+
+    private static boolean isWithinDistanceSq(
+            final Aetheryte aetheryte,
+            final int x,
+            final int y,
+            final int z,
+            final double distSq
+    ) {
+        final double dx = aetheryte.blockX() - x;
+        final double dy = aetheryte.blockY() - y;
+        final double dz = aetheryte.blockZ() - z;
+        return (dx * dx + dy * dy + dz * dz) < distSq;
     }
 }

@@ -24,12 +24,20 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import org.jspecify.annotations.Nullable;
 
 /**
  * Recursive-descent compiler for mathematical and conditional expressions (#7, #8).
  */
 public final class ExpressionParser {
+
+    private static final int MAX_CACHE_ENTRIES = 512;
+
+    private record CacheKey(String expression, String defaultPercentageVariable) {
+    }
+
+    private static final Map<CacheKey, Expression> CACHE = new ConcurrentHashMap<>();
 
     private ExpressionParser() {
     }
@@ -59,7 +67,24 @@ public final class ExpressionParser {
             return Expression.ZERO;
         }
         final String trimmed = input.strip();
+        final String varKey = trimmed.endsWith("%") && defaultPercentageVariable != null
+                ? defaultPercentageVariable
+                : "";
+        final CacheKey cacheKey = new CacheKey(trimmed, varKey);
+        final Expression cached = CACHE.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
 
+        final Expression compiled = compileUncached(trimmed, defaultPercentageVariable);
+        if (CACHE.size() >= MAX_CACHE_ENTRIES) {
+            CACHE.clear();
+        }
+        CACHE.putIfAbsent(cacheKey, compiled);
+        return compiled;
+    }
+
+    private static Expression compileUncached(final String trimmed, final @Nullable String defaultPercentageVariable) {
         // Shorthand percentage detection: "10%" or "12.5%"
         if (trimmed.endsWith("%")) {
             final String numPart = trimmed.substring(0, trimmed.length() - 1).strip();
