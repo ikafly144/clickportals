@@ -882,7 +882,7 @@ class PlacementCostTest {
             final int call = saveCalls.incrementAndGet();
             if (call == 1) {
                 saveStarted.countDown();
-                releaseFirstSave.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                assertThat(releaseFirstSave.await(15, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
                 return false; // in-flight save fails after clearing dirty flag
             }
             return call >= 3; // call 2 fails, call 3 succeeds
@@ -912,32 +912,38 @@ class PlacementCostTest {
         final Thread writer = new Thread(() ->
                 customService.refundPlacement(player, new Location(world, 10, 64, 20), "costly", false, false, costBundle, costQuote)
         );
-        writer.start();
-        assertThat(saveStarted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-
-        // In-flight save cleared dirty flag before failing; flushPendingRefunds must wait for lock,
-        // detect the failure, attempt a retry (call 2 fails -> returns false), and succeed on next flush (call 3 -> returns true)
         final java.util.concurrent.CompletableFuture<Boolean> flushResult = new java.util.concurrent.CompletableFuture<>();
         final Thread flushThread = new Thread(() -> flushResult.complete(customService.flushPendingRefunds()), "flush-test-thread");
-        flushThread.start();
+        try {
+            writer.start();
+            assertThat(saveStarted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
 
-        // Wait deterministically until flushThread enters BLOCKED state waiting on refundPersistLock
-        final long deadlineNanos = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
-        while (flushThread.getState() != Thread.State.BLOCKED && System.nanoTime() < deadlineNanos) {
-            if (!flushThread.isAlive()) {
-                break;
+            // In-flight save cleared dirty flag before failing; flushPendingRefunds must wait for lock,
+            // detect the failure, attempt a retry (call 2 fails -> returns false), and succeed on next flush (call 3 -> returns true)
+            flushThread.start();
+
+            // Wait deterministically until flushThread enters BLOCKED state waiting on refundPersistLock
+            final long deadlineNanos = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+            while (flushThread.getState() != Thread.State.BLOCKED && System.nanoTime() < deadlineNanos) {
+                if (!flushThread.isAlive()) {
+                    break;
+                }
+                Thread.onSpinWait();
             }
-            Thread.onSpinWait();
-        }
-        assertThat(flushThread.getState()).isEqualTo(Thread.State.BLOCKED);
-        assertThat(flushResult.isDone()).isFalse();
+            assertThat(flushThread.getState()).isEqualTo(Thread.State.BLOCKED);
+            assertThat(flushResult.isDone()).isFalse();
 
-        releaseFirstSave.countDown();
-        writer.join(5000);
-        flushThread.join(5000);
-        assertThat(flushResult.get(5, java.util.concurrent.TimeUnit.SECONDS)).isFalse();
-        assertThat(customService.flushPendingRefunds()).isTrue();
-        assertThat(saveCalls.get()).isEqualTo(3);
+            releaseFirstSave.countDown();
+            writer.join(5000);
+            flushThread.join(5000);
+            assertThat(flushResult.get(5, java.util.concurrent.TimeUnit.SECONDS)).isFalse();
+            assertThat(customService.flushPendingRefunds()).isTrue();
+            assertThat(saveCalls.get()).isEqualTo(3);
+        } finally {
+            releaseFirstSave.countDown();
+            writer.join(5000);
+            flushThread.join(5000);
+        }
     }
 
     @Test
