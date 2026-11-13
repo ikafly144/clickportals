@@ -917,14 +917,24 @@ class PlacementCostTest {
 
         // In-flight save cleared dirty flag before failing; flushPendingRefunds must wait for lock,
         // detect the failure, attempt a retry (call 2 fails -> returns false), and succeed on next flush (call 3 -> returns true)
-        final java.util.concurrent.CompletableFuture<Boolean> flushResult =
-                java.util.concurrent.CompletableFuture.supplyAsync(customService::flushPendingRefunds);
-        // Ensure flush cannot return early while first save is still holding lock
-        Thread.sleep(50);
+        final java.util.concurrent.CompletableFuture<Boolean> flushResult = new java.util.concurrent.CompletableFuture<>();
+        final Thread flushThread = new Thread(() -> flushResult.complete(customService.flushPendingRefunds()), "flush-test-thread");
+        flushThread.start();
+
+        // Wait deterministically until flushThread enters BLOCKED state waiting on refundPersistLock
+        final long deadlineNanos = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (flushThread.getState() != Thread.State.BLOCKED && System.nanoTime() < deadlineNanos) {
+            if (!flushThread.isAlive()) {
+                break;
+            }
+            Thread.onSpinWait();
+        }
+        assertThat(flushThread.getState()).isEqualTo(Thread.State.BLOCKED);
         assertThat(flushResult.isDone()).isFalse();
 
         releaseFirstSave.countDown();
         writer.join(5000);
+        flushThread.join(5000);
         assertThat(flushResult.get(5, java.util.concurrent.TimeUnit.SECONDS)).isFalse();
         assertThat(customService.flushPendingRefunds()).isTrue();
         assertThat(saveCalls.get()).isEqualTo(3);

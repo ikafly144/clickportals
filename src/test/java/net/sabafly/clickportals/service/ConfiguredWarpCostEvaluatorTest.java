@@ -544,4 +544,62 @@ class ConfiguredWarpCostEvaluatorTest {
         final WarpEvaluation eval = evaluator.evaluate(player, src, dest);
         assertThat(eval.allowed()).isTrue();
     }
+
+    @Test
+    void chargeFailureRetainsUnrefundedItemsForPendingRefund() {
+        final PluginConfig.WarpSection warpSection = new PluginConfig.WarpSection(
+                new DistanceSection(0.0, 1000.0, true),
+                List.of(
+                        CostEntry.of(CostType.VAULT, "40"),
+                        CostEntry.of(CostType.VAULT, "30")
+                ),
+                true
+        );
+        pluginConfig = new PluginConfig(
+                PluginConfig.LanguageSection.defaults(),
+                PluginConfig.HologramSection.defaults(),
+                PluginConfig.LimitsSection.defaults(),
+                warpSection,
+                net.sabafly.clickportals.route.DimensionRoutesConfig.defaults()
+        );
+        final ConfiguredWarpCostEvaluator evaluator = createEvaluator();
+
+        when(economy.getBalance(player)).thenReturn(100.0);
+        // First cost withdraws cleanly, second cost fails, rollback deposit fails
+        when(economy.withdraw(player, 40.0)).thenReturn(true);
+        when(economy.withdraw(player, 30.0)).thenReturn(false);
+        when(economy.deposit(player, 40.0)).thenReturn(false);
+
+        final Aetheryte src = new Aetheryte(UUID.randomUUID(), "Origin", worldId, "world", 0, 64, 0, UUID.randomUUID(), 0L);
+        final Aetheryte dest = new Aetheryte(UUID.randomUUID(), "Dest", worldId, "world", 50, 64, 0, UUID.randomUUID(), 0L);
+
+        assertThat(evaluator.charge(player, src, dest)).isFalse();
+        // Active charge was aborted, so popPendingCharge is empty
+        assertThat(evaluator.popPendingCharge(player, dest)).isEmpty();
+        // Unrefunded item from rollback failure is exposed via popFailedChargeUnrefunded and consumed once
+        final List<CostItemQuote> unrefunded = evaluator.popFailedChargeUnrefunded(player, dest);
+        assertThat(unrefunded).hasSize(1);
+        assertThat(unrefunded.get(0).type()).isEqualTo(CostType.VAULT);
+        assertThat(unrefunded.get(0).amount()).isEqualTo(40.0);
+        assertThat(evaluator.popFailedChargeUnrefunded(player, dest)).isEmpty();
+    }
+
+    @Test
+    void peekPendingChargeWithCommitOnlyConsumesOnce() {
+        final ConfiguredWarpCostEvaluator evaluator = createEvaluator();
+        final Aetheryte src = new Aetheryte(UUID.randomUUID(), "Origin", worldId, "world", 0, 64, 0, UUID.randomUUID(), 0L);
+        final Aetheryte dest = new Aetheryte(UUID.randomUUID(), "Dest", worldId, "world", 50, 64, 0, UUID.randomUUID(), 0L);
+
+        assertThat(evaluator.charge(player, src, dest)).isTrue();
+        assertThat(evaluator.charge(player, src, dest)).isTrue();
+
+        final List<CostItemQuote> peeked = evaluator.peekPendingCharge(player, dest);
+        assertThat(peeked).isNotEmpty();
+        evaluator.commit(player, src, dest);
+
+        // Second charge remains intact until committed or refunded
+        assertThat(evaluator.peekPendingCharge(player, dest)).isNotEmpty();
+        evaluator.commit(player, src, dest);
+        assertThat(evaluator.peekPendingCharge(player, dest)).isEmpty();
+    }
 }

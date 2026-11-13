@@ -196,6 +196,20 @@ public final class AetheryteService {
         default List<CostItemQuote> popPendingCharge(final Player player, final Aetheryte destination) {
             return List.of();
         }
+
+        /**
+         * Returns pending charged cost items for the player and destination without removing them (#15).
+         */
+        default List<CostItemQuote> peekPendingCharge(final Player player, final Aetheryte destination) {
+            return List.of();
+        }
+
+        /**
+         * Pops and returns any unrefunded items remaining after a failed {@link #charge} rollback (#15).
+         */
+        default List<CostItemQuote> popFailedChargeUnrefunded(final Player player, final Aetheryte destination) {
+            return List.of();
+        }
     }
 
     private final Plugin plugin;
@@ -1550,6 +1564,15 @@ public final class AetheryteService {
                         if (!bypassCost) {
                             paid = activeEvaluator.charge(player, source, destination);
                             if (!paid) {
+                                final List<CostItemQuote> unrefunded = activeEvaluator.popFailedChargeUnrefunded(player, destination);
+                                if (!unrefunded.isEmpty()) {
+                                    recordPendingRefund(player.getUniqueId(), unrefunded);
+                                    plugin.getSLF4JLogger().warn(
+                                            "Warp charge rollback partially failed for player {}. Queued {} unrefunded item(s) for next login.",
+                                            player.getUniqueId(),
+                                            unrefunded.size()
+                                    );
+                                }
                                 if (playerId != null) {
                                     inFlightWarps.remove(playerId);
                                 }
@@ -1569,7 +1592,10 @@ public final class AetheryteService {
                             }
                             if (Boolean.TRUE.equals(success)) {
                                 if (!bypassCost) {
-                                    final List<CostItemQuote> chargedItems = activeEvaluator.popPendingCharge(player, destination);
+                                    final List<CostItemQuote> peeked = activeEvaluator.peekPendingCharge(player, destination);
+                                    final List<CostItemQuote> chargedItems = !peeked.isEmpty()
+                                            ? peeked
+                                            : activeEvaluator.popPendingCharge(player, destination);
                                     activeEvaluator.commit(player, source, destination);
                                     final CostQuote paidQuote = new CostQuote(chargedItems);
                                     if (!paidQuote.isFree()) {

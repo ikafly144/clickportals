@@ -665,4 +665,87 @@ class AetheryteListenerTest {
         verify(mockHolograms).hideAetheryteFromPlayer(player, registeredAetheryte);
         verify(mockModels).hideAetheryteFromPlayer(player, registeredAetheryte);
     }
+
+    @Test
+    void warpToAetheryteRecordsPendingRefundWhenChargeRollbackFails() throws Exception {
+        final Server server = mock(Server.class);
+        final java.lang.reflect.Field serverField = Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            when(server.getWorld(WORLD_ID)).thenReturn(world);
+            when(server.isOwnedByCurrentRegion(any(), any(int.class), any(int.class))).thenReturn(true);
+            final RegionScheduler regionScheduler = mock(RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+            doAnswer(inv -> {
+                ((Runnable) inv.getArgument(2)).run();
+                return null;
+            }).when(regionScheduler).execute(any(), any(Location.class), any());
+
+            final Block safeFloor = mock(Block.class);
+            when(safeFloor.isSolid()).thenReturn(true);
+            when(safeFloor.getType()).thenReturn(Material.STONE);
+            final Block safeAir = mock(Block.class);
+            when(safeAir.isPassable()).thenReturn(true);
+            when(safeAir.getType()).thenReturn(Material.AIR);
+
+            when(world.getBlockAt(5, 63, 5)).thenReturn(safeFloor);
+            when(world.getBlockAt(5, 64, 5)).thenReturn(safeAir);
+            when(world.getBlockAt(5, 65, 5)).thenReturn(safeAir);
+            when(world.getBlockAt(5, 66, 5)).thenReturn(safeAir);
+
+            final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
+            when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.text("$70.00")));
+            when(evaluator.charge(any(), any(), any())).thenReturn(false);
+            when(evaluator.popFailedChargeUnrefunded(any(), any())).thenReturn(
+                    List.of(new net.sabafly.clickportals.cost.CostItemQuote(
+                            net.sabafly.clickportals.cost.CostType.VAULT, 40.0, true, true, 40.0, false))
+            );
+
+            final net.sabafly.clickportals.service.PendingRefundStorage storage =
+                    mock(net.sabafly.clickportals.service.PendingRefundStorage.class);
+            when(storage.load()).thenReturn(java.util.Map.of());
+            when(storage.save(any())).thenReturn(true);
+
+            final AetheryteService customService = new AetheryteService(
+                    plugin,
+                    registry,
+                    VariationRegistry.defaults(),
+                    NoopHologramService.INSTANCE,
+                    net.sabafly.clickportals.model.NoopAetheryteModelService.INSTANCE,
+                    Messages.defaults(),
+                    () -> -1,
+                    () -> 0,
+                    () -> 0.0,
+                    p -> 0L,
+                    (p, t) -> {},
+                    evaluator,
+                    storage
+            );
+
+            final Player player = mock(Player.class);
+            final UUID playerId = UUID.randomUUID();
+            when(player.getUniqueId()).thenReturn(playerId);
+            when(player.hasPermission("clickportals.use")).thenReturn(true);
+            when(player.getWorld()).thenReturn(world);
+            when(player.getLocation()).thenReturn(new Location(world, 5, 64, 5));
+
+            final EntityScheduler entityScheduler = mock(EntityScheduler.class);
+            when(player.getScheduler()).thenReturn(entityScheduler);
+            doAnswer(inv -> {
+                @SuppressWarnings("unchecked")
+                final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+                consumer.accept(mock(ScheduledTask.class));
+                return mock(ScheduledTask.class);
+            }).when(entityScheduler).run(any(), any(), any());
+
+            customService.warpToAetheryte(player, registeredAetheryte, registeredAetheryte.id());
+
+            assertThat(customService.pendingRefundPlayerCount()).isEqualTo(1);
+            assertThat(customService.pendingRefundItemCount()).isEqualTo(1);
+            verify(storage).save(any());
+        } finally {
+            serverField.set(null, null);
+        }
+    }
 }

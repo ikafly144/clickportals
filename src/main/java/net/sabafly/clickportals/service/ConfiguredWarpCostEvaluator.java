@@ -26,6 +26,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import net.kyori.adventure.text.Component;
@@ -75,6 +76,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
     }
 
     private final Map<WarpChargeKey, Deque<ChargedPayment>> activeCharges = new ConcurrentHashMap<>();
+    private final Map<WarpChargeKey, Deque<List<CostItemQuote>>> failedChargeUnrefunded = new ConcurrentHashMap<>();
 
     public ConfiguredWarpCostEvaluator(
             final Supplier<PluginConfig> configSupplier,
@@ -161,10 +163,21 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         final CostQuote quote = bundle.quote(player, vars, economy);
 
         final CostBundle.ChargeResult result = bundle.chargeWithResult(player, quote, economy);
+        final WarpChargeKey key = new WarpChargeKey(player.getUniqueId(), destination.id());
         if (result.success()) {
-            final WarpChargeKey key = new WarpChargeKey(player.getUniqueId(), destination.id());
-            activeCharges.computeIfAbsent(key, k -> new ConcurrentLinkedDeque<>())
-                    .push(new ChargedPayment(bundle, result.chargedQuote(), economy));
+            if (!result.chargedQuote().isFree()) {
+                activeCharges.compute(key, (k, existing) -> {
+                    final Deque<ChargedPayment> deque = existing != null ? existing : new ConcurrentLinkedDeque<>();
+                    deque.push(new ChargedPayment(bundle, result.chargedQuote(), economy));
+                    return deque;
+                });
+            }
+        } else if (!result.unrefundedItems().isEmpty()) {
+            failedChargeUnrefunded.compute(key, (k, existing) -> {
+                final Deque<List<CostItemQuote>> deque = existing != null ? existing : new ConcurrentLinkedDeque<>();
+                deque.push(result.unrefundedItems());
+                return deque;
+            });
         }
         return result.success();
     }
@@ -176,22 +189,24 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             final Aetheryte destination
     ) {
         final WarpChargeKey key = new WarpChargeKey(player.getUniqueId(), destination.id());
-        final Deque<ChargedPayment> deque = activeCharges.get(key);
-        if (deque == null) {
-            return true;
-        }
-        final ChargedPayment payment = deque.poll();
+        final AtomicReference<@Nullable ChargedPayment> polled = new AtomicReference<>();
+        activeCharges.computeIfPresent(key, (k, deque) -> {
+            polled.set(deque.poll());
+            return deque.isEmpty() ? null : deque;
+        });
+        final ChargedPayment payment = polled.get();
         if (payment == null) {
             return true;
         }
         final CostBundle.RefundResult result = payment.bundle().refundWithResult(player, payment.quote(), payment.economy());
         if (!result.success()) {
             final CostQuote unrefundedQuote = new CostQuote(result.unrefundedItems(), true);
-            deque.push(new ChargedPayment(payment.bundle(), unrefundedQuote, payment.economy()));
+            activeCharges.compute(key, (k, existing) -> {
+                final Deque<ChargedPayment> deque = existing != null ? existing : new ConcurrentLinkedDeque<>();
+                deque.push(new ChargedPayment(payment.bundle(), unrefundedQuote, payment.economy()));
+                return deque;
+            });
             return false;
-        }
-        if (deque.isEmpty()) {
-            activeCharges.remove(key, deque);
         }
         return true;
     }
@@ -203,35 +218,51 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             final Aetheryte destination
     ) {
         final WarpChargeKey key = new WarpChargeKey(player.getUniqueId(), destination.id());
-        final Deque<ChargedPayment> deque = activeCharges.get(key);
-        if (deque != null) {
+        activeCharges.computeIfPresent(key, (k, deque) -> {
             deque.poll();
-            if (deque.isEmpty()) {
-                activeCharges.remove(key, deque);
-            }
-        }
+            return deque.isEmpty() ? null : deque;
+        });
     }
 
     @Override
     public List<CostItemQuote> popPendingCharge(final Player player, final Aetheryte destination) {
         final WarpChargeKey key = new WarpChargeKey(player.getUniqueId(), destination.id());
+        final AtomicReference<@Nullable ChargedPayment> polled = new AtomicReference<>();
+        activeCharges.computeIfPresent(key, (k, deque) -> {
+            polled.set(deque.poll());
+            return deque.isEmpty() ? null : deque;
+        });
+        final ChargedPayment payment = polled.get();
+        return payment != null ? payment.quote().items() : List.of();
+    }
+
+    @Override
+    public List<CostItemQuote> peekPendingCharge(final Player player, final Aetheryte destination) {
+        final WarpChargeKey key = new WarpChargeKey(player.getUniqueId(), destination.id());
         final Deque<ChargedPayment> deque = activeCharges.get(key);
         if (deque == null) {
             return List.of();
         }
-        final ChargedPayment payment = deque.poll();
-        if (payment == null) {
-            return List.of();
-        }
-        if (deque.isEmpty()) {
-            activeCharges.remove(key, deque);
-        }
-        return payment.quote().items();
+        final ChargedPayment payment = deque.peek();
+        return payment != null ? payment.quote().items() : List.of();
+    }
+
+    @Override
+    public List<CostItemQuote> popFailedChargeUnrefunded(final Player player, final Aetheryte destination) {
+        final WarpChargeKey key = new WarpChargeKey(player.getUniqueId(), destination.id());
+        final AtomicReference<@Nullable List<CostItemQuote>> polled = new AtomicReference<>();
+        failedChargeUnrefunded.computeIfPresent(key, (k, deque) -> {
+            polled.set(deque.poll());
+            return deque.isEmpty() ? null : deque;
+        });
+        final List<CostItemQuote> items = polled.get();
+        return items != null ? items : List.of();
     }
 
     public void clearPayment(final Player player) {
         final UUID playerId = player.getUniqueId();
         activeCharges.keySet().removeIf(k -> k.playerId().equals(playerId));
+        failedChargeUnrefunded.keySet().removeIf(k -> k.playerId().equals(playerId));
     }
 
     private EvaluationContext resolveContext(
