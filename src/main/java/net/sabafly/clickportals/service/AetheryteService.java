@@ -42,6 +42,7 @@ import java.util.function.ToLongFunction;
 import java.util.function.UnaryOperator;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
@@ -2649,6 +2650,7 @@ public final class AetheryteService {
                 Placeholder.unparsed("name", destination.name()),
                 Placeholder.unparsed("seconds", formatCastSeconds(castSettings.ticks()))
         ));
+        sendCastActionBar(player, destination.name(), castSettings.ticks(), castSettings.ticks());
 
         final ScheduledTask castTask = player.getScheduler().runAtFixedRate(
                 plugin,
@@ -2705,14 +2707,10 @@ public final class AetheryteService {
 
         final int remaining = session.remainingTicks.decrementAndGet();
         if (remaining > 0) {
-            player.sendActionBar(messages.get(
-                    player,
-                    MessageKey.WARP_CAST_PROGRESS,
-                    Placeholder.unparsed("name", session.destination.name()),
-                    Placeholder.unparsed("seconds", formatCastSeconds(remaining))
-            ));
+            sendCastActionBar(player, session.destination.name(), remaining, session.castSettings.ticks());
             return;
         }
+        sendCastActionBar(player, session.destination.name(), 0, session.castSettings.ticks());
 
         if (!session.completed.compareAndSet(false, true) || session.cancelled.get()) {
             task.cancel();
@@ -2859,6 +2857,37 @@ public final class AetheryteService {
                 messages.send(player, MessageKey.ERROR_NOT_FOUND);
             }
         }
+    }
+
+    private static final int CAST_BAR_SEGMENTS = 16;
+
+    private void sendCastActionBar(
+            final Player player,
+            final String destinationName,
+            final int remainingTicks,
+            final int totalTicks
+    ) {
+        player.sendActionBar(messages.get(
+                player,
+                MessageKey.WARP_CAST_PROGRESS,
+                Placeholder.unparsed("name", destinationName),
+                Placeholder.component("bar", buildCastBar(remainingTicks, totalTicks)),
+                Placeholder.unparsed("seconds", formatCastSeconds(remainingTicks))
+        ));
+    }
+
+    static Component buildCastBar(final int remainingTicks, final int totalTicks) {
+        final int safeTotal = Math.max(1, totalTicks);
+        final int elapsed = Math.max(0, Math.min(safeTotal, safeTotal - remainingTicks));
+        final int filled = Math.max(0, Math.min(
+                CAST_BAR_SEGMENTS,
+                (int) Math.round(((double) elapsed / safeTotal) * CAST_BAR_SEGMENTS)
+        ));
+        final int empty = CAST_BAR_SEGMENTS - filled;
+        return Component.text("[", NamedTextColor.GRAY)
+                .append(Component.text("█".repeat(filled), NamedTextColor.AQUA))
+                .append(Component.text("░".repeat(empty), NamedTextColor.DARK_GRAY))
+                .append(Component.text("]", NamedTextColor.GRAY));
     }
 
     private static String formatCastSeconds(final int ticks) {

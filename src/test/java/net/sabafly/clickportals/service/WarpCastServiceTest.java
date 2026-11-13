@@ -22,6 +22,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -225,6 +226,7 @@ class WarpCastServiceTest {
         verify(evaluator).commit(player, sourceAetheryte, destAetheryte);
         verify(player).teleportAsync(any(Location.class));
         verify(modelService).playPlayerAnimation(player, "steve", "warp_arrive", PlayerAnimationMode.PLAY_ONCE);
+        verify(player, atLeastOnce()).sendActionBar(any(Component.class));
     }
 
     @Test
@@ -357,5 +359,14 @@ class WarpCastServiceTest {
         assertThat(service.cancelCast(player, CastCancelReason.DIED)).isTrue();
         assertThat(service.isCasting(playerId)).isFalse();
         verify(modelService, times(2)).stopPlayerAnimation(player);
+    }
+
+    @Test
+    void buildCastBarRendersProgressSegments() {
+        final net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer plain =
+                net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText();
+        assertThat(plain.serialize(AetheryteService.buildCastBar(20, 20))).isEqualTo("[░░░░░░░░░░░░░░░░]");
+        assertThat(plain.serialize(AetheryteService.buildCastBar(10, 20))).isEqualTo("[████████░░░░░░░░]");
+        assertThat(plain.serialize(AetheryteService.buildCastBar(0, 20))).isEqualTo("[████████████████]");
     }
 }
