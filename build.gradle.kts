@@ -245,6 +245,9 @@ testing {
             targets {
                 all {
                     testTask.configure {
+                        useJUnitPlatform {
+                            excludeTags("performance")
+                        }
                         jvmArgs("-XX:+EnableDynamicAgentLoading")
                         testLogging {
                             events("passed", "skipped", "failed")
@@ -254,6 +257,23 @@ testing {
             }
         }
     }
+}
+
+tasks.register<Test>("performanceTest") {
+    description = "Runs performance scale benchmarks tagged with @Tag(\"performance\")."
+    group = "verification"
+    val testSourceSet = sourceSets.named("test").get()
+    testClassesDirs = testSourceSet.output.classesDirs
+    classpath = testSourceSet.runtimeClasspath
+    useJUnitPlatform {
+        includeTags("performance")
+    }
+    jvmArgs("-XX:+EnableDynamicAgentLoading")
+    testLogging {
+        events("passed", "skipped", "failed")
+        showStandardStreams = true
+    }
+    shouldRunAfter(tasks.named("test"))
 }
 
 spotless {

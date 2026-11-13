@@ -1005,6 +1005,129 @@ class PlacementCostTest {
     }
 
     @Test
+    void scheduledPdcTrimAbortsWhenNewerSaveIsInFlightOrFails() throws Exception {
+        final PendingRefundStorage storage = mock(PendingRefundStorage.class);
+        final UUID firstTxId = UUID.randomUUID();
+        final Map<UUID, List<CostItemQuote>> initialMap = new java.util.concurrent.ConcurrentHashMap<>();
+        initialMap.put(playerId, new java.util.concurrent.CopyOnWriteArrayList<>(
+                List.of(new CostItemQuote(CostType.VAULT, 30.0, true, true, 30.0, false, firstTxId))
+        ));
+        when(storage.load()).thenReturn(initialMap);
+
+        final java.util.concurrent.CountDownLatch secondSaveStarted = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.CountDownLatch releaseSecondSave = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicInteger saveCalls = new java.util.concurrent.atomic.AtomicInteger(0);
+        when(storage.save(any())).thenAnswer(inv -> {
+            final int call = saveCalls.incrementAndGet();
+            if (call == 1) {
+                return true;
+            }
+            if (call == 2) {
+                secondSaveStarted.countDown();
+                assertThat(releaseSecondSave.await(15, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                return false; // fail after dirty flag was already cleared
+            }
+            return true;
+        });
+
+        final List<String> existing100 = new java.util.ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            existing100.add(UUID.randomUUID().toString());
+        }
+        final PersistentDataContainer pdc = mock(PersistentDataContainer.class);
+        final java.util.concurrent.atomic.AtomicReference<List<String>> pdcState =
+                new java.util.concurrent.atomic.AtomicReference<>(existing100);
+        when(player.getPersistentDataContainer()).thenReturn(pdc);
+        when(pdc.get(AetheryteService.PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings()))
+                .thenAnswer(inv -> pdcState.get());
+        org.mockito.Mockito.doAnswer(inv -> {
+            pdcState.set(new java.util.ArrayList<>(inv.getArgument(2)));
+            return null;
+        }).when(pdc).set(eq(AetheryteService.PROCESSED_REFUNDS_KEY), eq(PersistentDataType.LIST.strings()), any());
+
+        final java.util.Queue<Consumer<io.papermc.paper.threadedregions.scheduler.ScheduledTask>> deferredEntityTasks =
+                new java.util.concurrent.ConcurrentLinkedQueue<>();
+        final java.util.concurrent.atomic.AtomicBoolean deferTrimTasks = new java.util.concurrent.atomic.AtomicBoolean(false);
+        org.mockito.Mockito.doAnswer(inv -> {
+            @SuppressWarnings("unchecked")
+            final Consumer<io.papermc.paper.threadedregions.scheduler.ScheduledTask> task =
+                    (Consumer<io.papermc.paper.threadedregions.scheduler.ScheduledTask>) inv.getArgument(1);
+            if (deferTrimTasks.get() && saveCalls.get() >= 1) {
+                deferredEntityTasks.add(task);
+            } else {
+                task.accept(mock(io.papermc.paper.threadedregions.scheduler.ScheduledTask.class));
+            }
+            return mock(io.papermc.paper.threadedregions.scheduler.ScheduledTask.class);
+        }).when(scheduler).run(eq(plugin), any(), any());
+
+        final org.bukkit.Server server = mock(org.bukkit.Server.class);
+        stubImmediateAsyncScheduler(server);
+        when(plugin.getServer()).thenReturn(server);
+        when(plugin.isEnabled()).thenReturn(true);
+        when(server.getPlayer(playerId)).thenReturn(player);
+
+        final AetheryteService customService = new AetheryteService(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                net.sabafly.clickportals.model.NoopAetheryteModelService.INSTANCE,
+                messages,
+                () -> -1,
+                () -> 0,
+                () -> 0.0,
+                p -> 0L,
+                (p, t) -> {},
+                (p, s, d) -> AetheryteService.WarpEvaluation.permitted(Component.empty()),
+                storage
+        );
+        customService.setEconomyProvider(economy);
+        when(economy.deposit(eq(player), eq(30.0))).thenReturn(true);
+
+        // Defer the post-save PDC trim task scheduled at generation 1 once saveCalls >= 1
+        deferTrimTasks.set(true);
+        customService.processPendingRefunds(player);
+        deferTrimTasks.set(false);
+        final Consumer<io.papermc.paper.threadedregions.scheduler.ScheduledTask> staleTrimTask = deferredEntityTasks.poll();
+        assertThat(staleTrimTask).isNotNull();
+        assertThat(pdcState.get()).hasSize(101);
+
+        // Start a second save on a background thread that clears dirty flag and blocks inside storage.save
+        when(economy.deposit(eq(player), eq(60.0))).thenReturn(false);
+        final CostBundle bundle60 = new CostBundle(List.of(CostEntry.of(CostType.VAULT, "60")));
+        final CostQuote quote60 = bundle60.quote(player, Map.of(), economy);
+        final Thread secondSaver = new Thread(() ->
+                customService.refundPlacement(player, new Location(world, 10, 64, 20), "costly", false, false, bundle60, quote60)
+        );
+        try {
+            secondSaver.start();
+            assertThat(secondSaveStarted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+            // Even though pendingRefundsDirty was cleared before I/O, stale trim must NOT execute mid-save
+            staleTrimTask.accept(mock(io.papermc.paper.threadedregions.scheduler.ScheduledTask.class));
+            assertThat(pdcState.get()).hasSize(101);
+
+            releaseSecondSave.countDown();
+            secondSaver.join(5000);
+
+            // Second save failed, so stale trim must still abort
+            staleTrimTask.accept(mock(io.papermc.paper.threadedregions.scheduler.ScheduledTask.class));
+            assertThat(pdcState.get()).hasSize(101);
+
+            // Recovery flush succeeds (call 3) and schedules a fresh trim task that completes cleanly
+            assertThat(customService.flushPendingRefunds()).isTrue();
+            while (!deferredEntityTasks.isEmpty()) {
+                deferredEntityTasks.poll().accept(mock(io.papermc.paper.threadedregions.scheduler.ScheduledTask.class));
+            }
+            assertThat(pdcState.get()).hasSize(100);
+            assertThat(pdcState.get()).contains(firstTxId.toString());
+        } finally {
+            releaseSecondSave.countDown();
+            secondSaver.join(5000);
+        }
+    }
+
+    @Test
     void placeAetheryteRefundsAndReleasesLockWhenRegionSchedulerThrows() throws Exception {
         final org.bukkit.Server server = mock(org.bukkit.Server.class);
         final java.lang.reflect.Field serverField = org.bukkit.Bukkit.class.getDeclaredField("server");
