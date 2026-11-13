@@ -27,14 +27,21 @@ import io.papermc.paper.registry.data.dialog.type.DialogType;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickCallback;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.cost.CostBundle;
+import net.sabafly.clickportals.cost.CostFormatter;
+import net.sabafly.clickportals.cost.CostQuote;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
+import net.sabafly.clickportals.permission.Permissions;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation;
 import net.sabafly.clickportals.variation.AetheryteVariation;
+import org.bukkit.GameMode;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 
@@ -115,9 +122,29 @@ public final class AetheryteDialogFactory {
                 .width(150)
                 .build();
 
+        final CostBundle placementCostBundle = new CostBundle(variation.placement().cost());
+        final Component costLine;
+        if (!placementCostBundle.isEmpty()) {
+            final Map<String, Double> costVars = Map.of(
+                    "owned_count", (double) service.registry().countByOwner(player.getUniqueId()),
+                    "variation_count", (double) service.registry().countByOwnerAndVariation(player.getUniqueId(), normalizedVar)
+            );
+            final CostQuote quote = placementCostBundle.quote(player, costVars, service.economyProvider());
+            final Component costDisplay = CostFormatter.format(player, quote, service.economyProvider(), messages, true);
+            final boolean bypassed = player.getGameMode() == GameMode.CREATIVE || Permissions.canBypassPlaceCost(player);
+            if (bypassed) {
+                costLine = Component.newline().append(messages.get(player, MessageKey.DIALOG_CREATE_COST_BYPASSED, Placeholder.component("cost", costDisplay)));
+            } else {
+                costLine = Component.newline().append(messages.get(player, MessageKey.DIALOG_CREATE_COST, Placeholder.component("cost", costDisplay)));
+            }
+        } else {
+            costLine = Component.empty();
+        }
+
         final Component bodyComponent = messages.createDialogDescription(player, world.getName(), blockX, blockY, blockZ)
                 .append(Component.newline())
-                .append(messages.createDialogVariation(player, variation.displayName()));
+                .append(messages.createDialogVariation(player, variation.displayName()))
+                .append(costLine);
 
         final Dialog dialog = Dialog.create(factory -> factory.empty()
                 .base(DialogBase.builder(messages.createDialogTitle(player))
@@ -152,6 +179,10 @@ public final class AetheryteDialogFactory {
         final List<ActionButton> buttons = new ArrayList<>(allDestinations.size() + 1);
         for (final Aetheryte destination : allDestinations) {
             final WarpEvaluation evaluation = service.evaluateWarp(player, current, destination);
+            // Exclude destinations with no connecting dimensional route (#9, #13)
+            if (evaluation.denyReasonCode() == WarpEvaluation.DenyReason.NO_ROUTE) {
+                continue;
+            }
             final Component label = evaluation.allowed()
                     ? messages.warpDestinationLabel(player, destination, evaluation.costDisplay())
                     : messages.warpDestinationUnavailableLabel(player, destination, evaluation.costDisplay());
@@ -192,13 +223,16 @@ public final class AetheryteDialogFactory {
                 .build();
 
         if (buttons.isEmpty()) {
+            final Component emptyBody = allDestinations.isEmpty()
+                    ? messages.warpDialogBody(player, current, 0)
+                    : messages.get(player, MessageKey.DIALOG_WARP_BODY_NO_ROUTE, Placeholder.unparsed("name", current.name()));
             final Dialog noticeDialog = Dialog.create(factory -> factory.empty()
                     .base(DialogBase.builder(messages.warpDialogTitle(player, current))
                             .canCloseWithEscape(true)
                             .pause(false)
                             .afterAction(DialogBase.DialogAfterAction.CLOSE)
                             .body(List.of(
-                                    DialogBody.plainMessage(messages.warpDialogBody(player, current, 0))
+                                    DialogBody.plainMessage(emptyBody)
                             ))
                             .build())
                     .type(DialogType.notice(closeButton))

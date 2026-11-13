@@ -123,7 +123,7 @@ class AetheryteItemFactoryTest {
                         List.of(" D ", "DLD", " D "),
                         Map.of("D", "DIAMOND", "L", "LODESTONE")
                 ),
-                null, null, null, null, null, null
+                null, null, null, null, null
         );
         final VariationRegistry modifiedRegistry = new VariationRegistry(
                 Map.of("default", modifiedVariation),

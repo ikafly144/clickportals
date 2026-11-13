@@ -57,12 +57,17 @@ public final class Permissions {
     public static final String BYPASS_LIMIT = "clickportals.bypass.limit";
 
     /**
+     * Allows bypassing minimum distance restrictions between Aetherytes (default: {@code op}).
+     */
+    public static final String BYPASS_DISTANCE = "clickportals.bypass.distance";
+
+    /**
      * Allows bypassing Aetheryte warp costs (default: {@code op}).
      */
     public static final String BYPASS_COST_WARP = "clickportals.bypass.cost.warp";
 
     /**
-     * Allows bypassing Aetheryte placement costs (default: {@code op}; reserved for #15, currently inactive).
+     * Allows bypassing Aetheryte placement costs (default: {@code op}) (#15).
      */
     public static final String BYPASS_COST_PLACE = "clickportals.bypass.cost.place";
 
@@ -78,14 +83,14 @@ public final class Permissions {
      * Checks whether the given permissible is allowed to use Aetheryte warps.
      */
     public static boolean canUse(final Permissible permissible) {
-        return permissible.hasPermission(USE) || permissible.hasPermission(ADMIN);
+        return permissible.hasPermission(USE);
     }
 
     /**
      * Checks whether the given permissible is allowed to place Aetherytes.
      */
     public static boolean canPlace(final Permissible permissible) {
-        return permissible.hasPermission(PLACE) || permissible.hasPermission(ADMIN);
+        return permissible.hasPermission(PLACE);
     }
 
     /**
@@ -93,22 +98,21 @@ public final class Permissions {
      */
     public static boolean canRemove(final Permissible permissible, final UUID playerId, final Aetheryte aetheryte) {
         return aetheryte.ownerId().equals(playerId)
-                || permissible.hasPermission(REMOVE_ANY)
-                || permissible.hasPermission(ADMIN);
+                || permissible.hasPermission(REMOVE_ANY);
     }
 
     /**
      * Checks whether the given permissible is allowed to execute {@code /clickportals give}.
      */
     public static boolean canGive(final Permissible permissible) {
-        return permissible.hasPermission(COMMAND_GIVE) || permissible.hasPermission(ADMIN);
+        return permissible.hasPermission(COMMAND_GIVE);
     }
 
     /**
      * Checks whether the given permissible is allowed to execute {@code /clickportals reload}.
      */
     public static boolean canReload(final Permissible permissible) {
-        return permissible.hasPermission(COMMAND_RELOAD) || permissible.hasPermission(ADMIN);
+        return permissible.hasPermission(COMMAND_RELOAD);
     }
 
     /**
@@ -122,20 +126,27 @@ public final class Permissions {
      * Checks whether the given permissible bypasses per-player placement limits.
      */
     public static boolean canBypassLimit(final Permissible permissible) {
-        return permissible.hasPermission(BYPASS_LIMIT) || permissible.hasPermission(ADMIN);
+        return permissible.hasPermission(BYPASS_LIMIT);
+    }
+
+    /**
+     * Checks whether the given permissible bypasses minimum placement distance restrictions.
+     */
+    public static boolean canBypassPlacementDistance(final Permissible permissible) {
+        return permissible.hasPermission(BYPASS_LIMIT) || permissible.hasPermission(BYPASS_DISTANCE);
     }
 
     /**
      * Checks whether the given permissible bypasses warp costs.
      */
     public static boolean canBypassWarpCost(final Permissible permissible) {
-        return permissible.hasPermission(BYPASS_COST_WARP) || permissible.hasPermission(ADMIN);
+        return permissible.hasPermission(BYPASS_COST_WARP);
     }
 
     /**
      * Checks whether the given permissible bypasses placement costs.
      */
     public static boolean canBypassPlaceCost(final Permissible permissible) {
-        return permissible.hasPermission(BYPASS_COST_PLACE) || permissible.hasPermission(ADMIN);
+        return permissible.hasPermission(BYPASS_COST_PLACE);
     }
 }

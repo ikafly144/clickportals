@@ -23,13 +23,20 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.config.DistanceSection;
+import net.sabafly.clickportals.cost.CostEntry;
+import net.sabafly.clickportals.cost.expr.ExpressionException;
+import net.sabafly.clickportals.cost.expr.ExpressionParser;
 import org.bukkit.Color;
 import org.bukkit.Material;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
+import org.spongepowered.configurate.ConfigurationNode;
 import org.spongepowered.configurate.objectmapping.ConfigSerializable;
 import org.spongepowered.configurate.objectmapping.meta.Comment;
 import org.spongepowered.configurate.objectmapping.meta.Setting;
+import org.spongepowered.configurate.serialize.SerializationException;
+import org.spongepowered.configurate.serialize.TypeSerializer;
 
 /**
  * Type-safe Configurate model representing a single Aetheryte variation loaded from
@@ -62,12 +69,16 @@ public record AetheryteVariation(
         TeleportSection teleport,
 
         @Setting("placement")
-        @Comment("Placement validation and surrounding clearance requirements (#42)")
+        @Comment("Placement validation, clearance, and cost requirements (#15, #42)")
         PlacementSection placement,
 
         @Setting("limit")
         @Comment("Per-player placement limit for this variation (#43)")
         LimitSection limit,
+
+        @Setting("warp")
+        @Comment("Optional distance and cost overrides for warps originating from this variation (#14, #26)")
+        WarpOverrideSection warp,
 
         @Setting("bettermodel")
         @Comment("BetterModel animated 3D model engine settings (#46)")
@@ -411,23 +422,120 @@ public record AetheryteVariation(
     }
 
     /**
-     * Placement requirements section (#42).
+     * Placement requirements section (#15, #42).
      */
     @ConfigSerializable
     public record PlacementSection(
             @Setting("clearance")
             @Comment("Surrounding space clearance required to place this Aetheryte variation")
-            ClearanceSection clearance
+            ClearanceSection clearance,
+
+            @Setting("cost")
+            @Comment("Placement cost specifications for this variation (#15)")
+            List<CostEntry> cost,
+
+            @Setting("min-distance")
+            @Comment("Minimum block distance to another Aetheryte in the same world (-1 to inherit global, 0 to disable)")
+            @Nullable Double minDistance
     ) {
-        public PlacementSection(@Nullable final ClearanceSection clearance) {
+        public PlacementSection(
+                @Nullable final ClearanceSection clearance,
+                @Nullable final List<CostEntry> cost,
+                @Nullable final Double minDistance
+        ) {
             this.clearance = clearance == null ? ClearanceSection.defaults() : clearance;
+            this.cost = cost == null ? List.of() : List.copyOf(cost);
+            this.minDistance = minDistance;
+        }
+
+        public PlacementSection(
+                @Nullable final ClearanceSection clearance,
+                @Nullable final List<CostEntry> cost
+        ) {
+            this(clearance, cost, -1.0);
+        }
+
+        public PlacementSection(@Nullable final ClearanceSection clearance) {
+            this(clearance, List.of(), -1.0);
+        }
+
+        public double minDistanceOrDefault(final double fallback) {
+            return (minDistance != null && minDistance >= 0.0) ? minDistance : fallback;
         }
 
         /**
          * Returns the default placement section.
          */
         public static PlacementSection defaults() {
-            return new PlacementSection(ClearanceSection.defaults());
+            return new PlacementSection(ClearanceSection.defaults(), List.of(), -1.0);
+        }
+    }
+
+    /**
+     * Warp distance and cost override section for this variation (#14, #26).
+     */
+    @ConfigSerializable
+    public record WarpOverrideSection(
+            @Setting("distance")
+            @Comment("Optional distance overrides for warps originating from this variation (#26)")
+            DistanceSection distance,
+
+            @Setting("cost")
+            @Comment("Optional cost overrides for warps originating from this variation (null to inherit global, [] for free) (#14)")
+            @Nullable List<CostEntry> cost
+    ) {
+        public WarpOverrideSection(
+                @Nullable final DistanceSection distance,
+                @Nullable final List<CostEntry> cost
+        ) {
+            this.distance = distance == null ? DistanceSection.inherit() : distance;
+            this.cost = cost == null ? null : List.copyOf(cost);
+        }
+
+        public static WarpOverrideSection defaults() {
+            return new WarpOverrideSection(DistanceSection.inherit(), null);
+        }
+    }
+
+    /**
+     * Custom {@link TypeSerializer} for {@link WarpOverrideSection} ensuring {@code cost: null} is preserved
+     * as {@code null} (inheriting global config) rather than being coerced into an empty list (#14, #26).
+     */
+    public static final class WarpOverrideSectionSerializer implements TypeSerializer<WarpOverrideSection> {
+        public static final WarpOverrideSectionSerializer INSTANCE = new WarpOverrideSectionSerializer();
+
+        @Override
+        public WarpOverrideSection deserialize(final java.lang.reflect.Type type, final ConfigurationNode node)
+                throws SerializationException {
+            final DistanceSection distance = node.node("distance").get(DistanceSection.class, DistanceSection.inherit());
+            final ConfigurationNode costNode = node.node("cost");
+            final List<CostEntry> cost;
+            if (costNode.isNull() || costNode.raw() == null) {
+                cost = null;
+            } else if (costNode.isList()) {
+                cost = costNode.getList(CostEntry.class);
+            } else {
+                cost = null;
+            }
+            return new WarpOverrideSection(distance, cost);
+        }
+
+        @Override
+        public void serialize(
+                final java.lang.reflect.Type type,
+                final @Nullable WarpOverrideSection obj,
+                final ConfigurationNode node
+        ) throws SerializationException {
+            if (obj == null) {
+                node.raw(null);
+                return;
+            }
+            node.node("distance").set(DistanceSection.class, obj.distance());
+            if (obj.cost() == null) {
+                node.node("cost").raw(null);
+            } else {
+                node.node("cost").setList(CostEntry.class, obj.cost());
+            }
         }
     }
 
@@ -562,31 +670,6 @@ public record AetheryteVariation(
     }
 
     /**
-     * Canonical constructor ensuring non-null sections when deserialized by Configurate.
-     */
-    public AetheryteVariation(
-            @Nullable final String displayName,
-            @Nullable final ItemSection item,
-            @Nullable final RecipeSection recipe,
-            @Nullable final ModelSection model,
-            @Nullable final HitboxSection hitbox,
-            @Nullable final TeleportSection teleport,
-            @Nullable final PlacementSection placement,
-            @Nullable final LimitSection limit,
-            @Nullable final BetterModelSection bettermodel
-    ) {
-        this.displayName = (displayName == null || displayName.isBlank()) ? "<aqua>Aetheryte</aqua>" : displayName;
-        this.item = item == null ? ItemSection.defaults() : item;
-        this.recipe = recipe == null ? RecipeSection.disabled() : recipe;
-        this.model = model == null ? ModelSection.defaults() : model;
-        this.hitbox = hitbox == null ? HitboxSection.defaults() : hitbox;
-        this.teleport = teleport == null ? TeleportSection.defaults() : teleport;
-        this.placement = placement == null ? PlacementSection.defaults() : placement;
-        this.limit = limit == null ? LimitSection.defaults() : limit;
-        this.bettermodel = bettermodel == null ? BetterModelSection.disabled() : bettermodel;
-    }
-
-    /**
      * Convenience constructor preserving backward compatibility for 8-argument invocations.
      */
     public AetheryteVariation(
@@ -599,7 +682,68 @@ public record AetheryteVariation(
             @Nullable final PlacementSection placement,
             @Nullable final LimitSection limit
     ) {
-        this(displayName, item, recipe, model, hitbox, teleport, placement, limit, BetterModelSection.disabled());
+        this(displayName, item, recipe, model, hitbox, teleport, placement, limit, null, BetterModelSection.disabled());
+    }
+
+    /**
+     * Convenience constructor preserving backward compatibility for BetterModel invocations without warp.
+     */
+    public AetheryteVariation(
+            @Nullable final String displayName,
+            @Nullable final ItemSection item,
+            @Nullable final RecipeSection recipe,
+            @Nullable final ModelSection model,
+            @Nullable final HitboxSection hitbox,
+            @Nullable final TeleportSection teleport,
+            @Nullable final PlacementSection placement,
+            @Nullable final LimitSection limit,
+            @Nullable final BetterModelSection bettermodel
+    ) {
+        this(displayName, item, recipe, model, hitbox, teleport, placement, limit, null, bettermodel);
+    }
+
+    /**
+     * Convenience constructor preserving backward compatibility for warp invocations without BetterModel.
+     */
+    public AetheryteVariation(
+            @Nullable final String displayName,
+            @Nullable final ItemSection item,
+            @Nullable final RecipeSection recipe,
+            @Nullable final ModelSection model,
+            @Nullable final HitboxSection hitbox,
+            @Nullable final TeleportSection teleport,
+            @Nullable final PlacementSection placement,
+            @Nullable final LimitSection limit,
+            @Nullable final WarpOverrideSection warp
+    ) {
+        this(displayName, item, recipe, model, hitbox, teleport, placement, limit, warp, BetterModelSection.disabled());
+    }
+
+    /**
+     * Canonical constructor ensuring non-null sections when deserialized by Configurate.
+     */
+    public AetheryteVariation(
+            @Nullable final String displayName,
+            @Nullable final ItemSection item,
+            @Nullable final RecipeSection recipe,
+            @Nullable final ModelSection model,
+            @Nullable final HitboxSection hitbox,
+            @Nullable final TeleportSection teleport,
+            @Nullable final PlacementSection placement,
+            @Nullable final LimitSection limit,
+            @Nullable final WarpOverrideSection warp,
+            @Nullable final BetterModelSection bettermodel
+    ) {
+        this.displayName = (displayName == null || displayName.isBlank()) ? "<aqua>Aetheryte</aqua>" : displayName;
+        this.item = item == null ? ItemSection.defaults() : item;
+        this.recipe = recipe == null ? RecipeSection.disabled() : recipe;
+        this.model = model == null ? ModelSection.defaults() : model;
+        this.hitbox = hitbox == null ? HitboxSection.defaults() : hitbox;
+        this.teleport = teleport == null ? TeleportSection.defaults() : teleport;
+        this.placement = placement == null ? PlacementSection.defaults() : placement;
+        this.limit = limit == null ? LimitSection.defaults() : limit;
+        this.warp = warp == null ? WarpOverrideSection.defaults() : warp;
+        this.bettermodel = bettermodel == null ? BetterModelSection.disabled() : bettermodel;
     }
 
     /**
@@ -615,6 +759,7 @@ public record AetheryteVariation(
                 TeleportSection.defaults(),
                 PlacementSection.defaults(),
                 LimitSection.defaults(),
+                WarpOverrideSection.defaults(),
                 BetterModelSection.disabled()
         );
     }
@@ -785,8 +930,25 @@ public record AetheryteVariation(
                     validClearanceHeight, clamped, cleanId, MAX_CLEARANCE_HEIGHT);
             validClearanceHeight = clamped;
         }
+        if (placement.cost() != null) {
+            for (final CostEntry entry : placement.cost()) {
+                if (entry.type() == null) {
+                    logger.warn("Unknown cost type '{}' in placement.cost of variation '{}'", entry.rawType(), cleanId);
+                } else {
+                    try {
+                        ExpressionParser.parse(entry.amount(), entry.type().resourceVariable());
+                    } catch (final ExpressionException e) {
+                        logger.warn("Invalid placement cost expression '{}' in variation '{}': {}", entry.amount(), cleanId, e.getMessage());
+                    }
+                }
+            }
+        }
+        final Double rawMinDistance = placement.minDistance();
+        final double validMinDistance = rawMinDistance == null || !Double.isFinite(rawMinDistance) || rawMinDistance < -1.0 ? -1.0 : rawMinDistance;
         final PlacementSection validatedPlacement = new PlacementSection(
-                new ClearanceSection(validClearanceRadius, validClearanceHeight)
+                new ClearanceSection(validClearanceRadius, validClearanceHeight),
+                placement.cost(),
+                validMinDistance
         );
 
         // 7. Validate limit section (#43)
@@ -796,7 +958,34 @@ public record AetheryteVariation(
         final int validCooldownTicks = rawCooldownTicks < -1 ? -1 : rawCooldownTicks;
         final LimitSection validatedLimit = new LimitSection(validMaxPerPlayer, validCooldownTicks);
 
-        // 8. Validate BetterModel section (#46)
+        // 8. Validate warp override section (#14, #26)
+        final DistanceSection rawWarpDist = warp.distance();
+        final double validWarpMin = rawWarpDist.min() == null || !Double.isFinite(rawWarpDist.min()) || rawWarpDist.min() < -1.0 ? -1.0 : rawWarpDist.min();
+        double validWarpMax = rawWarpDist.max() == null || !Double.isFinite(rawWarpDist.max()) || rawWarpDist.max() < -1.0 ? -1.0 : rawWarpDist.max();
+        if (validWarpMin >= 0.0 && validWarpMax >= 0.0 && validWarpMin > validWarpMax) {
+            logger.warn("warp.distance.min ({}) is greater than warp.distance.max ({}) in variation '{}'. Disabling max distance (-1.0) to prevent deadlocks.",
+                    validWarpMin, validWarpMax, cleanId);
+            validWarpMax = -1.0;
+        }
+        final Boolean validCrossDim = rawWarpDist.crossDimension();
+        final DistanceSection validatedWarpDist = new DistanceSection(validWarpMin, validWarpMax, validCrossDim);
+
+        if (warp.cost() != null) {
+            for (final CostEntry entry : warp.cost()) {
+                if (entry.type() == null) {
+                    logger.warn("Unknown cost type '{}' in warp.cost of variation '{}'", entry.rawType(), cleanId);
+                } else {
+                    try {
+                        ExpressionParser.parse(entry.amount(), entry.type().resourceVariable());
+                    } catch (final ExpressionException e) {
+                        logger.warn("Invalid warp cost expression '{}' in variation '{}': {}", entry.amount(), cleanId, e.getMessage());
+                    }
+                }
+            }
+        }
+        final WarpOverrideSection validatedWarp = new WarpOverrideSection(validatedWarpDist, warp.cost());
+
+        // 9. Validate BetterModel section (#46)
         final boolean bmEnabled = Boolean.TRUE.equals(bettermodel.enabled());
         final String rawModelId = bettermodel.modelId() == null ? "" : bettermodel.modelId().strip();
         final AnimationSection rawAnims = bettermodel.animations();
@@ -819,6 +1008,7 @@ public record AetheryteVariation(
                 validatedTeleport,
                 validatedPlacement,
                 validatedLimit,
+                validatedWarp,
                 validatedBetterModel
         );
     }

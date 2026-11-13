@@ -17,18 +17,31 @@
  */
 package net.sabafly.clickportals.service;
 
+import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.DoubleSupplier;
 import java.util.function.IntSupplier;
 import java.util.function.ToLongFunction;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry.RegistrationOutcome;
+import net.sabafly.clickportals.cost.CostBundle;
+import net.sabafly.clickportals.cost.CostFormatter;
+import net.sabafly.clickportals.cost.CostItemQuote;
+import net.sabafly.clickportals.cost.CostQuote;
+import net.sabafly.clickportals.economy.EconomyProvider;
+import net.sabafly.clickportals.economy.NoopEconomyProvider;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
@@ -74,6 +87,13 @@ public final class AetheryteService {
     public static final NamespacedKey LAST_PLACE_TICK_KEY = new NamespacedKey("clickportals", "last_place_tick");
 
     /**
+     * Player {@link PersistentDataContainer} key storing recently processed pending refund transaction IDs for idempotency (#15).
+     */
+    public static final NamespacedKey PROCESSED_REFUNDS_KEY = new NamespacedKey("clickportals", "processed_refunds");
+
+    private static final int MAX_TRACKED_PROCESSED_REFUNDS = 100;
+
+    /**
      * Callback for sending client-side item cooldown packets when an Aetheryte placement cooldown is applied (#43).
      */
     @FunctionalInterface
@@ -90,20 +110,49 @@ public final class AetheryteService {
     public record WarpEvaluation(
             boolean allowed,
             Component costDisplay,
-            @Nullable Component denyReason
+            @Nullable Component denyReason,
+            @Nullable DenyReason denyReasonCode
     ) {
+        /**
+         * Category of denial for warp evaluation (#13, #26).
+         */
+        public enum DenyReason {
+            NO_ROUTE,
+            TOO_FAR,
+            TOO_CLOSE,
+            INSUFFICIENT_COST,
+            NOT_FOUND,
+            NO_PERMISSION,
+            OTHER
+        }
+
+        public WarpEvaluation(final boolean allowed, final Component costDisplay, final @Nullable Component denyReason) {
+            this(allowed, costDisplay, denyReason, allowed ? null : DenyReason.OTHER);
+        }
+
         /**
          * Creates an allowed evaluation with the given cost display.
          */
         public static WarpEvaluation permitted(final Component costDisplay) {
-            return new WarpEvaluation(true, costDisplay, null);
+            return new WarpEvaluation(true, costDisplay, null, null);
         }
 
         /**
          * Creates a denied evaluation with the given cost display and rejection reason.
          */
         public static WarpEvaluation denied(final Component costDisplay, final Component denyReason) {
-            return new WarpEvaluation(false, costDisplay, denyReason);
+            return new WarpEvaluation(false, costDisplay, denyReason, DenyReason.OTHER);
+        }
+
+        /**
+         * Creates a denied evaluation with the given cost display, rejection reason, and structured code.
+         */
+        public static WarpEvaluation denied(
+                final Component costDisplay,
+                final Component denyReason,
+                final @Nullable DenyReason code
+        ) {
+            return new WarpEvaluation(false, costDisplay, denyReason, code != null ? code : DenyReason.OTHER);
         }
     }
 
@@ -124,6 +173,43 @@ public final class AetheryteService {
         default boolean charge(final Player player, final @Nullable Aetheryte source, final Aetheryte destination) {
             return evaluate(player, source, destination).allowed();
         }
+
+        /**
+         * Refunds previously charged costs if teleportation fails or is cancelled (#15).
+         * Must be called on the player's entity thread.
+         *
+         * @return {@code true} if refund succeeded or nothing to refund, {@code false} if refund failed and should be compensated
+         */
+        default boolean refund(final Player player, final @Nullable Aetheryte source, final Aetheryte destination) {
+            return true;
+        }
+
+        /**
+         * Commits and finalizes charge state upon successful teleportation (#15).
+         */
+        default void commit(final Player player, final @Nullable Aetheryte source, final Aetheryte destination) {
+        }
+
+        /**
+         * Pops and returns unrefunded cost items for the player and destination if refund could not be applied (#15).
+         */
+        default List<CostItemQuote> popPendingCharge(final Player player, final Aetheryte destination) {
+            return List.of();
+        }
+
+        /**
+         * Returns pending charged cost items for the player and destination without removing them (#15).
+         */
+        default List<CostItemQuote> peekPendingCharge(final Player player, final Aetheryte destination) {
+            return List.of();
+        }
+
+        /**
+         * Pops and returns any unrefunded items remaining after a failed {@link #charge} rollback (#15).
+         */
+        default List<CostItemQuote> popFailedChargeUnrefunded(final Player player, final Aetheryte destination) {
+            return List.of();
+        }
     }
 
     private final Plugin plugin;
@@ -134,10 +220,20 @@ public final class AetheryteService {
     private final Messages messages;
     private final IntSupplier globalMaxPerPlayerSupplier;
     private final IntSupplier globalCooldownTicksSupplier;
+    private volatile DoubleSupplier globalMinDistanceSupplier = () -> 0.0;
     private final ToLongFunction<Player> tickSupplier;
     private final CooldownPacketSender cooldownPacketSender;
-    private final WarpCostEvaluator costEvaluator;
+    private volatile WarpCostEvaluator costEvaluator;
+    private volatile EconomyProvider economyProvider = NoopEconomyProvider.INSTANCE;
     private final Set<UUID> pendingPlacements = ConcurrentHashMap.newKeySet();
+    private final Set<UUID> inFlightWarps = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, List<CostItemQuote>> pendingRefunds = new ConcurrentHashMap<>();
+    private final PendingRefundStorage pendingRefundStorage;
+    private final Object refundPersistLock = new Object();
+    private final AtomicBoolean pendingRefundsDirty = new AtomicBoolean(false);
+    private final AtomicBoolean refundPersistScheduled = new AtomicBoolean(false);
+    private final Set<UUID> playersPendingPdcTrim = ConcurrentHashMap.newKeySet();
+    private static final double BASE_INTERACT_REACH = 6.0;
 
     /**
      * Creates a new {@link AetheryteService} with default variations, messages, and free cost evaluation.
@@ -295,6 +391,75 @@ public final class AetheryteService {
             final CooldownPacketSender cooldownPacketSender,
             final WarpCostEvaluator costEvaluator
     ) {
+        this(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                modelService,
+                messages,
+                globalMaxPerPlayerSupplier,
+                globalCooldownTicksSupplier,
+                () -> 0.0,
+                tickSupplier,
+                cooldownPacketSender,
+                costEvaluator
+        );
+    }
+
+    /**
+     * Creates a new {@link AetheryteService} with full dependencies including minimum placement distance supplier.
+     */
+    public AetheryteService(
+            final Plugin plugin,
+            final AetheryteRegistry registry,
+            final VariationRegistry variationRegistry,
+            final HologramService hologramService,
+            final AetheryteModelService modelService,
+            final Messages messages,
+            final IntSupplier globalMaxPerPlayerSupplier,
+            final IntSupplier globalCooldownTicksSupplier,
+            final DoubleSupplier globalMinDistanceSupplier,
+            final ToLongFunction<Player> tickSupplier,
+            final CooldownPacketSender cooldownPacketSender,
+            final WarpCostEvaluator costEvaluator
+    ) {
+        this(
+                plugin,
+                registry,
+                variationRegistry,
+                hologramService,
+                modelService,
+                messages,
+                globalMaxPerPlayerSupplier,
+                globalCooldownTicksSupplier,
+                globalMinDistanceSupplier,
+                tickSupplier,
+                cooldownPacketSender,
+                costEvaluator,
+                resolveDefaultRefundStorage(plugin)
+        );
+    }
+
+    /**
+     * Creates a new {@link AetheryteService} with full dependencies including minimum placement distance supplier
+     * and custom pending refund storage (#15).
+     */
+    public AetheryteService(
+            final Plugin plugin,
+            final AetheryteRegistry registry,
+            final VariationRegistry variationRegistry,
+            final HologramService hologramService,
+            final AetheryteModelService modelService,
+            final Messages messages,
+            final IntSupplier globalMaxPerPlayerSupplier,
+            final IntSupplier globalCooldownTicksSupplier,
+            final DoubleSupplier globalMinDistanceSupplier,
+            final ToLongFunction<Player> tickSupplier,
+            final CooldownPacketSender cooldownPacketSender,
+            final WarpCostEvaluator costEvaluator,
+            final PendingRefundStorage pendingRefundStorage
+    ) {
         this.plugin = plugin;
         this.registry = registry;
         this.variationRegistry = variationRegistry;
@@ -303,9 +468,70 @@ public final class AetheryteService {
         this.messages = messages;
         this.globalMaxPerPlayerSupplier = globalMaxPerPlayerSupplier;
         this.globalCooldownTicksSupplier = globalCooldownTicksSupplier;
+        this.globalMinDistanceSupplier = globalMinDistanceSupplier != null ? globalMinDistanceSupplier : () -> 0.0;
         this.tickSupplier = tickSupplier;
         this.cooldownPacketSender = cooldownPacketSender;
         this.costEvaluator = costEvaluator;
+        this.pendingRefundStorage = pendingRefundStorage != null ? pendingRefundStorage : PendingRefundStorage.noop();
+        this.pendingRefunds.putAll(this.pendingRefundStorage.load());
+    }
+
+    private static PendingRefundStorage resolveDefaultRefundStorage(final Plugin plugin) {
+        if (plugin == null || plugin.getDataFolder() == null) {
+            return PendingRefundStorage.noop();
+        }
+        return new PendingRefundStorage(
+                plugin.getDataFolder().toPath().resolve("pending_refunds.yml"),
+                plugin.getSLF4JLogger()
+        );
+    }
+
+    /**
+     * Returns the global minimum placement distance supplier.
+     */
+    public DoubleSupplier globalMinDistanceSupplier() {
+        return globalMinDistanceSupplier;
+    }
+
+    /**
+     * Updates the global minimum placement distance supplier on reload.
+     */
+    public void setGlobalMinDistanceSupplier(final DoubleSupplier globalMinDistanceSupplier) {
+        this.globalMinDistanceSupplier = globalMinDistanceSupplier != null ? globalMinDistanceSupplier : () -> 0.0;
+    }
+
+    /**
+     * Returns the effective minimum placement distance for the given variation.
+     */
+    public double effectiveMinDistance(final String variationId) {
+        final AetheryteVariation var = variationRegistry.getOrDefault(variationId);
+        return var.placement().minDistanceOrDefault(globalMinDistanceSupplier.getAsDouble());
+    }
+
+    /**
+     * Checks whether an Aetheryte can be placed at the specified position without violating minimum distance constraints.
+     */
+    public Optional<Component> checkPlacementDistance(
+            final Player player,
+            final World world,
+            final int x,
+            final int y,
+            final int z,
+            final String variationId
+    ) {
+        if (Permissions.canBypassPlacementDistance(player)) {
+            return Optional.empty();
+        }
+        final double minDistance = effectiveMinDistance(variationId);
+        if (minDistance <= 0.0) {
+            return Optional.empty();
+        }
+        final Optional<Aetheryte> nearby = registry.findWithinDistance(world.getUID(), x, y, z, minDistance);
+        if (nearby.isPresent()) {
+            final Component distComp = Component.text(String.format(java.util.Locale.ROOT, "%.1f", minDistance));
+            return Optional.of(messages.get(player, MessageKey.ERROR_PLACEMENT_TOO_CLOSE, Placeholder.component("distance", distComp)));
+        }
+        return Optional.empty();
     }
 
     /**
@@ -320,6 +546,7 @@ public final class AetheryteService {
      */
     public void removePlayer(final UUID playerId) {
         pendingPlacements.remove(playerId);
+        inFlightWarps.remove(playerId);
     }
 
     /**
@@ -362,6 +589,270 @@ public final class AetheryteService {
      */
     public void setModelService(final AetheryteModelService modelService) {
         this.modelService = modelService;
+    }
+
+    /**
+     * Returns the active {@link WarpCostEvaluator}.
+     */
+    public WarpCostEvaluator costEvaluator() {
+        return costEvaluator;
+    }
+
+    /**
+     * Updates the active {@link WarpCostEvaluator} on reload.
+     */
+    public void setCostEvaluator(final WarpCostEvaluator costEvaluator) {
+        this.costEvaluator = costEvaluator;
+    }
+
+    /**
+     * Returns the active {@link EconomyProvider}.
+     */
+    public EconomyProvider economyProvider() {
+        return economyProvider;
+    }
+
+    /**
+     * Updates the active {@link EconomyProvider} on reload (#16).
+     */
+    public void setEconomyProvider(final EconomyProvider economyProvider) {
+        this.economyProvider = economyProvider;
+    }
+
+    /**
+     * Checks whether the player is in the same world and within interaction reach of the given Aetheryte,
+     * scaling the reach allowance by the variation hitbox dimensions (#40).
+     */
+    public boolean isWithinReach(final Player player, final Aetheryte aetheryte) {
+        final Location loc = player.getLocation();
+        if (loc == null) {
+            return false;
+        }
+        final World world = loc.getWorld();
+        if (world == null || !world.getUID().equals(aetheryte.worldId())) {
+            return false;
+        }
+        final AetheryteVariation variation = variationRegistry.getOrDefault(aetheryte.variation());
+        final double hitboxAllowance = Math.max(variation.hitbox().width(), variation.hitbox().height());
+        final double maxReach = BASE_INTERACT_REACH + hitboxAllowance;
+        return loc.distanceSquared(aetheryte.markerLocation(world)) <= maxReach * maxReach;
+    }
+
+    /**
+     * Processes any pending placement or warp cost refunds for a reconnecting player (#15).
+     */
+    public void processPendingRefunds(final Player player) {
+        final List<CostItemQuote> items = pendingRefunds.get(player.getUniqueId());
+        if (items == null || items.isEmpty()) {
+            return;
+        }
+        final ScheduledTask task = player.getScheduler().run(plugin, t -> {
+            final List<CostItemQuote> currentItems = pendingRefunds.get(player.getUniqueId());
+            if (currentItems == null || currentItems.isEmpty()) {
+                return;
+            }
+            final PersistentDataContainer pdc = player.getPersistentDataContainer();
+            final List<String> existingProcessed = pdc != null
+                    ? pdc.get(PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings())
+                    : null;
+            final List<String> processedList = existingProcessed != null ? new ArrayList<>(existingProcessed) : new ArrayList<>();
+
+            final List<CostItemQuote> snapshot = new ArrayList<>(currentItems);
+            final List<CostItemQuote> toRefund = new ArrayList<>();
+            for (final CostItemQuote item : snapshot) {
+                final UUID txId = item.transactionId();
+                if (txId != null && processedList.contains(txId.toString())) {
+                    // Already deposited prior to a crash or storage save failure; remove without re-depositing
+                    currentItems.remove(item);
+                } else {
+                    toRefund.add(item);
+                }
+            }
+
+            boolean allSuccess = true;
+            if (!toRefund.isEmpty()) {
+                final CostQuote quote = new CostQuote(toRefund, true);
+                final CostBundle.RefundResult result = new CostBundle(List.of()).refundWithResult(player, quote, economyProvider);
+                allSuccess = result.success();
+                for (final CostItemQuote refundedItem : result.refundedItems()) {
+                    currentItems.remove(refundedItem);
+                    final UUID txId = refundedItem.transactionId();
+                    if (txId != null) {
+                        final String txIdStr = txId.toString();
+                        if (!processedList.contains(txIdStr)) {
+                            processedList.add(txIdStr);
+                        }
+                    }
+                }
+                if (pdc != null && !result.refundedItems().isEmpty()) {
+                    pdc.set(PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings(), processedList);
+                    if (processedList.size() > MAX_TRACKED_PROCESSED_REFUNDS) {
+                        playersPendingPdcTrim.add(player.getUniqueId());
+                    }
+                }
+            }
+            pendingRefunds.computeIfPresent(player.getUniqueId(), (k, list) -> list.isEmpty() ? null : list);
+            markPendingRefundsDirtyAndPersist();
+            if (allSuccess) {
+                plugin.getSLF4JLogger().info("Processed pending placement cost refund for returning player {}", player.getName());
+            } else {
+                plugin.getSLF4JLogger().warn("Partially or wholly failed to process pending cost refund for player {}", player.getName());
+            }
+        }, () -> {
+            // Player retired / disconnected before execution; keep pendingRefunds intact
+        });
+        if (task == null) {
+            plugin.getSLF4JLogger().warn("Could not schedule pending refund task for player {}", player.getName());
+        }
+    }
+
+    /**
+     * Returns the active {@link PendingRefundStorage} (#15).
+     */
+    public PendingRefundStorage pendingRefundStorage() {
+        return pendingRefundStorage;
+    }
+
+    private void recordPendingRefund(final UUID playerId, final List<CostItemQuote> items) {
+        if (items == null || items.isEmpty()) {
+            return;
+        }
+        final List<CostItemQuote> stamped = new ArrayList<>(items.size());
+        for (final CostItemQuote item : items) {
+            stamped.add(item.transactionId() != null ? item : item.withTransactionId(UUID.randomUUID()));
+        }
+        pendingRefunds.compute(playerId, (k, existing) -> {
+            final List<CostItemQuote> list = existing != null ? existing : new CopyOnWriteArrayList<>();
+            list.addAll(stamped);
+            return list;
+        });
+        markPendingRefundsDirtyAndPersist();
+    }
+
+    /**
+     * Synchronously flushes any unpersisted pending refunds to disk, e.g., during plugin shutdown (#15).
+     *
+     * @return {@code true} if no pending refunds remain dirty or persistence succeeded, {@code false} otherwise
+     */
+    public boolean flushPendingRefunds() {
+        return savePendingRefundsLoop();
+    }
+
+    /**
+     * Returns the number of players currently awaiting a pending refund.
+     */
+    public int pendingRefundPlayerCount() {
+        return pendingRefunds.size();
+    }
+
+    /**
+     * Returns the total number of unrefunded cost items across all players.
+     */
+    public int pendingRefundItemCount() {
+        int total = 0;
+        for (final List<CostItemQuote> list : pendingRefunds.values()) {
+            if (list != null) {
+                total += list.size();
+            }
+        }
+        return total;
+    }
+
+    private void markPendingRefundsDirtyAndPersist() {
+        pendingRefundsDirty.set(true);
+        if (!savePendingRefundsLoop()) {
+            plugin.getSLF4JLogger().error("Failed to persist pending refunds to disk; scheduling background retries.");
+            schedulePendingRefundRetry(0);
+        }
+    }
+
+    private boolean savePendingRefundsLoop() {
+        synchronized (refundPersistLock) {
+            while (pendingRefundsDirty.getAndSet(false)) {
+                if (!pendingRefundStorage.save(pendingRefunds)) {
+                    pendingRefundsDirty.set(true);
+                    return false;
+                }
+            }
+            trimProcessedRefundsForPendingPlayers();
+            return true;
+        }
+    }
+
+    private void schedulePendingRefundRetry(final int attempt) {
+        if (!pendingRefundsDirty.get() || !refundPersistScheduled.compareAndSet(false, true)) {
+            return;
+        }
+        final org.bukkit.Server server = plugin.getServer();
+        if (server == null || server.getAsyncScheduler() == null || !plugin.isEnabled()) {
+            refundPersistScheduled.set(false);
+            return;
+        }
+        final long delaySeconds = Math.min(60L, 5L * (1L << Math.min(attempt, 4)));
+        try {
+            server.getAsyncScheduler().runDelayed(plugin, t -> {
+                refundPersistScheduled.set(false);
+                if (!pendingRefundsDirty.get()) {
+                    return;
+                }
+                if (savePendingRefundsLoop()) {
+                    plugin.getSLF4JLogger().info("Successfully persisted pending refunds after {} retry attempt(s).", attempt + 1);
+                    return;
+                }
+                final int nextAttempt = attempt + 1;
+                if (nextAttempt == 5 || nextAttempt % 10 == 0) {
+                    plugin.getSLF4JLogger().error(
+                            "Still unable to persist pending refunds to disk after {} attempts; continuing background retries.",
+                            nextAttempt
+                    );
+                }
+                schedulePendingRefundRetry(nextAttempt);
+            }, delaySeconds, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (final Throwable t) {
+            refundPersistScheduled.set(false);
+            plugin.getSLF4JLogger().error("Failed to schedule pending refund persistence retry.", t);
+        }
+    }
+
+    private void trimProcessedRefundsForPendingPlayers() {
+        if (playersPendingPdcTrim.isEmpty() || !plugin.isEnabled()) {
+            return;
+        }
+        final org.bukkit.Server server = plugin.getServer();
+        if (server == null) {
+            return;
+        }
+        final List<UUID> snapshot = new ArrayList<>(playersPendingPdcTrim);
+        for (final UUID playerId : snapshot) {
+            final Player player = server.getPlayer(playerId);
+            if (player == null || player.getScheduler() == null) {
+                continue;
+            }
+            try {
+                player.getScheduler().run(plugin, t -> {
+                    if (pendingRefundsDirty.get()) {
+                        return;
+                    }
+                    final PersistentDataContainer pdc = player.getPersistentDataContainer();
+                    if (pdc == null) {
+                        playersPendingPdcTrim.remove(playerId);
+                        return;
+                    }
+                    final List<String> existing = pdc.get(PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings());
+                    if (existing == null || existing.size() <= MAX_TRACKED_PROCESSED_REFUNDS) {
+                        playersPendingPdcTrim.remove(playerId);
+                        return;
+                    }
+                    final List<String> trimmed = new ArrayList<>(
+                            existing.subList(existing.size() - MAX_TRACKED_PROCESSED_REFUNDS, existing.size())
+                    );
+                    pdc.set(PROCESSED_REFUNDS_KEY, PersistentDataType.LIST.strings(), trimmed);
+                    playersPendingPdcTrim.remove(playerId);
+                }, null);
+            } catch (final Throwable ignored) {
+                // Plugin may be shutting down between isEnabled() check and task registration
+            }
+        }
     }
 
     /**
@@ -516,16 +1007,31 @@ public final class AetheryteService {
             final @Nullable Aetheryte source,
             final Aetheryte destination
     ) {
-        final WarpEvaluation costResult = Permissions.canBypassWarpCost(player)
-                ? WarpEvaluation.permitted(messages.freeCostLabel(player))
-                : costEvaluator.evaluate(player, source, destination);
+        final WarpEvaluation evaluation = costEvaluator.evaluate(player, source, destination);
         if (!canUse(player)) {
             return WarpEvaluation.denied(
-                    costResult.costDisplay(),
-                    messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION)
+                    evaluation.costDisplay(),
+                    messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION),
+                    WarpEvaluation.DenyReason.NO_PERMISSION
             );
         }
-        return costResult;
+        if (Permissions.canBypassWarpCost(player)) {
+            final Component originalCost = evaluation.costDisplay();
+            final String plainCost = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(originalCost);
+            final String plainFree = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(messages.freeCostLabel(player));
+            final Component bypassedCostDisplay = plainCost.equals(plainFree)
+                    ? originalCost
+                    : messages.get(player, MessageKey.COST_BYPASSED, Placeholder.component("cost", originalCost));
+
+            if (evaluation.denyReasonCode() == WarpEvaluation.DenyReason.INSUFFICIENT_COST) {
+                return WarpEvaluation.permitted(bypassedCostDisplay);
+            }
+            if (evaluation.allowed()) {
+                return WarpEvaluation.permitted(bypassedCostDisplay);
+            }
+            return new WarpEvaluation(false, bypassedCostDisplay, evaluation.denyReason(), evaluation.denyReasonCode());
+        }
+        return evaluation;
     }
 
     /**
@@ -599,29 +1105,75 @@ public final class AetheryteService {
                 return;
             }
 
+            final Optional<Component> distanceError = checkPlacementDistance(player, world, blockX, blockY, blockZ, normalizedVar);
+            if (distanceError.isPresent()) {
+                pendingPlacements.remove(ownerId);
+                player.sendMessage(distanceError.get());
+                return;
+            }
+
             final boolean creative = player.getGameMode() == GameMode.CREATIVE;
+            final boolean bypassCost = Permissions.canBypassPlaceCost(player);
+            final boolean canBypassDistance = Permissions.canBypassPlacementDistance(player);
+            final CostBundle placementCostBundle = new CostBundle(variation.placement().cost());
+            final CostQuote placementQuote;
+            final EconomyProvider activeEconomy = this.economyProvider;
+            if (!creative && !bypassCost && !placementCostBundle.isEmpty()) {
+                final Map<String, Double> costVars = Map.of(
+                        "owned_count", (double) registry.countByOwner(ownerId),
+                        "variation_count", (double) registry.countByOwnerAndVariation(ownerId, normalizedVar)
+                );
+                placementQuote = placementCostBundle.quote(player, costVars, activeEconomy);
+                if (!placementQuote.affordable()) {
+                    pendingPlacements.remove(ownerId);
+                    final Component reason = CostFormatter.formatMissingRequirements(player, placementQuote, activeEconomy, messages);
+                    player.sendMessage(messages.get(player, MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT, Placeholder.component("reason", reason)));
+                    return;
+                }
+            } else {
+                placementQuote = CostQuote.FREE;
+            }
+
             if (!creative && !consumeOneAetheryteItem(player.getInventory(), normalizedVar)) {
                 pendingPlacements.remove(ownerId);
                 messages.send(player, MessageKey.ERROR_MISSING_ITEM);
                 return;
             }
 
+            final CostQuote chargedPlacementQuote;
+            if (!creative && !bypassCost && !placementCostBundle.isEmpty()) {
+                final CostBundle.ChargeResult chargeResult = placementCostBundle.chargeWithResult(player, placementQuote, activeEconomy);
+                if (!chargeResult.success()) {
+                    refundItemToPlayer(player, targetLocation, normalizedVar);
+                    if (!chargeResult.unrefundedItems().isEmpty()) {
+                        recordPendingRefund(player.getUniqueId(), chargeResult.unrefundedItems());
+                    }
+                    pendingPlacements.remove(ownerId);
+                    final Component reason = CostFormatter.formatMissingRequirements(player, placementQuote, activeEconomy, messages);
+                    player.sendMessage(messages.get(player, MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT, Placeholder.component("reason", reason)));
+                    return;
+                }
+                chargedPlacementQuote = chargeResult.chargedQuote();
+            } else {
+                chargedPlacementQuote = CostQuote.FREE;
+            }
+
             // Step 2: Validate clearance, check limits atomically, and spawn the Marker entity on the region thread.
-            Bukkit.getRegionScheduler().execute(plugin, targetLocation, () -> {
-                try {
+            final AtomicBoolean regionTaskEntered = new AtomicBoolean(false);
+            try {
+                Bukkit.getRegionScheduler().execute(plugin, targetLocation, () -> {
+                    regionTaskEntered.set(true);
+                    Aetheryte placedAetheryte = null;
+                    try {
                     if (registry.getByPosition(world, blockX, blockY, blockZ).isPresent()) {
-                        if (!creative) {
-                            refundItemToPlayer(player, targetLocation, normalizedVar);
-                        }
+                        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
                         pendingPlacements.remove(ownerId);
                         messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
                         return;
                     }
 
                     if (!ClearanceChecker.hasClearance(world, blockX, blockY, blockZ, variation)) {
-                        if (!creative) {
-                            refundItemToPlayer(player, targetLocation, normalizedVar);
-                        }
+                        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
                         pendingPlacements.remove(ownerId);
                         sendClearanceError(player, variation);
                         return;
@@ -642,20 +1194,24 @@ public final class AetheryteService {
 
                     final int effectiveMaxGlobal = bypassLimit ? -1 : globalMaxPerPlayerSupplier.getAsInt();
                     final int effectiveMaxVariation = bypassLimit ? -1 : variation.limit().maxPerPlayer();
+                    final double effectiveMinDist = canBypassDistance ? 0.0 : effectiveMinDistance(normalizedVar);
                     final RegistrationOutcome outcome = registry.tryRegister(
                             world,
                             aetheryte,
                             effectiveMaxGlobal,
-                            effectiveMaxVariation
+                            effectiveMaxVariation,
+                            effectiveMinDist
                     );
 
                     if (outcome != RegistrationOutcome.REGISTERED) {
-                        if (!creative) {
-                            refundItemToPlayer(player, targetLocation, normalizedVar);
-                        }
+                        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
                         pendingPlacements.remove(ownerId);
                         switch (outcome) {
                             case ALREADY_EXISTS -> messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
+                            case TOO_CLOSE -> {
+                                final Component distComp = Component.text(String.format(java.util.Locale.ROOT, "%.1f", effectiveMinDist));
+                                player.sendMessage(messages.get(player, MessageKey.ERROR_PLACEMENT_TOO_CLOSE, Placeholder.component("distance", distComp)));
+                            }
                             case GLOBAL_LIMIT_REACHED ->
                                     player.sendMessage(messages.errorLimitReachedGlobal(player, effectiveMaxGlobal));
                             case VARIATION_LIMIT_REACHED -> player.sendMessage(
@@ -667,35 +1223,138 @@ public final class AetheryteService {
                         return;
                     }
 
+                    placedAetheryte = aetheryte;
+
                     final Block originBlock = world.getBlockAt(blockX, blockY, blockZ);
-                    if (!originBlock.getType().isAir()) {
+                    if (!AetheryteVariation.isAirMaterial(originBlock.getType())) {
                         originBlock.setType(Material.AIR, true);
                     }
 
                     spawnOrUpdateMarkerEntity(world, aetheryte);
                     modelService.registerAetheryte(aetheryte, variation, world);
-                    hologramService.showAetheryte(aetheryte);
+                    try {
+                        hologramService.showAetheryte(aetheryte);
+                    } catch (final Exception e) {
+                        plugin.getSLF4JLogger().warn("Failed to display hologram for newly placed Aetheryte {}", aetheryte.id(), e);
+                    }
 
-                    world.playSound(
-                            aetheryte.markerLocation(world),
-                            Sound.BLOCK_LODESTONE_PLACE,
-                            1.0f,
-                            1.0f
-                    );
-                    player.getScheduler().run(plugin, postPlaceTask -> {
+                    try {
+                        world.playSound(
+                                aetheryte.markerLocation(world),
+                                Sound.BLOCK_LODESTONE_PLACE,
+                                1.0f,
+                                1.0f
+                        );
+                    } catch (final Throwable ignored) {
+                        // Sound playback is non-fatal if sound registry is unavailable in test environments
+                    }
+                    final ScheduledTask postPlaceScheduled = player.getScheduler().run(plugin, postPlaceTask -> {
                         try {
                             recordPlacementCooldown(player, normalizedVar);
                             player.sendMessage(messages.aetheryteCreated(player, aetheryte));
+                            if (!chargedPlacementQuote.isFree()) {
+                                final Component paidDisplay = CostFormatter.format(player, chargedPlacementQuote, activeEconomy, messages, true);
+                                player.sendMessage(messages.get(player, MessageKey.AETHERYTE_COST_PAID, Placeholder.component("cost", paidDisplay)));
+                            }
                         } finally {
                             pendingPlacements.remove(ownerId);
                         }
-                    }, null);
+                    }, () -> pendingPlacements.remove(ownerId));
+                    if (postPlaceScheduled == null) {
+                        pendingPlacements.remove(ownerId);
+                    }
                 } catch (final Throwable t) {
-                    pendingPlacements.remove(ownerId);
+                    try {
+                        if (placedAetheryte != null) {
+                            final Aetheryte rollbackTarget = placedAetheryte;
+                            runRollbackCleanup("unregister", rollbackTarget.id(), () -> registry.unregister(world, rollbackTarget.id()));
+                            runRollbackCleanup("removeMarkerEntitiesAt", rollbackTarget.id(), () -> removeMarkerEntitiesAt(world, rollbackTarget));
+                            runRollbackCleanup("unregisterModel", rollbackTarget.id(), () -> modelService.unregisterAetheryte(rollbackTarget.id()));
+                            runRollbackCleanup("hideHologram", rollbackTarget.id(), () -> hologramService.hideAetheryte(rollbackTarget.id()));
+                        }
+                        try {
+                            refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
+                        } catch (final Throwable refundEx) {
+                            plugin.getSLF4JLogger().error("Failed to refund placement cost during rollback for player {}", player.getName(), refundEx);
+                        }
+                    } finally {
+                        pendingPlacements.remove(ownerId);
+                    }
                     throw t;
                 }
-            });
+                });
+            } catch (final Throwable t) {
+                if (!regionTaskEntered.get()) {
+                    try {
+                        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
+                    } finally {
+                        pendingPlacements.remove(ownerId);
+                    }
+                }
+                throw t;
+            }
         }, null);
+    }
+
+    private void runRollbackCleanup(final String step, final UUID aetheryteId, final Runnable action) {
+        try {
+            action.run();
+        } catch (final Throwable cleanupEx) {
+            plugin.getSLF4JLogger().warn("Rollback cleanup '{}' failed for Aetheryte {}", step, aetheryteId, cleanupEx);
+        }
+    }
+
+    void refundPlacement(
+            final Player player,
+            final Location targetLocation,
+            final String normalizedVar,
+            final boolean creative,
+            final boolean bypassCost,
+            final CostBundle costBundle,
+            final CostQuote costQuote
+    ) {
+        refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, costBundle, costQuote, this.economyProvider);
+    }
+
+    void refundPlacement(
+            final Player player,
+            final Location targetLocation,
+            final String normalizedVar,
+            final boolean creative,
+            final boolean bypassCost,
+            final CostBundle costBundle,
+            final CostQuote costQuote,
+            final EconomyProvider paymentProvider
+    ) {
+        if (!creative) {
+            refundItemToPlayer(player, targetLocation, normalizedVar);
+            if (!bypassCost && !costBundle.isEmpty()) {
+                final ScheduledTask scheduled = player.getScheduler().run(
+                        plugin,
+                        t -> {
+                            final CostBundle.RefundResult result = costBundle.refundWithResult(player, costQuote, paymentProvider);
+                            if (!result.success()) {
+                                recordPendingRefund(player.getUniqueId(), result.unrefundedItems());
+                                plugin.getSLF4JLogger().warn(
+                                        "Placement refund failed for player {}. Queued for next login.",
+                                        player.getUniqueId());
+                            }
+                        },
+                        () -> {
+                            recordPendingRefund(player.getUniqueId(), costQuote.items());
+                            plugin.getSLF4JLogger().warn(
+                                    "Player {} disconnected before placement refund could be applied directly. Queued for next login.",
+                                    player.getUniqueId());
+                        }
+                );
+                if (scheduled == null) {
+                    recordPendingRefund(player.getUniqueId(), costQuote.items());
+                    plugin.getSLF4JLogger().warn(
+                            "Failed to schedule placement refund for player {}. Queued for next login.",
+                            player.getUniqueId());
+                }
+            }
+        }
     }
 
     /**
@@ -774,7 +1433,10 @@ public final class AetheryteService {
      * Removes all backing {@link Marker} entities associated with the given Aetheryte in its chunk.
      */
     private static void removeMarkerEntitiesAt(final World world, final Aetheryte target) {
-        final Chunk chunk = world.getChunkAt(target.blockX() >> 4, target.blockZ() >> 4);
+        final @Nullable Chunk chunk = world.getChunkAt(target.blockX() >> 4, target.blockZ() >> 4);
+        if (chunk == null) {
+            return;
+        }
         for (final Entity entity : chunk.getEntities()) {
             if (entity instanceof Marker) {
                 final Optional<Aetheryte> data = AetheryteRegistry.readMarkerData(entity);
@@ -802,15 +1464,34 @@ public final class AetheryteService {
             final @Nullable Aetheryte source,
             final UUID destinationId
     ) {
+        final UUID playerId = player.getUniqueId();
+        if (playerId != null && !inFlightWarps.add(playerId)) {
+            return;
+        }
+
         final Optional<Aetheryte> opt = registry.getById(destinationId);
         if (opt.isEmpty()) {
+            if (playerId != null) {
+                inFlightWarps.remove(playerId);
+            }
             messages.send(player, MessageKey.ERROR_NOT_FOUND);
             return;
         }
         final Aetheryte destination = opt.get();
 
+        if (source != null && !isWithinReach(player, source)) {
+            if (playerId != null) {
+                inFlightWarps.remove(playerId);
+            }
+            messages.send(player, MessageKey.ERROR_TOO_FAR);
+            return;
+        }
+
         final WarpEvaluation evaluation = evaluateWarp(player, source, destination);
         if (!evaluation.allowed()) {
+            if (playerId != null) {
+                inFlightWarps.remove(playerId);
+            }
             final Component reason = evaluation.denyReason() != null
                     ? evaluation.denyReason()
                     : messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET);
@@ -820,6 +1501,9 @@ public final class AetheryteService {
 
         final World targetWorld = Bukkit.getWorld(destination.worldId());
         if (targetWorld == null) {
+            if (playerId != null) {
+                inFlightWarps.remove(playerId);
+            }
             messages.send(player, MessageKey.ERROR_NOT_FOUND);
             return;
         }
@@ -829,70 +1513,226 @@ public final class AetheryteService {
         final float pitch = player.getPitch();
         final AetheryteVariation destVariation = variationRegistry.getOrDefault(destination.variation());
 
-        Bukkit.getRegionScheduler().execute(plugin, checkLoc, () -> {
-            final Optional<Location> safeLanding = LandingResolver.resolveForVariation(
-                    targetWorld,
-                    destination.blockX(),
-                    destination.blockY(),
-                    destination.blockZ(),
-                    yaw,
-                    pitch,
-                    destVariation
-            );
-            if (safeLanding.isEmpty()) {
-                messages.send(player, MessageKey.ERROR_DESTINATION_UNSAFE);
-                return;
-            }
-            final Location destinationLoc = safeLanding.get();
-
-            player.getScheduler().run(plugin, task -> {
-                if (!canUse(player)) {
-                    final WarpEvaluation recheck = evaluateWarp(player, source, destination);
-                    final Component reason = recheck.denyReason() != null
-                            ? recheck.denyReason()
-                            : messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION);
-                    player.sendMessage(messages.errorWarpDenied(player, reason));
-                    return;
-                }
-
-                final boolean paid = Permissions.canBypassWarpCost(player)
-                        || costEvaluator.charge(player, source, destination);
-                if (!paid) {
-                    final WarpEvaluation recheck = evaluateWarp(player, source, destination);
-                    final Component reason = recheck.denyReason() != null
-                            ? recheck.denyReason()
-                            : messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST);
-                    player.sendMessage(messages.errorWarpDenied(player, reason));
-                    return;
-                }
-
-                if (source != null) {
-                    modelService.triggerAnimation(source.id(), ModelAnimationTrigger.ON_WARP_DEPART);
-                }
-                final CompletableFuture<Void> unused = player.teleportAsync(destinationLoc).thenAccept(success -> {
-                    if (Boolean.TRUE.equals(success)) {
-                        modelService.triggerAnimation(destination.id(), ModelAnimationTrigger.ON_WARP_ARRIVE);
-                        player.sendMessage(messages.warpedTo(player, destination));
-                        player.getScheduler().run(plugin, postTask -> {
-                            player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
-                            hologramService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
-                            modelService.refreshPlayer(player, registry.getByWorld(targetWorld.getUID()));
-                        }, null);
+        final AtomicBoolean regionTaskEntered = new AtomicBoolean(false);
+        try {
+            Bukkit.getRegionScheduler().execute(plugin, checkLoc, () -> {
+                regionTaskEntered.set(true);
+                try {
+                final Optional<Location> safeLanding = LandingResolver.resolveForVariation(
+                        targetWorld,
+                        destination.blockX(),
+                        destination.blockY(),
+                        destination.blockZ(),
+                        yaw,
+                        pitch,
+                        destVariation
+                );
+                if (safeLanding.isEmpty()) {
+                    if (playerId != null) {
+                        inFlightWarps.remove(playerId);
                     }
-                }).exceptionally(ex -> {
-                    plugin.getSLF4JLogger().warn(
-                            "Failed to teleport player {} to aetheryte {}",
-                            player.getName(),
-                            destination.id(),
-                            ex
-                    );
-                    return null;
-                });
-                if (unused.isCancelled()) {
+                    messages.send(player, MessageKey.ERROR_DESTINATION_UNSAFE);
                     return;
                 }
-            }, null);
+                final Location destinationLoc = safeLanding.get();
+
+                final ScheduledTask warpTask = player.getScheduler().run(plugin, task -> {
+                    final WarpCostEvaluator activeEvaluator = this.costEvaluator;
+                    final boolean bypassCost = Permissions.canBypassWarpCost(player);
+                    boolean paid = false;
+                    try {
+                        if (source != null && !isWithinReach(player, source)) {
+                            if (playerId != null) {
+                                inFlightWarps.remove(playerId);
+                            }
+                            messages.send(player, MessageKey.ERROR_TOO_FAR);
+                            return;
+                        }
+
+                        final WarpEvaluation finalEval = evaluateWarp(player, source, destination);
+                        if (!finalEval.allowed()) {
+                            if (playerId != null) {
+                                inFlightWarps.remove(playerId);
+                            }
+                            final Component reason = finalEval.denyReason() != null
+                                    ? finalEval.denyReason()
+                                    : messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST);
+                            player.sendMessage(messages.errorWarpDenied(player, reason));
+                            return;
+                        }
+
+                        if (!bypassCost) {
+                            paid = activeEvaluator.charge(player, source, destination);
+                            if (!paid) {
+                                final List<CostItemQuote> unrefunded = activeEvaluator.popFailedChargeUnrefunded(player, destination);
+                                if (!unrefunded.isEmpty()) {
+                                    recordPendingRefund(player.getUniqueId(), unrefunded);
+                                    plugin.getSLF4JLogger().warn(
+                                            "Warp charge rollback partially failed for player {}. Queued {} unrefunded item(s) for next login.",
+                                            player.getUniqueId(),
+                                            unrefunded.size()
+                                    );
+                                }
+                                if (playerId != null) {
+                                    inFlightWarps.remove(playerId);
+                                }
+                                player.sendMessage(messages.errorWarpDenied(player, messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST)));
+                                return;
+                            }
+                        } else {
+                            paid = true;
+                        }
+
+                        if (source != null) {
+                            modelService.triggerAnimation(source.id(), ModelAnimationTrigger.ON_WARP_DEPART);
+                        }
+                        final CompletableFuture<Void> unused = player.teleportAsync(destinationLoc).thenAccept(success -> {
+                            if (playerId != null) {
+                                inFlightWarps.remove(playerId);
+                            }
+                            if (Boolean.TRUE.equals(success)) {
+                                if (!bypassCost) {
+                                    final List<CostItemQuote> peeked = activeEvaluator.peekPendingCharge(player, destination);
+                                    final List<CostItemQuote> chargedItems = !peeked.isEmpty()
+                                            ? peeked
+                                            : activeEvaluator.popPendingCharge(player, destination);
+                                    activeEvaluator.commit(player, source, destination);
+                                    final CostQuote paidQuote = new CostQuote(chargedItems);
+                                    if (!paidQuote.isFree()) {
+                                        final Component paidDisplay = CostFormatter.format(player, paidQuote, this.economyProvider, messages, true);
+                                        player.sendMessage(messages.get(player, MessageKey.WARP_COST_PAID, Placeholder.component("cost", paidDisplay)));
+                                    }
+                                }
+                                modelService.triggerAnimation(destination.id(), ModelAnimationTrigger.ON_WARP_ARRIVE);
+                                player.sendMessage(messages.warpedTo(player, destination));
+                                player.getScheduler().run(plugin, postTask -> {
+                                    try {
+                                        player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
+                                    } catch (final Throwable ignored) {
+                                        // Sound playback is non-fatal if sound registry is unavailable in test environments
+                                    }
+                                    refreshPlayerVisuals(player, targetWorld);
+                                }, null);
+                            } else {
+                                handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_DESTINATION_UNSAFE);
+                            }
+                        }).exceptionally(ex -> {
+                            if (playerId != null) {
+                                inFlightWarps.remove(playerId);
+                            }
+                            plugin.getSLF4JLogger().warn(
+                                    "Failed to teleport player {} to aetheryte {}",
+                                    player.getName(),
+                                    destination.id(),
+                                    ex
+                            );
+                            handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
+                            return null;
+                        });
+                        if (unused.isCancelled()) {
+                            if (playerId != null) {
+                                inFlightWarps.remove(playerId);
+                            }
+                            handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
+                        }
+                    } catch (final Throwable t) {
+                        if (playerId != null) {
+                            inFlightWarps.remove(playerId);
+                        }
+                        plugin.getSLF4JLogger().error(
+                                "Unexpected error during warp charge or execution for player {} to {}",
+                                player.getName(),
+                                destination.id(),
+                                t
+                        );
+                        if (paid) {
+                            handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
+                        } else {
+                            messages.send(player, MessageKey.ERROR_NOT_FOUND);
+                        }
+                    }
+                }, () -> {
+                    if (playerId != null) {
+                        inFlightWarps.remove(playerId);
+                    }
+                });
+                if (warpTask == null && playerId != null) {
+                    inFlightWarps.remove(playerId);
+                }
+            } catch (final Throwable t) {
+                if (playerId != null) {
+                    inFlightWarps.remove(playerId);
+                }
+                plugin.getSLF4JLogger().error(
+                        "Unexpected error during warp landing resolution for player {} to {}",
+                        player.getName(),
+                        destination.id(),
+                        t
+                );
+                messages.send(player, MessageKey.ERROR_NOT_FOUND);
+            }
+            });
+        } catch (final Throwable t) {
+            if (playerId != null) {
+                inFlightWarps.remove(playerId);
+            }
+            if (!regionTaskEntered.get()) {
+                plugin.getSLF4JLogger().error(
+                        "Failed to schedule warp landing resolution for player {} to {}",
+                        player.getName(),
+                        destination.id(),
+                        t
+                );
+                messages.send(player, MessageKey.ERROR_NOT_FOUND);
+            }
+        }
+    }
+
+    private void handleWarpFailure(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination,
+            final WarpCostEvaluator evaluator,
+            final boolean bypassCost,
+            final MessageKey errorKey
+    ) {
+        final UUID playerId = player.getUniqueId();
+        if (playerId != null) {
+            inFlightWarps.remove(playerId);
+        }
+        final ScheduledTask task = player.getScheduler().run(plugin, t -> {
+            if (!bypassCost) {
+                final boolean refunded = evaluator.refund(player, source, destination);
+                if (!refunded) {
+                    final List<CostItemQuote> unrefunded = evaluator.popPendingCharge(player, destination);
+                    if (!unrefunded.isEmpty()) {
+                        recordPendingRefund(player.getUniqueId(), unrefunded);
+                        plugin.getSLF4JLogger().warn("Warp refund failed for player {}. Queued for next login.", player.getUniqueId());
+                    }
+                }
+            }
+            messages.send(player, errorKey);
+        }, () -> {
+            if (!bypassCost) {
+                final List<CostItemQuote> unrefunded = evaluator.popPendingCharge(player, destination);
+                if (!unrefunded.isEmpty()) {
+                    recordPendingRefund(player.getUniqueId(), unrefunded);
+                    plugin.getSLF4JLogger().warn(
+                            "Player {} disconnected before warp refund could execute. Queued for next login.",
+                            player.getUniqueId());
+                }
+            }
         });
+
+        if (task == null && !bypassCost) {
+            final List<CostItemQuote> unrefunded = evaluator.popPendingCharge(player, destination);
+            if (!unrefunded.isEmpty()) {
+                recordPendingRefund(player.getUniqueId(), unrefunded);
+                plugin.getSLF4JLogger().warn(
+                        "Could not schedule warp refund for player {}. Queued for next login.",
+                        player.getUniqueId());
+            }
+        }
     }
 
     /**
@@ -969,31 +1809,57 @@ public final class AetheryteService {
             final Location fallbackDropLocation,
             final String variationId
     ) {
-        final AetheryteVariation variation = variationRegistry.getOrDefault(variationId);
-        final ItemStack item = AetheryteItemFactory.createItem(variationId, variation, 1, messages);
-        final boolean scheduled = player.getScheduler().run(plugin, task -> {
-            final Map<Integer, ItemStack> leftover = player.getInventory().addItem(item);
-            if (!leftover.isEmpty()) {
-                final Location pLoc = player.getLocation();
-                final World dropWorld = pLoc != null && pLoc.getWorld() != null ? pLoc.getWorld() : player.getWorld();
-                final Location dropLoc = pLoc != null ? pLoc : fallbackDropLocation;
-                for (final ItemStack remaining : leftover.values()) {
-                    dropWorld.dropItemNaturally(dropLoc, remaining);
+        try {
+            final AetheryteVariation variation = variationRegistry.getOrDefault(variationId);
+            final ItemStack item = AetheryteItemFactory.createItem(variationId, variation, 1, messages);
+            final boolean scheduled = player.getScheduler().run(plugin, task -> {
+                final Map<Integer, ItemStack> leftover = player.getInventory().addItem(item);
+                if (!leftover.isEmpty()) {
+                    final Location pLoc = player.getLocation();
+                    final World dropWorld = pLoc != null && pLoc.getWorld() != null ? pLoc.getWorld() : player.getWorld();
+                    final Location dropLoc = pLoc != null ? pLoc : fallbackDropLocation;
+                    for (final ItemStack remaining : leftover.values()) {
+                        dropWorld.dropItemNaturally(dropLoc, remaining);
+                    }
                 }
-            }
-        }, () -> Bukkit.getRegionScheduler().execute(plugin, fallbackDropLocation, () -> {
-            final World world = fallbackDropLocation.getWorld();
-            if (world != null) {
-                world.dropItemNaturally(fallbackDropLocation, item);
-            }
-        })) != null;
-        if (!scheduled) {
-            Bukkit.getRegionScheduler().execute(plugin, fallbackDropLocation, () -> {
+            }, () -> Bukkit.getRegionScheduler().execute(plugin, fallbackDropLocation, () -> {
                 final World world = fallbackDropLocation.getWorld();
                 if (world != null) {
                     world.dropItemNaturally(fallbackDropLocation, item);
                 }
-            });
+            })) != null;
+            if (!scheduled) {
+                Bukkit.getRegionScheduler().execute(plugin, fallbackDropLocation, () -> {
+                    final World world = fallbackDropLocation.getWorld();
+                    if (world != null) {
+                        world.dropItemNaturally(fallbackDropLocation, item);
+                    }
+                });
+            }
+        } catch (final Throwable t) {
+            plugin.getSLF4JLogger().warn("Failed to refund Aetheryte item to player {} for variation {}", player.getName(), variationId, t);
         }
+    }
+
+    /**
+     * Refreshes client-side visuals for a player with staggered updates to ensure entities render
+     * cleanly across dimension loading screens.
+     */
+    public void refreshPlayerVisuals(final Player player, final World world) {
+        final UUID worldId = world.getUID();
+        hologramService.refreshPlayer(player, registry.getByWorld(worldId));
+        modelService.refreshPlayer(player, registry.getByWorld(worldId));
+        player.getScheduler().runDelayed(plugin, task -> {
+            if (player.getWorld().getUID().equals(worldId)) {
+                hologramService.refreshPlayer(player, registry.getByWorld(worldId));
+                modelService.refreshPlayer(player, registry.getByWorld(worldId));
+            }
+        }, null, 5L);
+        player.getScheduler().runDelayed(plugin, task -> {
+            if (player.getWorld().getUID().equals(worldId)) {
+                hologramService.refreshPlayer(player, registry.getByWorld(worldId));
+                modelService.refreshPlayer(player, registry.getByWorld(worldId));
+            }
+        }, null, 20L);
     }
 }

@@ -14,12 +14,25 @@ hologram:
 
 cost:
   free: "<green>Free</green>"
+  bypassed: "<strikethrough><cost></strikethrough> <green>(Bypassed)</green>"
+  separator: "<dark_gray> + </dark_gray>"
+  vault: "<gold><amount></gold>"
+  exp-points: "<green><amount> XP</green>"
+  exp-levels: "<green><amount> Lv</green>"
+  food: "<yellow><amount> 🍗</yellow>"
+  insufficient:
+    vault: "<red>Not enough money (need <amount>)</red>"
+    exp-points: "<red>Not enough experience points (need <amount> XP)</red>"
+    exp-levels: "<red>Not enough experience levels (need <amount> Lv)</red>"
+    food: "<red>Not enough hunger (need <amount> 🍗)</red>"
 
 dialog:
   create:
     title: "<aqua><bold>Place Aetheryte</bold></aqua>"
     description: "<gray>Target coordinates: </gray><white><world> (<x>, <y>, <z>)</white>"
     variation: "<gray>Variation: </gray><variation>"
+    cost: "<gray>Placement cost: </gray><cost>"
+    cost-bypassed: "<gray>Placement cost: </gray><strikethrough><cost></strikethrough> <green>(Bypassed)</green>"
     name-input-label: "<aqua>Aetheryte Name</aqua>"
     default-name: "<player>'s Aetheryte"
   button:
@@ -32,6 +45,7 @@ dialog:
   warp:
     title: "<aqua>✦ Aetheryte: </aqua><white><bold><name></bold></white>"
     body-empty: "<gray>Current location: </gray><white><name></white><newline><yellow>No other Aetherytes are available to warp to yet.</yellow>"
+    body-no-route: "<gray>Current location: </gray><white><name></white><newline><yellow>No connecting routes to other dimensions are available.</yellow>"
     body-select: "<gray>Select an Aetheryte destination to warp to.</gray>"
     destination-available: "<aqua>✦ </aqua><white><name></white><dark_gray> [</dark_gray><cost><dark_gray>]</dark_gray>"
     destination-unavailable: "<red>✖ </red><gray><name></gray><dark_gray> [</dark_gray><cost><dark_gray>]</dark_gray>"
@@ -46,9 +60,11 @@ dialog:
 aetheryte:
   created: "<prefix><green>Placed Aetheryte \"</green><white><bold><name></bold></white><green>\".</green>"
   removed: "<prefix><yellow>Removed Aetheryte \"</yellow><white><bold><name></bold></white><yellow>\".</yellow>"
+  cost-paid: "<prefix><gray>Paid <cost> for Aetheryte placement.</gray>"
 
 warp:
   success: "<prefix><aqua>Warped to \"</aqua><white><bold><name></bold></white><aqua>\".</aqua>"
+  cost-paid: "<prefix><gray>Paid <cost> for warp.</gray>"
 
 error:
   invalid-name: "<prefix><red>Please enter a valid Aetheryte name (1-32 characters).</red>"
@@ -58,6 +74,7 @@ error:
   limit-reached-global: "<prefix><red>You have reached the maximum number of Aetherytes you can place (<max>).</red>"
   limit-reached-variation: "<prefix><red>You have reached the placement limit for <variation> (<max>).</red>"
   placement-cooldown: "<prefix><red>You must wait <white><seconds>s</white> before placing another Aetheryte.</red>"
+  placement-too-close: "<prefix><red>Another Aetheryte is too close! Must be at least <distance> blocks away.</red>"
   missing-item: "<prefix><red>You do not have an Aetheryte item.</red>"
   not-found: "<prefix><red>Target Aetheryte was not found.</red>"
   not-owner: "<prefix><red>You do not have permission to remove this Aetheryte (only the owner can remove it).</red>"
@@ -65,6 +82,10 @@ error:
   no-warp-permission: "<red>No warp permission</red>"
   warp-requirements-not-met: "<red>Requirements not met</red>"
   insufficient-cost: "<red>Insufficient cost</red>"
+  too-close: "<red>Destination is too close</red>"
+  too-far: "<red>Destination is too far</red>"
+  no-route: "<red>No route connects to this dimension</red>"
+  placement-cost-insufficient: "<prefix><red>Cannot place Aetheryte: </red><reason>"
   warp-denied: "<prefix><red>Cannot warp: </red><reason>"
   destination-unsafe: "<prefix><red>Cannot warp because the destination landing area is obstructed or unsafe.</red>"
   protected-break: "<prefix><red>Aetherytes cannot be broken directly. Please remove it from the right-click menu.</red>"
@@ -74,3 +95,4 @@ command:
   console-specify-player: "<prefix><red>Please specify a target player when executing from the console.</red>"
   unknown-variation: "<prefix><red>Unknown Aetheryte variation: <variation></red>"
   reloaded: "<prefix><green>Reloaded ClickPortals configuration and translations.</green>"
+  reload-failed: "<prefix><red>Failed to reload configuration due to errors. Check console logs.</red>"

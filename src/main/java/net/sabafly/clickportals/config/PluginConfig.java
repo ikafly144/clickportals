@@ -17,8 +17,18 @@
  */
 package net.sabafly.clickportals.config;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import net.sabafly.clickportals.cost.CostEntry;
+import net.sabafly.clickportals.cost.expr.ExpressionException;
+import net.sabafly.clickportals.cost.expr.ExpressionParser;
 import net.sabafly.clickportals.message.LanguageLoader;
+import net.sabafly.clickportals.route.CostOverrideConfig;
+import net.sabafly.clickportals.route.DimensionRoutesConfig;
+import net.sabafly.clickportals.route.RouteEntryConfig;
 import org.slf4j.Logger;
 import org.spongepowered.configurate.objectmapping.ConfigSerializable;
 import org.spongepowered.configurate.objectmapping.meta.Comment;
@@ -39,7 +49,15 @@ public record PluginConfig(
 
         @Setting("limits")
         @Comment("Global per-player Aetheryte placement limit and cooldown settings (#43)")
-        LimitsSection limits
+        LimitsSection limits,
+
+        @Setting("warp")
+        @Comment("Global warping settings: distance limits and base cost (#14, #26)")
+        WarpSection warp,
+
+        @Setting("dimensions")
+        @Comment("Cross-dimension warping routes and dimension pricing (#9)")
+        DimensionRoutesConfig dimensions
 ) {
 
     /**
@@ -100,13 +118,52 @@ public record PluginConfig(
 
             @Setting("placement-cooldown-ticks")
             @Comment("Default cooldown in ticks after placing an Aetheryte before placing another (100 = 5 seconds, 0 to disable)")
-            int placementCooldownTicks
+            int placementCooldownTicks,
+
+            @Setting("min-distance-between-aetherytes")
+            @Comment("Minimum required block distance between Aetherytes in the same world (0 to disable)")
+            double minDistanceBetweenAetherytes
     ) {
+        public LimitsSection(final int maxAetherytesPerPlayer, final int placementCooldownTicks) {
+            this(maxAetherytesPerPlayer, placementCooldownTicks, 0.0);
+        }
+
         /**
-         * Returns the default limits section (-1 = unlimited, 100 ticks = 5s cooldown).
+         * Returns the default limits section (-1 = unlimited, 100 ticks = 5s cooldown, 0 min distance).
          */
         public static LimitsSection defaults() {
-            return new LimitsSection(-1, DEFAULT_PLACEMENT_COOLDOWN_TICKS);
+            return new LimitsSection(-1, DEFAULT_PLACEMENT_COOLDOWN_TICKS, 0.0);
+        }
+    }
+
+    /**
+     * Global warping configuration section (#14, #26).
+     */
+    @ConfigSerializable
+    public record WarpSection(
+            @Setting("distance")
+            @Comment("Distance limitations for warping")
+            DistanceSection distance,
+
+            @Setting("cost")
+            @Comment("Base cost specifications for warping")
+            List<CostEntry> cost,
+
+            @Setting("show-optional-costs")
+            @Comment("Whether non-mandatory costs are shown in destination menus and tooltips (default true)")
+            boolean showOptionalCosts
+    ) {
+        public WarpSection {
+            if (distance == null) {
+                distance = DistanceSection.defaults();
+            }
+            if (cost == null) {
+                cost = List.of();
+            }
+        }
+
+        public static WarpSection defaults() {
+            return new WarpSection(DistanceSection.defaults(), List.of(), true);
         }
     }
 
@@ -123,6 +180,12 @@ public record PluginConfig(
         if (limits == null) {
             limits = LimitsSection.defaults();
         }
+        if (warp == null) {
+            warp = WarpSection.defaults();
+        }
+        if (dimensions == null) {
+            dimensions = DimensionRoutesConfig.defaults();
+        }
     }
 
     /**
@@ -132,20 +195,26 @@ public record PluginConfig(
         return new PluginConfig(
                 LanguageSection.defaults(),
                 HologramSection.defaults(),
-                LimitsSection.defaults()
+                LimitsSection.defaults(),
+                WarpSection.defaults(),
+                DimensionRoutesConfig.defaults()
         );
     }
 
     /**
-     * Validates and normalizes this configuration, falling back to safe defaults on invalid values.
+     * Validates and normalizes this configuration, logging warnings and falling back to safe defaults on invalid values.
      */
     public PluginConfig validated(final Logger logger) {
         final LanguageSection defaultLanguage = LanguageSection.defaults();
 
         final String rawLocale = language.defaultLocale();
-        final String validDefaultLocale = (rawLocale == null || rawLocale.isBlank())
-                ? defaultLanguage.defaultLocale()
-                : rawLocale.strip();
+        final String validDefaultLocale;
+        if (rawLocale == null || rawLocale.isBlank()) {
+            logger.warn("language.default-locale is missing or empty; falling back to {}", defaultLanguage.defaultLocale());
+            validDefaultLocale = defaultLanguage.defaultLocale();
+        } else {
+            validDefaultLocale = rawLocale.strip();
+        }
 
         final double validViewDistance;
         if (!Double.isFinite(hologram.viewDistance()) || hologram.viewDistance() < 4.0) {
@@ -155,8 +224,87 @@ public record PluginConfig(
             validViewDistance = hologram.viewDistance();
         }
 
-        final int validMaxPerPlayer = limits.maxAetherytesPerPlayer() < -1 ? -1 : limits.maxAetherytesPerPlayer();
-        final int validCooldownTicks = Math.max(0, limits.placementCooldownTicks());
+        final int rawMaxPerPlayer = limits.maxAetherytesPerPlayer();
+        final int validMaxPerPlayer;
+        if (rawMaxPerPlayer < -1) {
+            logger.warn("Invalid limits.max-aetherytes-per-player {} (must be >= -1); falling back to -1 (unlimited)", rawMaxPerPlayer);
+            validMaxPerPlayer = -1;
+        } else {
+            validMaxPerPlayer = rawMaxPerPlayer;
+        }
+
+        final int rawCooldownTicks = limits.placementCooldownTicks();
+        final int validCooldownTicks;
+        if (rawCooldownTicks < 0) {
+            logger.warn("Invalid limits.placement-cooldown-ticks {} (must be >= 0); falling back to 0", rawCooldownTicks);
+            validCooldownTicks = 0;
+        } else {
+            validCooldownTicks = rawCooldownTicks;
+        }
+
+        final double rawMinDistBetween = limits.minDistanceBetweenAetherytes();
+        final double validMinDistBetween;
+        if (!Double.isFinite(rawMinDistBetween) || rawMinDistBetween < 0.0) {
+            logger.warn("Invalid limits.min-distance-between-aetherytes {} (must be >= 0.0 and finite); falling back to 0.0", rawMinDistBetween);
+            validMinDistBetween = 0.0;
+        } else {
+            validMinDistBetween = rawMinDistBetween;
+        }
+
+        final DistanceSection rawDist = warp.distance();
+        final double validMinDist;
+        if (rawDist.min() == null) {
+            logger.warn("warp.distance.min is missing; falling back to 0.0");
+            validMinDist = 0.0;
+        } else if (!Double.isFinite(rawDist.min()) || rawDist.min() < 0.0) {
+            logger.warn("Invalid warp.distance.min {} (must be >= 0.0 and finite); falling back to 0.0", rawDist.min());
+            validMinDist = 0.0;
+        } else {
+            validMinDist = rawDist.min();
+        }
+
+        double validMaxDist;
+        if (rawDist.max() == null) {
+            logger.warn("warp.distance.max is missing; falling back to -1.0 (unlimited)");
+            validMaxDist = -1.0;
+        } else if (!Double.isFinite(rawDist.max()) || rawDist.max() < -1.0) {
+            logger.warn("Invalid warp.distance.max {} (must be >= -1.0 and finite); falling back to -1.0 (unlimited)", rawDist.max());
+            validMaxDist = -1.0;
+        } else {
+            validMaxDist = rawDist.max();
+        }
+
+        if (validMaxDist >= 0.0 && validMinDist > validMaxDist) {
+            logger.warn("warp.distance.min ({}) is greater than warp.distance.max ({}). Disabling max distance (-1.0) to prevent deadlocks.",
+                    validMinDist, validMaxDist);
+            validMaxDist = -1.0;
+        }
+        final boolean validCrossDim = rawDist.crossDimensionOrDefault(true);
+        final DistanceSection validDist = new DistanceSection(validMinDist, validMaxDist, validCrossDim);
+
+        if (warp.cost() != null) {
+            for (final CostEntry entry : warp.cost()) {
+                if (entry.type() == null) {
+                    logger.warn("Unknown cost type '{}' in warp.cost; this cost will fail affordability checks.", entry.rawType());
+                } else {
+                    try {
+                        ExpressionParser.parse(entry.amount(), entry.type().resourceVariable());
+                    } catch (final ExpressionException e) {
+                        logger.warn("Invalid cost amount expression '{}' in warp.cost: {}", entry.amount(), e.getMessage());
+                    }
+                }
+            }
+        }
+
+        final WarpSection validWarp = new WarpSection(validDist, warp.cost(), warp.showOptionalCosts());
+
+        final DimensionRoutesConfig validDimensions;
+        if (dimensions == null) {
+            logger.warn("Missing 'dimensions' section in config.yml; falling back to default dimension routes");
+            validDimensions = DimensionRoutesConfig.defaults();
+        } else {
+            validDimensions = validateDimensions(dimensions, logger);
+        }
 
         return new PluginConfig(
                 new LanguageSection(
@@ -167,8 +315,70 @@ public record PluginConfig(
                         hologram.enabled(),
                         validViewDistance
                 ),
-                new LimitsSection(validMaxPerPlayer, validCooldownTicks)
+                new LimitsSection(validMaxPerPlayer, validCooldownTicks, validMinDistBetween),
+                validWarp,
+                validDimensions
         );
+    }
+
+    private static DimensionRoutesConfig validateDimensions(final DimensionRoutesConfig config, final Logger logger) {
+        final List<CostEntry> validatedDefaultCost = new ArrayList<>();
+        if (config.defaultCost() != null) {
+            for (final CostEntry entry : config.defaultCost()) {
+                if (entry.type() == null) {
+                    logger.warn("Unknown cost type '{}' in dimensions.default-cost; this cost will fail affordability checks.", entry.rawType());
+                } else {
+                    try {
+                        ExpressionParser.parse(entry.amount(), "$amount");
+                    } catch (final ExpressionException e) {
+                        logger.warn("Invalid cost expression '{}' in dimensions.default-cost: {}", entry.amount(), e.getMessage());
+                    }
+                }
+                validatedDefaultCost.add(entry);
+            }
+        }
+        final Map<String, Double> sanitizedAmounts = new HashMap<>();
+        if (config.amounts() != null) {
+            for (final Map.Entry<String, Double> entry : config.amounts().entrySet()) {
+                final Double amount = entry.getValue();
+                if (amount == null || !Double.isFinite(amount) || amount < 0.0) {
+                    logger.warn("Invalid dimension amount {} for world '{}' in dimensions.amounts; must be >= 0.0. Clamping to 0.0",
+                            amount, entry.getKey());
+                    sanitizedAmounts.put(entry.getKey(), 0.0);
+                } else {
+                    sanitizedAmounts.put(entry.getKey(), amount);
+                }
+            }
+        }
+        final List<RouteEntryConfig> sanitizedRoutes = new ArrayList<>();
+        if (config.routes() != null) {
+            for (final RouteEntryConfig route : config.routes()) {
+                if (route.between() == null || route.between().size() < 2) {
+                    logger.warn("Invalid route in dimensions.routes: 'between' must contain at least 2 world names, got {}",
+                            route.between());
+                    continue;
+                }
+                if (route.costOverride() != null) {
+                    final Map<String, CostOverrideConfig> sanitizedOverrides = new HashMap<>();
+                    for (final Map.Entry<String, CostOverrideConfig> entry : route.costOverride().entrySet()) {
+                        final String expr = entry.getValue().amount();
+                        if (expr != null) {
+                            try {
+                                ExpressionParser.parse(expr, "$default");
+                            } catch (final ExpressionException e) {
+                                logger.warn("Invalid cost-override expression '{}' for world '{}' in dimensions.routes: {}",
+                                        expr, entry.getKey(), e.getMessage());
+                            }
+                            sanitizedOverrides.put(entry.getKey(), entry.getValue());
+                        }
+                    }
+                    sanitizedRoutes.add(new RouteEntryConfig(route.between(), route.origin(), sanitizedOverrides));
+                } else {
+                    sanitizedRoutes.add(route);
+                }
+            }
+        }
+        return new DimensionRoutesConfig(validatedDefaultCost, sanitizedAmounts, sanitizedRoutes);
     }
 
     /**
@@ -211,5 +421,47 @@ public record PluginConfig(
      */
     public int placementCooldownTicks() {
         return limits.placementCooldownTicks();
+    }
+
+    /**
+     * Returns the global minimum required distance in blocks between Aetherytes in the same world (0 for disabled).
+     */
+    public double minDistanceBetweenAetherytes() {
+        return limits.minDistanceBetweenAetherytes();
+    }
+
+    /**
+     * Returns the global minimum warp distance in blocks (0 for disabled) (#26).
+     */
+    public double warpDistanceMin() {
+        return warp.distance().minOrDefault(0.0);
+    }
+
+    /**
+     * Returns the global maximum warp distance in blocks (-1 for unlimited) (#26).
+     */
+    public double warpDistanceMax() {
+        return warp.distance().maxOrDefault(-1.0);
+    }
+
+    /**
+     * Returns whether distance limits (min/max) apply to cross-dimension warps.
+     */
+    public boolean warpDistanceCrossDimension() {
+        return warp.distance().crossDimensionOrDefault(true);
+    }
+
+    /**
+     * Returns the global warp cost specifications (#14).
+     */
+    public List<CostEntry> warpCost() {
+        return warp.cost();
+    }
+
+    /**
+     * Returns whether non-mandatory costs are shown in destination menus and tooltips.
+     */
+    public boolean showOptionalCosts() {
+        return warp.showOptionalCosts();
     }
 }

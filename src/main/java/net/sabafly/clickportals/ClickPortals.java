@@ -28,6 +28,9 @@ import net.sabafly.clickportals.command.ClickPortalsCommand;
 import net.sabafly.clickportals.config.ConfigManager;
 import net.sabafly.clickportals.config.PluginConfig;
 import net.sabafly.clickportals.dialog.AetheryteDialogFactory;
+import net.sabafly.clickportals.economy.EconomyProvider;
+import net.sabafly.clickportals.economy.NoopEconomyProvider;
+import net.sabafly.clickportals.economy.VaultEconomyProvider;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
 import net.sabafly.clickportals.listener.AetheryteListener;
 import net.sabafly.clickportals.message.MessageKey;
@@ -36,17 +39,19 @@ import net.sabafly.clickportals.model.AetheryteModelService;
 import net.sabafly.clickportals.model.BetterModelAetheryteModelService;
 import net.sabafly.clickportals.model.ModelAnimationTrigger;
 import net.sabafly.clickportals.model.NoopAetheryteModelService;
+import net.sabafly.clickportals.route.DimensionRouter;
 import net.sabafly.clickportals.service.AetheryteService;
+import net.sabafly.clickportals.service.ConfiguredWarpCostEvaluator;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.VariationRegistry;
 import net.sabafly.clickportals.visual.HologramService;
 import net.sabafly.clickportals.visual.NoopHologramService;
 import net.sabafly.clickportals.visual.PacketEventsHologramService;
 import org.bukkit.Bukkit;
-import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jspecify.annotations.Nullable;
 
@@ -55,8 +60,6 @@ import org.jspecify.annotations.Nullable;
  */
 @SuppressWarnings("UnstableApiUsage")
 public final class ClickPortals extends JavaPlugin {
-
-    private static final double BASE_INTERACT_REACH = 6.0;
 
     private @Nullable ConfigManager configManager;
     private @Nullable VariationRegistry variationRegistry;
@@ -67,6 +70,8 @@ public final class ClickPortals extends JavaPlugin {
     private @Nullable AetheryteService aetheryteService;
     private @Nullable AetheryteDialogFactory dialogFactory;
     private @Nullable AetheryteListener aetheryteListener;
+    private volatile EconomyProvider economyProvider = NoopEconomyProvider.INSTANCE;
+    private volatile DimensionRouter dimensionRouter = new DimensionRouter(net.sabafly.clickportals.route.DimensionRoutesConfig.defaults());
 
     @Override
     public void onEnable() {
@@ -110,6 +115,17 @@ public final class ClickPortals extends JavaPlugin {
         );
         this.hologramService = activeHologramService;
 
+        this.economyProvider = resolveEconomyProvider();
+        this.dimensionRouter = new DimensionRouter(config.dimensions());
+
+        final ConfiguredWarpCostEvaluator warpEvaluator = new ConfiguredWarpCostEvaluator(
+                () -> cfgManager.config(),
+                variations,
+                () -> this.economyProvider,
+                () -> this.dimensionRouter,
+                msgService
+        );
+
         final AetheryteService service = new AetheryteService(
                 this,
                 aetheryteRegistry,
@@ -119,15 +135,18 @@ public final class ClickPortals extends JavaPlugin {
                 msgService,
                 () -> cfgManager.config().maxAetherytesPerPlayer(),
                 () -> cfgManager.config().placementCooldownTicks(),
+                () -> cfgManager.config().minDistanceBetweenAetherytes(),
                 AetheryteService::resolveCurrentTick,
                 PacketEventsHologramService::sendPlacementCooldown,
                 (player, source, destination) -> AetheryteService.WarpEvaluation.permitted(msgService.freeCostLabel(player))
         );
+        service.setCostEvaluator(warpEvaluator);
+        service.setEconomyProvider(this.economyProvider);
         this.aetheryteService = service;
         final AetheryteDialogFactory dialogs = new AetheryteDialogFactory(service, msgService);
         this.dialogFactory = dialogs;
 
-        bindInteractionHandler(activeHologramService, aetheryteRegistry, variations, dialogs);
+        bindInteractionHandler(activeHologramService, aetheryteRegistry, dialogs);
 
         AetheryteItemFactory.registerRecipes(variations, msgService);
 
@@ -197,7 +216,16 @@ public final class ClickPortals extends JavaPlugin {
         }
         aetheryteListener = null;
         dialogFactory = null;
-        aetheryteService = null;
+        if (aetheryteService != null) {
+            if (!aetheryteService.flushPendingRefunds()) {
+                getSLF4JLogger().error(
+                        "CRITICAL: Failed to flush pending refunds to disk during shutdown ({} player(s), {} item(s) unpersisted).",
+                        aetheryteService.pendingRefundPlayerCount(),
+                        aetheryteService.pendingRefundItemCount()
+                );
+            }
+            aetheryteService = null;
+        }
         variationRegistry = null;
         messages = null;
         configManager = null;
@@ -230,6 +258,10 @@ public final class ClickPortals extends JavaPlugin {
 
         Bukkit.getGlobalRegionScheduler().execute(this, () -> {
             final PluginConfig reloadedConfig = cfgManager.load();
+            if (!cfgManager.lastLoadSuccessful()) {
+                msgService.send(sender, MessageKey.COMMAND_RELOAD_FAILED);
+                return;
+            }
             msgService.reload(
                     getDataPath().resolve("lang"),
                     reloadedConfig.defaultLocale(),
@@ -261,8 +293,18 @@ public final class ClickPortals extends JavaPlugin {
             service.setHologramService(activeHologramService);
             listener.setHologramService(activeHologramService);
 
-            syncAllAetheryteModels();
+            this.economyProvider = resolveEconomyProvider();
+            this.dimensionRouter = new DimensionRouter(reloadedConfig.dimensions());
+            service.setEconomyProvider(this.economyProvider);
+            service.setCostEvaluator(new ConfiguredWarpCostEvaluator(
+                    () -> cfgManager.config(),
+                    variations,
+                    () -> this.economyProvider,
+                    () -> this.dimensionRouter,
+                    msgService
+            ));
 
+            syncAllAetheryteModels();
             msgService.send(sender, MessageKey.COMMAND_RELOADED);
             getComponentLogger().info(
                     "ClickPortals configuration, translations, and {} variations reloaded.",
@@ -339,7 +381,7 @@ public final class ClickPortals extends JavaPlugin {
                     msgService,
                     this::hasExternalModel
             );
-            bindInteractionHandler(created, aetheryteRegistry, variations, dialogs);
+            bindInteractionHandler(created, aetheryteRegistry, dialogs);
             this.hologramService = created;
             return created;
         }
@@ -353,21 +395,24 @@ public final class ClickPortals extends JavaPlugin {
     private void bindInteractionHandler(
             final HologramService targetService,
             final AetheryteRegistry aetheryteRegistry,
-            final VariationRegistry variations,
             final AetheryteDialogFactory dialogs
     ) {
         targetService.setInteractionHandler((player, aetheryteId) ->
-                player.getScheduler().run(this, task ->
-                        aetheryteRegistry.getById(aetheryteId)
-                                .filter(aetheryte -> isWithinReach(player, aetheryte, variations))
-                                .ifPresent(aetheryte -> {
-                                    final AetheryteModelService currentModels = this.modelService;
-                                    if (currentModels != null) {
-                                        currentModels.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
-                                    }
-                                    dialogs.openWarpDialog(player, aetheryte);
-                                }),
-                        null)
+                player.getScheduler().run(this, task -> {
+                    final AetheryteService service = this.aetheryteService;
+                    if (service == null) {
+                        return;
+                    }
+                    aetheryteRegistry.getById(aetheryteId)
+                            .filter(aetheryte -> service.isWithinReach(player, aetheryte))
+                            .ifPresent(aetheryte -> {
+                                final AetheryteModelService currentModels = this.modelService;
+                                if (currentModels != null) {
+                                    currentModels.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
+                                }
+                                dialogs.openWarpDialog(player, aetheryte);
+                            });
+                }, null)
         );
     }
 
@@ -400,29 +445,6 @@ public final class ClickPortals extends JavaPlugin {
     }
 
     /**
-     * Checks that the player is in the same world and within interaction reach of the target Aetheryte,
-     * scaling the reach allowance by the variation's hitbox size (#40).
-     */
-    private static boolean isWithinReach(
-            final Player player,
-            final Aetheryte aetheryte,
-            final VariationRegistry variations
-    ) {
-        final Location loc = player.getLocation();
-        if (loc == null) {
-            return false;
-        }
-        final World world = loc.getWorld();
-        if (world == null || !world.getUID().equals(aetheryte.worldId())) {
-            return false;
-        }
-        final AetheryteVariation variation = variations.getOrDefault(aetheryte.variation());
-        final double hitboxAllowance = Math.max(variation.hitbox().width(), variation.hitbox().height());
-        final double maxReach = BASE_INTERACT_REACH + hitboxAllowance;
-        return loc.distanceSquared(aetheryte.markerLocation(world)) <= maxReach * maxReach;
-    }
-
-    /**
      * Creates the appropriate {@link HologramService} based on configuration and PacketEvents availability.
      */
     private HologramService createHologramService(
@@ -444,6 +466,22 @@ public final class ClickPortals extends JavaPlugin {
             );
         }
         return NoopHologramService.INSTANCE;
+    }
+
+    /**
+     * Resolves the active {@link EconomyProvider}, hooking into Vault if present (#16).
+     */
+    private EconomyProvider resolveEconomyProvider() {
+        if (Bukkit.getPluginManager().isPluginEnabled("Vault")) {
+            final RegisteredServiceProvider<net.milkbowl.vault.economy.Economy> rsp =
+                    Bukkit.getServicesManager().getRegistration(net.milkbowl.vault.economy.Economy.class);
+            if (rsp != null && rsp.getProvider() != null) {
+                getSLF4JLogger().info("Hooked into Vault economy: {}", rsp.getProvider().getName());
+                return new VaultEconomyProvider(rsp.getProvider());
+            }
+        }
+        getSLF4JLogger().info("Vault economy provider not available; currency costs disabled.");
+        return NoopEconomyProvider.INSTANCE;
     }
 
     /**

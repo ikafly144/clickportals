@@ -33,10 +33,22 @@ public enum MessageKey {
     HOLOGRAM_TITLE("hologram.title"),
 
     COST_FREE("cost.free"),
+    COST_BYPASSED("cost.bypassed"),
+    COST_SEPARATOR("cost.separator"),
+    COST_VAULT("cost.vault"),
+    COST_EXP_POINTS("cost.exp-points"),
+    COST_EXP_LEVELS("cost.exp-levels"),
+    COST_FOOD("cost.food"),
+    COST_INSUFFICIENT_VAULT("cost.insufficient.vault"),
+    COST_INSUFFICIENT_EXP_POINTS("cost.insufficient.exp-points"),
+    COST_INSUFFICIENT_EXP_LEVELS("cost.insufficient.exp-levels"),
+    COST_INSUFFICIENT_FOOD("cost.insufficient.food"),
 
     DIALOG_CREATE_TITLE("dialog.create.title"),
     DIALOG_CREATE_DESCRIPTION("dialog.create.description"),
     DIALOG_CREATE_VARIATION("dialog.create.variation"),
+    DIALOG_CREATE_COST("dialog.create.cost"),
+    DIALOG_CREATE_COST_BYPASSED("dialog.create.cost-bypassed"),
     DIALOG_CREATE_NAME_INPUT_LABEL("dialog.create.name-input-label"),
     DIALOG_CREATE_DEFAULT_NAME("dialog.create.default-name"),
 
@@ -49,6 +61,7 @@ public enum MessageKey {
 
     DIALOG_WARP_TITLE("dialog.warp.title"),
     DIALOG_WARP_BODY_EMPTY("dialog.warp.body-empty"),
+    DIALOG_WARP_BODY_NO_ROUTE("dialog.warp.body-no-route"),
     DIALOG_WARP_BODY_SELECT("dialog.warp.body-select"),
     DIALOG_WARP_DESTINATION_AVAILABLE("dialog.warp.destination-available"),
     DIALOG_WARP_DESTINATION_UNAVAILABLE("dialog.warp.destination-unavailable"),
@@ -62,8 +75,10 @@ public enum MessageKey {
 
     AETHERYTE_CREATED("aetheryte.created"),
     AETHERYTE_REMOVED("aetheryte.removed"),
+    AETHERYTE_COST_PAID("aetheryte.cost-paid"),
 
     WARP_SUCCESS("warp.success"),
+    WARP_COST_PAID("warp.cost-paid"),
 
     ERROR_INVALID_NAME("error.invalid-name"),
     ERROR_SPACE_NOT_EMPTY("error.space-not-empty"),
@@ -72,6 +87,7 @@ public enum MessageKey {
     ERROR_LIMIT_REACHED_GLOBAL("error.limit-reached-global"),
     ERROR_LIMIT_REACHED_VARIATION("error.limit-reached-variation"),
     ERROR_PLACEMENT_COOLDOWN("error.placement-cooldown"),
+    ERROR_PLACEMENT_TOO_CLOSE("error.placement-too-close"),
     ERROR_MISSING_ITEM("error.missing-item"),
     ERROR_NOT_FOUND("error.not-found"),
     ERROR_NOT_OWNER("error.not-owner"),
@@ -79,6 +95,10 @@ public enum MessageKey {
     ERROR_NO_WARP_PERMISSION("error.no-warp-permission"),
     ERROR_WARP_REQUIREMENTS_NOT_MET("error.warp-requirements-not-met"),
     ERROR_INSUFFICIENT_COST("error.insufficient-cost"),
+    ERROR_TOO_CLOSE("error.too-close"),
+    ERROR_TOO_FAR("error.too-far"),
+    ERROR_NO_ROUTE("error.no-route"),
+    ERROR_PLACEMENT_COST_INSUFFICIENT("error.placement-cost-insufficient"),
     ERROR_WARP_DENIED("error.warp-denied"),
     ERROR_DESTINATION_UNSAFE("error.destination-unsafe"),
     ERROR_PROTECTED_BREAK("error.protected-break"),
@@ -86,7 +106,8 @@ public enum MessageKey {
     COMMAND_GIVEN_ITEM("command.given-item"),
     COMMAND_CONSOLE_SPECIFY_PLAYER("command.console-specify-player"),
     COMMAND_UNKNOWN_VARIATION("command.unknown-variation"),
-    COMMAND_RELOADED("command.reloaded");
+    COMMAND_RELOADED("command.reloaded"),
+    COMMAND_RELOAD_FAILED("command.reload-failed");
 
     private final String path;
     private final boolean listValue;

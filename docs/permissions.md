@@ -13,7 +13,7 @@ ClickPortals registers all permission nodes in `paper-plugin.yml` with sensible 
 | `clickportals.command.reload` | `op` | Allows executing `/clickportals reload` (`/cp reload`) to reload configuration and translations. |
 | `clickportals.bypass.limit` | `op` | Bypasses per-player Aetheryte placement limits and placement cooldowns. |
 | `clickportals.bypass.cost.warp` | `op` | Bypasses warp costs when teleporting between Aetherytes. |
-| `clickportals.bypass.cost.place` | `op` | Bypasses placement costs when creating a new Aetheryte (reserved for #15; currently inactive and does not prevent creation item consumption). |
+| `clickportals.bypass.cost.place` | `op` | Bypasses placement costs when creating a new Aetheryte (#15). |
 | `clickportals.admin` | `op` | Grants all ClickPortals permissions listed above via child permission inheritance. |
 
 ## Commands

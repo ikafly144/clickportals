@@ -75,6 +75,18 @@ placement:
     radius: 0
     # Vertical height in blocks from the origin upward that must be replaceable/empty (1-16, default 2)
     height: 2
+  # Required costs to place this variation (empty = free) (#15)
+  cost: []
+
+# Optional warp overrides applied when warping from this variation (#14, #26)
+warp:
+  distance:
+    # Minimum warp distance (-1 to inherit global config)
+    min: -1.0
+    # Maximum warp distance (-1 to inherit global config)
+    max: -1.0
+  # Cost override for warps originating from this variation (null to inherit global, [] for free)
+  cost: null
 
 # Per-player placement limit and cooldown for this variation
 limit:

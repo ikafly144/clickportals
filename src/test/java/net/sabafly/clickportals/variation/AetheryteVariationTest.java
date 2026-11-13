@@ -18,6 +18,7 @@
 package net.sabafly.clickportals.variation;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 
 import java.util.List;
@@ -33,6 +34,7 @@ import net.sabafly.clickportals.variation.AetheryteVariation.ModelSection;
 import net.sabafly.clickportals.variation.AetheryteVariation.PlacementSection;
 import net.sabafly.clickportals.variation.AetheryteVariation.RecipeSection;
 import net.sabafly.clickportals.variation.AetheryteVariation.TeleportSection;
+import net.sabafly.clickportals.variation.AetheryteVariation.WarpOverrideSection;
 import org.bukkit.Material;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
@@ -211,5 +213,74 @@ class AetheryteVariationTest {
         assertThat(validated.placement().clearance().height()).isEqualTo(4);
         assertThat(validated.limit().maxPerPlayer()).isEqualTo(2);
         assertThat(validated.limit().cooldownTicks()).isEqualTo(60);
+    }
+
+    @Test
+    void distanceValidationClampsMaxWhenMinGreaterThanMax() {
+        final AetheryteVariation raw = new AetheryteVariation(
+                "Custom",
+                ItemSection.defaults(),
+                RecipeSection.defaults(),
+                ModelSection.defaults(),
+                HitboxSection.defaults(),
+                TeleportSection.defaults(),
+                PlacementSection.defaults(),
+                LimitSection.defaults(),
+                new WarpOverrideSection(new net.sabafly.clickportals.config.DistanceSection(100.0, 50.0), null)
+        );
+
+        final Logger logger = mock(Logger.class);
+        final AetheryteVariation validated = raw.validated("custom", logger);
+
+        assertThat(validated.warp().distance().min()).isEqualTo(100.0);
+        assertThat(validated.warp().distance().max()).isEqualTo(-1.0);
+        org.mockito.Mockito.verify(logger).warn(
+                org.mockito.ArgumentMatchers.contains("greater than"),
+                eq(100.0),
+                eq(50.0),
+                eq("custom")
+        );
+    }
+
+    @Test
+    void omittedMinInVariationDistanceInheritsGlobal() {
+        final AetheryteVariation raw = new AetheryteVariation(
+                "Custom",
+                ItemSection.defaults(),
+                RecipeSection.defaults(),
+                ModelSection.defaults(),
+                HitboxSection.defaults(),
+                TeleportSection.defaults(),
+                PlacementSection.defaults(),
+                LimitSection.defaults(),
+                new WarpOverrideSection(new net.sabafly.clickportals.config.DistanceSection(null, 500.0), null)
+        );
+
+        final AetheryteVariation validated = raw.validated("custom", mock(Logger.class));
+
+        // When min is omitted in variation, it must be -1.0 (inherit), not 0.0
+        assertThat(validated.warp().distance().min()).isEqualTo(-1.0);
+        assertThat(validated.warp().distance().max()).isEqualTo(500.0);
+    }
+
+    @Test
+    void nonFiniteDistanceAndMinDistanceFallBackToInherit() {
+        final AetheryteVariation raw = new AetheryteVariation(
+                "Custom",
+                ItemSection.defaults(),
+                RecipeSection.defaults(),
+                ModelSection.defaults(),
+                HitboxSection.defaults(),
+                TeleportSection.defaults(),
+                new PlacementSection(null, null, Double.POSITIVE_INFINITY),
+                LimitSection.defaults(),
+                new WarpOverrideSection(new net.sabafly.clickportals.config.DistanceSection(Double.POSITIVE_INFINITY, Double.NaN), null)
+        );
+
+        final AetheryteVariation validated = raw.validated("custom", mock(Logger.class));
+
+        assertThat(validated.placement().minDistance()).isEqualTo(-1.0);
+        assertThat(validated.warp().distance().min()).isEqualTo(-1.0);
+        assertThat(validated.warp().distance().max()).isEqualTo(-1.0);
     }
 }

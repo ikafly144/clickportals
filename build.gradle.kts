@@ -39,6 +39,9 @@ repositories {
     maven("https://repo.codemc.io/repository/maven-releases/") {
         name = "codemc-releases"
     }
+    maven("https://jitpack.io") {
+        name = "jitpack"
+    }
 }
 
 val paperLibrary: Configuration = configurations.create("paperLibrary") {
@@ -56,6 +59,9 @@ configurations.named(JavaPlugin.TEST_IMPLEMENTATION_CONFIGURATION_NAME) {
 dependencies {
     compileOnly(libs.paper.api)
     compileOnly(libs.packetevents.spigot)
+    compileOnly(libs.vault.api) {
+        exclude(group = "org.bukkit")
+    }
     compileOnly(libs.bettermodel.bukkit.api)
     compileOnly(libs.jspecify)
     testCompileOnly(libs.jspecify)
@@ -145,6 +151,7 @@ paperPluginYaml {
     website = "https://github.com/ikafly144/clickportals"
     dependencies {
         server("packetevents", PaperPluginYaml.Load.BEFORE, false)
+        server("Vault", PaperPluginYaml.Load.BEFORE, false)
         server("BetterModel", PaperPluginYaml.Load.BEFORE, false)
     }
     permissions {
@@ -172,12 +179,16 @@ paperPluginYaml {
             description = "Bypass per-player Aetheryte placement limits and placement cooldowns"
             default = Permission.Default.OP
         }
+        register("clickportals.bypass.distance") {
+            description = "Bypass minimum distance restrictions between Aetherytes"
+            default = Permission.Default.OP
+        }
         register("clickportals.bypass.cost.warp") {
             description = "Bypass Aetheryte warp costs"
             default = Permission.Default.OP
         }
         register("clickportals.bypass.cost.place") {
-            description = "Bypass Aetheryte placement costs (reserved; currently inactive)"
+            description = "Bypass Aetheryte placement costs"
             default = Permission.Default.OP
         }
         register("clickportals.admin") {
@@ -190,6 +201,7 @@ paperPluginYaml {
                 "clickportals.command.give",
                 "clickportals.command.reload",
                 "clickportals.bypass.limit",
+                "clickportals.bypass.distance",
                 "clickportals.bypass.cost.warp",
                 "clickportals.bypass.cost.place",
             )
@@ -225,6 +237,9 @@ testing {
                 implementation(libs.assertj.core)
                 implementation(libs.paper.api)
                 implementation(libs.packetevents.spigot)
+                implementation(libs.vault.api) {
+                    exclude(group = "org.bukkit")
+                }
                 implementation(libs.bettermodel.bukkit.api)
             }
             targets {
@@ -286,6 +301,9 @@ tasks.named<RunServer>("runServer") {
     downloadPlugins {
         modrinth("packetevents", "${libs.versions.packetevents.get()}+spigot")
         github("toxicity188", "BetterModel", libs.versions.bettermodel.get(), "bettermodel-${libs.versions.bettermodel.get()}-paper.jar")
+        github("MilkBowl", "Vault", "1.7.3", "Vault.jar")
+        modrinth("emeraldbank", "1.2.4")
+        modrinth("luckperms", "v5.5.71-bukkit")
     }
 }
 
@@ -296,5 +314,8 @@ runPaper.folia.registerTask {
     downloadPlugins {
         modrinth("packetevents", "${libs.versions.packetevents.get()}+spigot")
         github("toxicity188", "BetterModel", libs.versions.bettermodel.get(), "bettermodel-${libs.versions.bettermodel.get()}-paper.jar")
+        github("SirBlobman", "Vault-Folia", "v1.7.3-folia", "Vault-1.7.3.jar")
+        modrinth("emeraldbank", "1.2.4")
+        modrinth("luckperms", "v5.5.71-bukkit")
     }
 }

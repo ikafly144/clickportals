@@ -60,6 +60,18 @@ public interface AetheryteModelService {
     }
 
     /**
+     * Spawns or updates the external 3D model for the given Aetheryte for a single player.
+     */
+    default void showAetheryteToPlayer(final Player player, final Aetheryte aetheryte) {
+    }
+
+    /**
+     * Removes the external 3D model for the given Aetheryte for a single player.
+     */
+    default void hideAetheryteFromPlayer(final Player player, final Aetheryte aetheryte) {
+    }
+
+    /**
      * Removes the given player from all active model trackers (e.g. on quit).
      *
      * @param player the player to remove

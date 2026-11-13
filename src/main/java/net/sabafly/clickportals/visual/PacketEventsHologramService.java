@@ -307,6 +307,31 @@ public final class PacketEventsHologramService implements HologramService {
     }
 
     @Override
+    public void showAetheryteToPlayer(final Player player, final Aetheryte aetheryte) {
+        final PacketEventsAPI<?> api = PacketEvents.getAPI();
+        if (api == null || !api.isInitialized()) {
+            return;
+        }
+        if (player.getWorld().getUID().equals(aetheryte.worldId())) {
+            sendSpawnPackets(api, player, aetheryte);
+        }
+    }
+
+    @Override
+    public void hideAetheryteFromPlayer(final Player player, final Aetheryte aetheryte) {
+        final ClientEntitySet set = entitiesByAetheryte.get(aetheryte.id());
+        if (set == null) {
+            return;
+        }
+        final PacketEventsAPI<?> api = PacketEvents.getAPI();
+        if (api == null || !api.isInitialized()) {
+            return;
+        }
+        final WrapperPlayServerDestroyEntities destroyPacket = new WrapperPlayServerDestroyEntities(set.toArray());
+        api.getPlayerManager().sendPacket(player, destroyPacket);
+    }
+
+    @Override
     public void destroyAll() {
         final PacketEventsAPI<?> api = PacketEvents.getAPI();
         if (registeredListener != null && api != null) {

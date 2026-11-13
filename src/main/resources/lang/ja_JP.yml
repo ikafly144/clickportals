@@ -14,12 +14,25 @@ hologram:
 
 cost:
   free: "<green>無料</green>"
+  bypassed: "<strikethrough><cost></strikethrough> <green>(免除)</green>"
+  separator: "<dark_gray> + </dark_gray>"
+  vault: "<gold><amount></gold>"
+  exp-points: "<green><amount> XP</green>"
+  exp-levels: "<green><amount> Lv</green>"
+  food: "<yellow><amount> 🍗</yellow>"
+  insufficient:
+    vault: "<red>所持金が足りません（必要: <amount>）</red>"
+    exp-points: "<red>経験値ポイントが足りません（必要: <amount> XP）</red>"
+    exp-levels: "<red>経験値レベルが足りません（必要: <amount> Lv）</red>"
+    food: "<red>空腹度が足りません（必要: <amount> 🍗）</red>"
 
 dialog:
   create:
     title: "<aqua><bold>エーテライトの設置</bold></aqua>"
     description: "<gray>設置座標: </gray><white><world> (<x>, <y>, <z>)</white>"
     variation: "<gray>種類: </gray><variation>"
+    cost: "<gray>設置コスト: </gray><cost>"
+    cost-bypassed: "<gray>設置コスト: </gray><strikethrough><cost></strikethrough> <green>(免除)</green>"
     name-input-label: "<aqua>エーテライト名</aqua>"
     default-name: "<player>のエーテライト"
   button:
@@ -32,6 +45,7 @@ dialog:
   warp:
     title: "<aqua>✦ エーテライト: </aqua><white><bold><name></bold></white>"
     body-empty: "<gray>現在地: </gray><white><name></white><newline><yellow>ワープ可能な他のエーテライトがまだありません。</yellow>"
+    body-no-route: "<gray>現在地: </gray><white><name></white><newline><yellow>他のディメンションへ接続可能なルートがありません。</yellow>"
     body-select: "<gray>ワープ先のエーテライトを選択してください。</gray>"
     destination-available: "<aqua>✦ </aqua><white><name></white><dark_gray> [</dark_gray><cost><dark_gray>]</dark_gray>"
     destination-unavailable: "<red>✖ </red><gray><name></gray><dark_gray> [</dark_gray><cost><dark_gray>]</dark_gray>"
@@ -46,9 +60,11 @@ dialog:
 aetheryte:
   created: "<prefix><green>エーテライト「</green><white><bold><name></bold></white><green>」を設置しました。</green>"
   removed: "<prefix><yellow>エーテライト「</yellow><white><bold><name></bold></white><yellow>」を撤去しました。</yellow>"
+  cost-paid: "<prefix><gray>エーテライトの設置費用として <cost> を支払いました。</gray>"
 
 warp:
   success: "<prefix><aqua>「</aqua><white><bold><name></bold></white><aqua>」へワープしました。</aqua>"
+  cost-paid: "<prefix><gray>ワープ費用として <cost> を支払いました。</gray>"
 
 error:
   invalid-name: "<prefix><red>有効なエーテライト名を入力してください（1〜32文字）。</red>"
@@ -58,6 +74,7 @@ error:
   limit-reached-global: "<prefix><red>設置可能なエーテライトの総数上限（<max> 基）に達しています。</red>"
   limit-reached-variation: "<prefix><red><variation> の設置数上限（<max> 基）に達しています。</red>"
   placement-cooldown: "<prefix><red>次のエーテライトを設置するまであと <white><seconds>秒</white> 待ってください。</red>"
+  placement-too-close: "<prefix><red>他のエーテライトに近すぎます！最低でも <distance> ブロック離す必要があります。</red>"
   missing-item: "<prefix><red>エーテライトアイテムを所持していません。</red>"
   not-found: "<prefix><red>対象のエーテライトが見つかりません。</red>"
   not-owner: "<prefix><red>このエーテライトを撤去する権限がありません（設置者のみ撤去可能）。</red>"
@@ -65,6 +82,10 @@ error:
   no-warp-permission: "<red>ワープ権限がありません</red>"
   warp-requirements-not-met: "<red>条件を満たしていません</red>"
   insufficient-cost: "<red>コストが不足しています</red>"
+  too-close: "<red>近すぎるためワープできません</red>"
+  too-far: "<red>遠すぎるためワープできません</red>"
+  no-route: "<red>このディメンションへの移動経路がありません</red>"
+  placement-cost-insufficient: "<prefix><red>設置コストが不足しているため設置できません: </red><reason>"
   warp-denied: "<prefix><red>ワープできません: </red><reason>"
   destination-unsafe: "<prefix><red>ワープ先の着地地点が塞がれているか安全ではないためワープできません。</red>"
   protected-break: "<prefix><red>エーテライトは直接破壊できません。右クリックメニューから撤去してください。</red>"
@@ -74,3 +95,4 @@ command:
   console-specify-player: "<prefix><red>コンソールから実行する場合は対象プレイヤーを指定してください。</red>"
   unknown-variation: "<prefix><red>不明なエーテライト種類です: <variation></red>"
   reloaded: "<prefix><green>ClickPortals の設定と翻訳ファイルを再読み込みしました。</green>"
+  reload-failed: "<prefix><red>エラーのため設定の再読み込みに失敗しました。コンソールログを確認してください。</red>"

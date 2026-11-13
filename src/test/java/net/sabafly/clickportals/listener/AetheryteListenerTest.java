@@ -19,26 +19,35 @@ package net.sabafly.clickportals.listener;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.papermc.paper.event.packet.PlayerChunkLoadEvent;
+import io.papermc.paper.event.packet.PlayerChunkUnloadEvent;
 import io.papermc.paper.threadedregions.scheduler.EntityScheduler;
 import io.papermc.paper.threadedregions.scheduler.RegionScheduler;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.sabafly.clickportals.ClickPortals;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
+import net.sabafly.clickportals.cost.CostItemQuote;
+import net.sabafly.clickportals.cost.CostType;
 import net.sabafly.clickportals.dialog.AetheryteDialogFactory;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.permission.Permissions;
@@ -48,6 +57,7 @@ import net.sabafly.clickportals.variation.VariationRegistry;
 import net.sabafly.clickportals.visual.HologramService;
 import net.sabafly.clickportals.visual.NoopHologramService;
 import org.bukkit.Bukkit;
+import org.bukkit.Chunk;
 import org.bukkit.ExplosionResult;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -71,6 +81,7 @@ import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.Plugin;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class AetheryteListenerTest {
 
@@ -78,6 +89,7 @@ class AetheryteListenerTest {
 
     private Plugin plugin;
     private AetheryteRegistry registry;
+    private AetheryteService service;
     private AetheryteListener listener;
     private World world;
     private Block aetheryteBlock;
@@ -87,10 +99,11 @@ class AetheryteListenerTest {
     @BeforeEach
     void setUp() {
         plugin = mock(Plugin.class);
+        when(plugin.getSLF4JLogger()).thenReturn(mock(org.slf4j.Logger.class));
         registry = new AetheryteRegistry();
-        final AetheryteService service = new AetheryteService(plugin, registry, NoopHologramService.INSTANCE);
+        service = new AetheryteService(plugin, registry, NoopHologramService.INSTANCE);
         final AetheryteDialogFactory dialogFactory = new AetheryteDialogFactory(service);
-        listener = new AetheryteListener(plugin, registry, dialogFactory, NoopHologramService.INSTANCE);
+        listener = new AetheryteListener(plugin, registry, service, dialogFactory, NoopHologramService.INSTANCE, Messages.defaults());
 
         world = mock(World.class);
         when(world.getUID()).thenReturn(WORLD_ID);
@@ -215,6 +228,7 @@ class AetheryteListenerTest {
         serverField.set(null, server);
         try {
             when(server.getWorld(WORLD_ID)).thenReturn(world);
+            when(server.isOwnedByCurrentRegion(any(), any(int.class), any(int.class))).thenReturn(true);
             final RegionScheduler regionScheduler = mock(RegionScheduler.class);
             when(server.getRegionScheduler()).thenReturn(regionScheduler);
             doAnswer(inv -> {
@@ -232,6 +246,7 @@ class AetheryteListenerTest {
             when(world.getBlockAt(5, 63, 5)).thenReturn(safeFloor);
             when(world.getBlockAt(5, 64, 5)).thenReturn(safeAir);
             when(world.getBlockAt(5, 65, 5)).thenReturn(safeAir);
+            when(world.getBlockAt(5, 66, 5)).thenReturn(safeAir);
 
             final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
             when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
@@ -263,6 +278,214 @@ class AetheryteListenerTest {
 
             verify(evaluator, never()).charge(any(), any(), any());
             verify(player).sendMessage(any(Component.class));
+        } finally {
+            serverField.set(null, null);
+        }
+    }
+
+    @Test
+    void inFlightWarpDebouncesDuplicateAttempts() throws Exception {
+        final Server server = mock(Server.class);
+        final java.lang.reflect.Field serverField = Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            when(server.getWorld(WORLD_ID)).thenReturn(world);
+            final RegionScheduler regionScheduler = mock(RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+
+            final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
+            when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
+
+            final AetheryteService customService = new AetheryteService(
+                    plugin,
+                    registry,
+                    VariationRegistry.defaults(),
+                    NoopHologramService.INSTANCE,
+                    Messages.defaults(),
+                    () -> -1,
+                    () -> 0,
+                    p -> 0L,
+                    (p, t) -> {},
+                    evaluator
+            );
+
+            final Player player = mock(Player.class);
+            final UUID playerId = UUID.randomUUID();
+            when(player.getUniqueId()).thenReturn(playerId);
+            when(player.hasPermission("clickportals.use")).thenReturn(true);
+            when(player.getWorld()).thenReturn(world);
+            when(player.getLocation()).thenReturn(new Location(world, 5, 64, 5));
+
+            // Keep region execution pending so warp remains in flight
+            customService.warpToAetheryte(player, registeredAetheryte, registeredAetheryte.id());
+
+            // Second warp attempt should be debounced immediately
+            customService.warpToAetheryte(player, registeredAetheryte, registeredAetheryte.id());
+
+            // Region execution was requested exactly once
+            verify(regionScheduler, times(1)).execute(any(), any(Location.class), any(Runnable.class));
+        } finally {
+            serverField.set(null, null);
+        }
+    }
+
+    @Test
+    void warpToAetheryteRecoversAndClearsInFlightWhenExceptionThrownDuringCharge() throws Exception {
+        final Server server = mock(Server.class);
+        final java.lang.reflect.Field serverField = Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            when(server.getWorld(WORLD_ID)).thenReturn(world);
+            when(server.isOwnedByCurrentRegion(any(), any(int.class), any(int.class))).thenReturn(true);
+            final RegionScheduler regionScheduler = mock(RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+            doAnswer(inv -> {
+                ((Runnable) inv.getArgument(2)).run();
+                return null;
+            }).when(regionScheduler).execute(any(), any(Location.class), any());
+
+            final Block safeFloor = mock(Block.class);
+            when(safeFloor.isSolid()).thenReturn(true);
+            when(safeFloor.getType()).thenReturn(Material.STONE);
+            final Block safeAir = mock(Block.class);
+            when(safeAir.isPassable()).thenReturn(true);
+            when(safeAir.getType()).thenReturn(Material.AIR);
+
+            when(world.getBlockAt(5, 63, 5)).thenReturn(safeFloor);
+            when(world.getBlockAt(5, 64, 5)).thenReturn(safeAir);
+            when(world.getBlockAt(5, 65, 5)).thenReturn(safeAir);
+            when(world.getBlockAt(5, 66, 5)).thenReturn(safeAir);
+
+            final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
+            when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
+            when(evaluator.charge(any(), any(), any())).thenThrow(new RuntimeException("Economy database crashed"));
+
+            final AetheryteService customService = new AetheryteService(
+                    plugin,
+                    registry,
+                    VariationRegistry.defaults(),
+                    NoopHologramService.INSTANCE,
+                    Messages.defaults(),
+                    () -> -1,
+                    () -> 0,
+                    p -> 0L,
+                    (p, t) -> {},
+                    evaluator
+            );
+
+            final Player player = mock(Player.class);
+            final UUID playerId = UUID.randomUUID();
+            when(player.getUniqueId()).thenReturn(playerId);
+            when(player.hasPermission("clickportals.use")).thenReturn(true);
+            when(player.getWorld()).thenReturn(world);
+            when(player.getLocation()).thenReturn(new Location(world, 5, 64, 5));
+
+            final EntityScheduler entityScheduler = mock(EntityScheduler.class);
+            when(player.getScheduler()).thenReturn(entityScheduler);
+            doAnswer(inv -> {
+                @SuppressWarnings("unchecked")
+                final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+                consumer.accept(mock(ScheduledTask.class));
+                return mock(ScheduledTask.class);
+            }).when(entityScheduler).run(any(), any(), any());
+
+            // First warp attempt crashes in charge()
+            customService.warpToAetheryte(player, registeredAetheryte, registeredAetheryte.id());
+
+            // Player should receive error notification
+            verify(player).sendMessage(any(Component.class));
+
+            // Evaluator charge was called once
+            verify(evaluator, times(1)).charge(any(), any(), any());
+
+            // Next warp attempt: player is NOT locked in inFlightWarps, so charge() is invoked again!
+            customService.warpToAetheryte(player, registeredAetheryte, registeredAetheryte.id());
+            verify(evaluator, times(2)).charge(any(), any(), any());
+        } finally {
+            serverField.set(null, null);
+        }
+    }
+
+    @Test
+    void warpToAetheryteChargesCostAndSendsPaidNotificationOnSuccess() throws Exception {
+        final Server server = mock(Server.class);
+        final java.lang.reflect.Field serverField = Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            when(server.getWorld(WORLD_ID)).thenReturn(world);
+            when(server.isOwnedByCurrentRegion(any(), any(int.class), any(int.class))).thenReturn(true);
+            final RegionScheduler regionScheduler = mock(RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+            doAnswer(inv -> {
+                ((Runnable) inv.getArgument(2)).run();
+                return null;
+            }).when(regionScheduler).execute(any(), any(Location.class), any());
+
+            final Block safeFloor = mock(Block.class);
+            when(safeFloor.isSolid()).thenReturn(true);
+            when(safeFloor.getType()).thenReturn(Material.STONE);
+            final Block safeAir = mock(Block.class);
+            when(safeAir.isPassable()).thenReturn(true);
+            when(safeAir.getType()).thenReturn(Material.AIR);
+
+            when(world.getBlockAt(5, 63, 5)).thenReturn(safeFloor);
+            when(world.getBlockAt(5, 64, 5)).thenReturn(safeAir);
+            when(world.getBlockAt(5, 65, 5)).thenReturn(safeAir);
+            when(world.getBlockAt(5, 66, 5)).thenReturn(safeAir);
+
+            final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
+            when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.text("$30.00")));
+            when(evaluator.charge(any(), any(), any())).thenReturn(true);
+            when(evaluator.popPendingCharge(any(), any())).thenReturn(
+                    List.of(new CostItemQuote(CostType.VAULT, 30.0, true, true, 100.0, false))
+            );
+
+            final AetheryteService customService = new AetheryteService(
+                    plugin,
+                    registry,
+                    VariationRegistry.defaults(),
+                    NoopHologramService.INSTANCE,
+                    Messages.defaults(),
+                    () -> -1,
+                    () -> 0,
+                    p -> 0L,
+                    (p, t) -> {},
+                    evaluator
+            );
+            final net.sabafly.clickportals.economy.EconomyProvider economy = mock(net.sabafly.clickportals.economy.EconomyProvider.class);
+            when(economy.isAvailable()).thenReturn(true);
+            when(economy.format(30.0)).thenReturn("$30.00");
+            customService.setEconomyProvider(economy);
+
+            final Player player = mock(Player.class);
+            final UUID playerId = UUID.randomUUID();
+            when(player.getUniqueId()).thenReturn(playerId);
+            when(player.hasPermission("clickportals.use")).thenReturn(true);
+            when(player.getWorld()).thenReturn(world);
+            when(player.getLocation()).thenReturn(new Location(world, 5, 64, 5));
+            when(player.teleportAsync(any(Location.class))).thenReturn(CompletableFuture.completedFuture(true));
+
+            final EntityScheduler entityScheduler = mock(EntityScheduler.class);
+            when(player.getScheduler()).thenReturn(entityScheduler);
+            doAnswer(inv -> {
+                @SuppressWarnings("unchecked")
+                final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+                consumer.accept(mock(ScheduledTask.class));
+                return mock(ScheduledTask.class);
+            }).when(entityScheduler).run(any(), any(), any());
+
+            customService.warpToAetheryte(player, registeredAetheryte, registeredAetheryte.id());
+
+            verify(evaluator).commit(eq(player), eq(registeredAetheryte), eq(registeredAetheryte));
+            final ArgumentCaptor<Component> msgCaptor = ArgumentCaptor.forClass(Component.class);
+            verify(player, atLeastOnce()).sendMessage(msgCaptor.capture());
+            final boolean hasPaidMessage = msgCaptor.getAllValues().stream()
+                    .map(c -> PlainTextComponentSerializer.plainText().serialize(c))
+                    .anyMatch(s -> s.contains("Paid") && s.contains("$30.00"));
+            assertThat(hasPaidMessage).isTrue();
         } finally {
             serverField.set(null, null);
         }
@@ -356,5 +579,173 @@ class AetheryteListenerTest {
         customListener.onServerLoad(event);
 
         verify(clickPortals).syncAllAetheryteModels();
+    }
+
+    @Test
+    void playerChunkLoadSpawnsAetheryteHologramWhenChunkContainsAetheryte() {
+        final HologramService mockHolograms = mock(HologramService.class);
+        final net.sabafly.clickportals.model.AetheryteModelService mockModels = mock(net.sabafly.clickportals.model.AetheryteModelService.class);
+        service.setHologramService(mockHolograms);
+        service.setModelService(mockModels);
+        listener.setHologramService(mockHolograms);
+
+        final Chunk chunk = mock(Chunk.class);
+        when(chunk.getWorld()).thenReturn(world);
+        when(chunk.getX()).thenReturn(0);
+        when(chunk.getZ()).thenReturn(0);
+
+        final Player player = mock(Player.class);
+        when(player.isOnline()).thenReturn(true);
+        when(player.getWorld()).thenReturn(world);
+        final EntityScheduler entityScheduler = mock(EntityScheduler.class);
+        when(player.getScheduler()).thenReturn(entityScheduler);
+        doAnswer(inv -> {
+            @SuppressWarnings("unchecked")
+            final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+            consumer.accept(mock(ScheduledTask.class));
+            return mock(ScheduledTask.class);
+        }).when(entityScheduler).run(any(), any(), any());
+
+        // registeredAetheryte is at (0, 64, 0), which is in chunk (0, 0)
+        final PlayerChunkLoadEvent loadEvent = new PlayerChunkLoadEvent(chunk, player);
+        listener.onPlayerChunkLoad(loadEvent);
+
+        verify(mockHolograms).showAetheryteToPlayer(player, registeredAetheryte);
+        verify(mockModels).showAetheryteToPlayer(player, registeredAetheryte);
+    }
+
+    @Test
+    void playerChunkLoadIgnoredWhenChunkHasNoAetheryte() {
+        final HologramService mockHolograms = mock(HologramService.class);
+        service.setHologramService(mockHolograms);
+        listener.setHologramService(mockHolograms);
+
+        final Chunk emptyChunk = mock(Chunk.class);
+        when(emptyChunk.getWorld()).thenReturn(world);
+        when(emptyChunk.getX()).thenReturn(10);
+        when(emptyChunk.getZ()).thenReturn(10);
+
+        final Player player = mock(Player.class);
+        when(player.isOnline()).thenReturn(true);
+
+        final PlayerChunkLoadEvent loadEvent = new PlayerChunkLoadEvent(emptyChunk, player);
+        listener.onPlayerChunkLoad(loadEvent);
+
+        verify(mockHolograms, never()).showAetheryteToPlayer(any(), any());
+    }
+
+    @Test
+    void playerChunkUnloadHidesAetheryte() {
+        final HologramService mockHolograms = mock(HologramService.class);
+        final net.sabafly.clickportals.model.AetheryteModelService mockModels = mock(net.sabafly.clickportals.model.AetheryteModelService.class);
+        service.setHologramService(mockHolograms);
+        service.setModelService(mockModels);
+        listener.setHologramService(mockHolograms);
+
+        final Chunk chunk = mock(Chunk.class);
+        when(chunk.getWorld()).thenReturn(world);
+        when(chunk.getX()).thenReturn(0);
+        when(chunk.getZ()).thenReturn(0);
+
+        final Player player = mock(Player.class);
+        when(player.isOnline()).thenReturn(true);
+        when(player.getWorld()).thenReturn(world);
+        final EntityScheduler entityScheduler = mock(EntityScheduler.class);
+        when(player.getScheduler()).thenReturn(entityScheduler);
+        doAnswer(inv -> {
+            @SuppressWarnings("unchecked")
+            final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+            consumer.accept(mock(ScheduledTask.class));
+            return mock(ScheduledTask.class);
+        }).when(entityScheduler).run(any(), any(), any());
+
+        final PlayerChunkUnloadEvent unloadEvent = new PlayerChunkUnloadEvent(chunk, player);
+        listener.onPlayerChunkUnload(unloadEvent);
+
+        verify(mockHolograms).hideAetheryteFromPlayer(player, registeredAetheryte);
+        verify(mockModels).hideAetheryteFromPlayer(player, registeredAetheryte);
+    }
+
+    @Test
+    void warpToAetheryteRecordsPendingRefundWhenChargeRollbackFails() throws Exception {
+        final Server server = mock(Server.class);
+        final java.lang.reflect.Field serverField = Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            when(server.getWorld(WORLD_ID)).thenReturn(world);
+            when(server.isOwnedByCurrentRegion(any(), any(int.class), any(int.class))).thenReturn(true);
+            final RegionScheduler regionScheduler = mock(RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+            doAnswer(inv -> {
+                ((Runnable) inv.getArgument(2)).run();
+                return null;
+            }).when(regionScheduler).execute(any(), any(Location.class), any());
+
+            final Block safeFloor = mock(Block.class);
+            when(safeFloor.isSolid()).thenReturn(true);
+            when(safeFloor.getType()).thenReturn(Material.STONE);
+            final Block safeAir = mock(Block.class);
+            when(safeAir.isPassable()).thenReturn(true);
+            when(safeAir.getType()).thenReturn(Material.AIR);
+
+            when(world.getBlockAt(5, 63, 5)).thenReturn(safeFloor);
+            when(world.getBlockAt(5, 64, 5)).thenReturn(safeAir);
+            when(world.getBlockAt(5, 65, 5)).thenReturn(safeAir);
+            when(world.getBlockAt(5, 66, 5)).thenReturn(safeAir);
+
+            final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
+            when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.text("$70.00")));
+            when(evaluator.charge(any(), any(), any())).thenReturn(false);
+            when(evaluator.popFailedChargeUnrefunded(any(), any())).thenReturn(
+                    List.of(new net.sabafly.clickportals.cost.CostItemQuote(
+                            net.sabafly.clickportals.cost.CostType.VAULT, 40.0, true, true, 40.0, false))
+            );
+
+            final net.sabafly.clickportals.service.PendingRefundStorage storage =
+                    mock(net.sabafly.clickportals.service.PendingRefundStorage.class);
+            when(storage.load()).thenReturn(java.util.Map.of());
+            when(storage.save(any())).thenReturn(true);
+
+            final AetheryteService customService = new AetheryteService(
+                    plugin,
+                    registry,
+                    VariationRegistry.defaults(),
+                    NoopHologramService.INSTANCE,
+                    net.sabafly.clickportals.model.NoopAetheryteModelService.INSTANCE,
+                    Messages.defaults(),
+                    () -> -1,
+                    () -> 0,
+                    () -> 0.0,
+                    p -> 0L,
+                    (p, t) -> {},
+                    evaluator,
+                    storage
+            );
+
+            final Player player = mock(Player.class);
+            final UUID playerId = UUID.randomUUID();
+            when(player.getUniqueId()).thenReturn(playerId);
+            when(player.hasPermission("clickportals.use")).thenReturn(true);
+            when(player.getWorld()).thenReturn(world);
+            when(player.getLocation()).thenReturn(new Location(world, 5, 64, 5));
+
+            final EntityScheduler entityScheduler = mock(EntityScheduler.class);
+            when(player.getScheduler()).thenReturn(entityScheduler);
+            doAnswer(inv -> {
+                @SuppressWarnings("unchecked")
+                final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+                consumer.accept(mock(ScheduledTask.class));
+                return mock(ScheduledTask.class);
+            }).when(entityScheduler).run(any(), any(), any());
+
+            customService.warpToAetheryte(player, registeredAetheryte, registeredAetheryte.id());
+
+            assertThat(customService.pendingRefundPlayerCount()).isEqualTo(1);
+            assertThat(customService.pendingRefundItemCount()).isEqualTo(1);
+            verify(storage).save(any());
+        } finally {
+            serverField.set(null, null);
+        }
     }
 }
