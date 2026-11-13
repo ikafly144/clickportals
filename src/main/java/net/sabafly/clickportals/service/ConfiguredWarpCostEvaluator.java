@@ -43,7 +43,9 @@ import net.sabafly.clickportals.cost.CostQuote;
 import net.sabafly.clickportals.economy.EconomyProvider;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
+import net.sabafly.clickportals.permission.Permissions;
 import net.sabafly.clickportals.route.DimensionRouter;
+import net.sabafly.clickportals.route.DimensionRoutesConfig;
 import net.sabafly.clickportals.route.RoutePlan;
 import net.sabafly.clickportals.service.AetheryteService.WarpCostEvaluator;
 import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation;
@@ -198,7 +200,20 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         }
         final Map<UUID, CachedRoute> routeCache = new HashMap<>();
         final EnumMap<DenyReason, Component> errorCache = new EnumMap<>(DenyReason.class);
+        final Map<String, Component> dimensionErrorCache = new HashMap<>();
         final Map<String, Double> vars = new HashMap<>(16);
+
+        final DimensionRoutesConfig dimensions = config.dimensions();
+        final boolean bypassDimension = Permissions.canBypassDimension(player);
+        final @Nullable String sourceWorldName = resolveSourceWorldName(player, source, sourceWorld);
+        final @Nullable Component sourceDimensionError = !bypassDimension
+                && sourceWorldName != null
+                && !dimensions.isUseAllowed(sourceWorldName)
+                ? messages.errorDimensionUseDisabled(
+                        playerLocale,
+                        AetheryteService.resolveDimensionDisplayComponent(dimensions, sourceWorldName)
+                )
+                : null;
 
         CostBundle.@Nullable PlayerResourceSnapshot snapshot = null;
         @Nullable Component cachedFreeCostDisplay = null;
@@ -217,8 +232,10 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             final CostBundle bundle;
             final boolean bundleHasEntries;
             @Nullable DenyReason blockReasonCode = null;
+            final @Nullable World resolvedTargetWorld;
 
             if (sameWorld) {
+                resolvedTargetWorld = sourceWorld;
                 originX = sameWorldOriginX;
                 originY = sameWorldOriginY;
                 originZ = sameWorldOriginZ;
@@ -231,8 +248,18 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
                 final @Nullable World targetWorld = worldCache
                         .computeIfAbsent(destWorldId, id -> Optional.ofNullable(worldResolver.apply(id)))
                         .orElse(null);
+                resolvedTargetWorld = targetWorld;
 
                 if (targetWorld == null) {
+                    final String missingWorldName = destination.worldName();
+                    final @Nullable Component missingDimError = resolveBatchDimensionError(
+                            sourceDimensionError,
+                            bypassDimension,
+                            dimensions,
+                            missingWorldName,
+                            dimensionErrorCache,
+                            playerLocale
+                    );
                     final CostQuote quote;
                     if (baseHasEntries) {
                         if (snapshot == null) {
@@ -253,11 +280,19 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
                     } else {
                         costDisplay = CostFormatter.format(playerLocale, quote, economy, messages, showOptionalCosts);
                     }
-                    results.add(WarpEvaluation.denied(
-                            costDisplay,
-                            resolveErrorComponent(errorCache, playerLocale, DenyReason.NOT_FOUND),
-                            DenyReason.NOT_FOUND
-                    ));
+                    if (missingDimError != null) {
+                        results.add(WarpEvaluation.denied(
+                                costDisplay,
+                                missingDimError,
+                                DenyReason.DIMENSION_DISABLED
+                        ));
+                    } else {
+                        results.add(WarpEvaluation.denied(
+                                costDisplay,
+                                resolveErrorComponent(errorCache, playerLocale, DenyReason.NOT_FOUND),
+                                DenyReason.NOT_FOUND
+                        ));
+                    }
                     continue;
                 }
 
@@ -326,11 +361,29 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
                 }
             }
 
+            final String destWorldName = resolvedTargetWorld != null
+                    ? resolvedTargetWorld.getName()
+                    : destination.worldName();
+            final @Nullable Component dimBlockError = resolveBatchDimensionError(
+                    sourceDimensionError,
+                    bypassDimension,
+                    dimensions,
+                    destWorldName,
+                    dimensionErrorCache,
+                    playerLocale
+            );
+
             final double blockDist;
             final double horizDist;
             final double chunkDist;
             final double dy;
-            if (blockReasonCode == DenyReason.NO_ROUTE) {
+            if (dimBlockError != null) {
+                blockReasonCode = DenyReason.DIMENSION_DISABLED;
+                blockDist = 0.0;
+                horizDist = 0.0;
+                chunkDist = 0.0;
+                dy = 0.0;
+            } else if (blockReasonCode == DenyReason.NO_ROUTE) {
                 blockDist = 0.0;
                 horizDist = 0.0;
                 chunkDist = 0.0;
@@ -377,13 +430,53 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
                 costDisplay = CostFormatter.format(playerLocale, quote, economy, messages, showOptionalCosts);
             }
 
-            final @Nullable Component blockReason = blockReasonCode != null
-                    ? resolveErrorComponent(errorCache, playerLocale, blockReasonCode)
-                    : null;
+            final @Nullable Component blockReason;
+            if (blockReasonCode == DenyReason.DIMENSION_DISABLED && dimBlockError != null) {
+                blockReason = dimBlockError;
+            } else if (blockReasonCode != null) {
+                blockReason = resolveErrorComponent(errorCache, playerLocale, blockReasonCode);
+            } else {
+                blockReason = null;
+            }
             results.add(toWarpEvaluation(playerLocale, quote, economy, costDisplay, blockReason, blockReasonCode));
         }
 
         return results;
+    }
+
+    private @Nullable Component resolveBatchDimensionError(
+            final @Nullable Component sourceDimensionError,
+            final boolean bypassDimension,
+            final DimensionRoutesConfig dimensions,
+            final String destWorldName,
+            final Map<String, Component> dimensionErrorCache,
+            final Locale playerLocale
+    ) {
+        if (sourceDimensionError != null) {
+            return sourceDimensionError;
+        }
+        if (bypassDimension || dimensions.isUseAllowed(destWorldName)) {
+            return null;
+        }
+        return dimensionErrorCache.computeIfAbsent(
+                destWorldName,
+                name -> messages.errorDimensionUseDisabled(
+                        playerLocale,
+                        AetheryteService.resolveDimensionDisplayComponent(dimensions, name)
+                )
+        );
+    }
+
+    private static @Nullable String resolveSourceWorldName(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final @Nullable World sourceWorld
+    ) {
+        if (source != null) {
+            return sourceWorld != null ? sourceWorld.getName() : source.worldName();
+        }
+        final World playerWorld = player.getWorld();
+        return playerWorld != null ? playerWorld.getName() : null;
     }
 
     private WarpEvaluation toWarpEvaluation(
@@ -438,7 +531,8 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             case NO_ROUTE -> messages.get(playerLocale, MessageKey.ERROR_NO_ROUTE);
             case TOO_CLOSE -> messages.get(playerLocale, MessageKey.ERROR_TOO_CLOSE);
             case TOO_FAR -> messages.get(playerLocale, MessageKey.ERROR_TOO_FAR);
-            case INSUFFICIENT_COST, NO_PERMISSION, OTHER -> messages.get(playerLocale, MessageKey.ERROR_NOT_FOUND);
+            case INSUFFICIENT_COST, NO_PERMISSION, DIMENSION_DISABLED, OTHER ->
+                    messages.get(playerLocale, MessageKey.ERROR_NOT_FOUND);
         });
     }
 
@@ -572,6 +666,27 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
 
         final List<CostEntry> baseEntries = resolveBaseCostEntries(source, config);
         final List<CostEntry> extraEntries = new ArrayList<>();
+
+        final DimensionRoutesConfig dimensions = config.dimensions();
+        final boolean bypassDimension = Permissions.canBypassDimension(player);
+        final @Nullable String sourceWorldName = resolveSourceWorldName(player, source, sourceWorld);
+        if (!bypassDimension && sourceWorldName != null && !dimensions.isUseAllowed(sourceWorldName)) {
+            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,
+                    messages.errorDimensionUseDisabled(
+                            player,
+                            AetheryteService.resolveDimensionDisplayComponent(dimensions, sourceWorldName)
+                    ),
+                    WarpEvaluation.DenyReason.DIMENSION_DISABLED);
+        }
+        final String destWorldName = targetWorld != null ? targetWorld.getName() : destination.worldName();
+        if (!bypassDimension && !dimensions.isUseAllowed(destWorldName)) {
+            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,
+                    messages.errorDimensionUseDisabled(
+                            player,
+                            AetheryteService.resolveDimensionDisplayComponent(dimensions, destWorldName)
+                    ),
+                    WarpEvaluation.DenyReason.DIMENSION_DISABLED);
+        }
 
         if (targetWorld == null) {
             return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,

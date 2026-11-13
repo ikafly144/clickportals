@@ -51,10 +51,20 @@ public final class WarpDestinationQuery {
     public record WorldGroup(
             UUID worldId,
             String worldName,
+            String displayName,
             World.Environment environment,
             int destinationCount,
             boolean currentWorld
     ) {
+        public WorldGroup(
+                final UUID worldId,
+                final String worldName,
+                final World.Environment environment,
+                final int destinationCount,
+                final boolean currentWorld
+        ) {
+            this(worldId, worldName, worldName, environment, destinationCount, currentWorld);
+        }
     }
 
     /**
@@ -95,6 +105,16 @@ public final class WarpDestinationQuery {
             final Predicate<Aetheryte> reachablePredicate,
             final Function<UUID, World.@Nullable Environment> environmentLookup
     ) {
+        return groupReachableWorlds(current, destinations, reachablePredicate, environmentLookup, Function.identity());
+    }
+
+    public static List<WorldGroup> groupReachableWorlds(
+            final Aetheryte current,
+            final List<Aetheryte> destinations,
+            final Predicate<Aetheryte> reachablePredicate,
+            final Function<UUID, World.@Nullable Environment> environmentLookup,
+            final Function<String, String> worldDisplayNameResolver
+    ) {
         final Map<UUID, String> namesByWorld = new LinkedHashMap<>();
         final Map<UUID, Integer> countsByWorld = new LinkedHashMap<>();
         for (final Aetheryte dest : destinations) {
@@ -109,10 +129,12 @@ public final class WarpDestinationQuery {
         for (final Map.Entry<UUID, Integer> entry : countsByWorld.entrySet()) {
             final UUID worldId = entry.getKey();
             final String worldName = namesByWorld.getOrDefault(worldId, worldId.toString());
+            final String displayName = worldDisplayNameResolver.apply(worldName);
             final World.Environment env = environmentLookup.apply(worldId);
             groups.add(new WorldGroup(
                     worldId,
                     worldName,
+                    displayName != null && !displayName.isBlank() ? displayName : worldName,
                     env != null ? env : World.Environment.CUSTOM,
                     entry.getValue(),
                     worldId.equals(current.worldId())
@@ -122,7 +144,7 @@ public final class WarpDestinationQuery {
         groups.sort(Comparator
                 .comparing(WorldGroup::currentWorld).reversed()
                 .thenComparingInt(g -> environmentRank(g.environment()))
-                .thenComparing(WorldGroup::worldName, String.CASE_INSENSITIVE_ORDER));
+                .thenComparing(WorldGroup::displayName, String.CASE_INSENSITIVE_ORDER));
         return List.copyOf(groups);
     }
 
@@ -147,6 +169,28 @@ public final class WarpDestinationQuery {
             final Predicate<Aetheryte> reachablePredicate,
             final Function<Aetheryte, String> ownerNameResolver
     ) {
+        return queryCandidates(
+                current,
+                viewerId,
+                allDestinations,
+                state,
+                favorites,
+                reachablePredicate,
+                ownerNameResolver,
+                Function.identity()
+        );
+    }
+
+    public static List<Candidate> queryCandidates(
+            final Aetheryte current,
+            final UUID viewerId,
+            final List<Aetheryte> allDestinations,
+            final WarpDialogState state,
+            final Set<UUID> favorites,
+            final Predicate<Aetheryte> reachablePredicate,
+            final Function<Aetheryte, String> ownerNameResolver,
+            final Function<String, String> worldDisplayNameResolver
+    ) {
         final String normalizedQuery = state.searchQuery().toLowerCase(Locale.ROOT);
         final boolean hasQuery = !normalizedQuery.isEmpty();
         final boolean includeWorldInSearch = state.mode() != WarpDialogState.ViewMode.WORLD;
@@ -168,7 +212,7 @@ public final class WarpDestinationQuery {
             }
 
             final String ownerName = ownerNameResolver.apply(dest);
-            if (hasQuery && !matchesSearch(dest, ownerName, normalizedQuery, includeWorldInSearch)) {
+            if (hasQuery && !matchesSearch(dest, ownerName, normalizedQuery, includeWorldInSearch, worldDisplayNameResolver)) {
                 continue;
             }
 
@@ -188,7 +232,8 @@ public final class WarpDestinationQuery {
             final Aetheryte dest,
             final String ownerName,
             final String lowerQuery,
-            final boolean includeWorldName
+            final boolean includeWorldName,
+            final Function<String, String> worldDisplayNameResolver
     ) {
         if (dest.name().toLowerCase(Locale.ROOT).contains(lowerQuery)) {
             return true;
@@ -196,7 +241,14 @@ public final class WarpDestinationQuery {
         if (ownerName.toLowerCase(Locale.ROOT).contains(lowerQuery)) {
             return true;
         }
-        return includeWorldName && dest.worldName().toLowerCase(Locale.ROOT).contains(lowerQuery);
+        if (!includeWorldName) {
+            return false;
+        }
+        if (dest.worldName().toLowerCase(Locale.ROOT).contains(lowerQuery)) {
+            return true;
+        }
+        final String displayName = worldDisplayNameResolver.apply(dest.worldName());
+        return displayName != null && displayName.toLowerCase(Locale.ROOT).contains(lowerQuery);
     }
 
     /**

@@ -55,6 +55,20 @@ dimensions:
     world: 0.0
     world_nether: 30.0
     world_the_end: 100.0
+  # Per-world display names (MiniMessage) and Aetheryte placement/usage restrictions (#63)
+  worlds:
+    world:
+      display-name: ""
+      allow-place: true
+      allow-use: true
+    world_nether:
+      display-name: ""
+      allow-place: true
+      allow-use: true
+    world_the_end:
+      display-name: ""
+      allow-place: true
+      allow-use: true
   # Inter-dimensional connections and coordinate origins
   routes:
     - between: [world, world_nether]

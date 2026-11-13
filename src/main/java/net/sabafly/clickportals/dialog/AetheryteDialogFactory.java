@@ -163,7 +163,13 @@ public final class AetheryteDialogFactory {
             costLine = Component.empty();
         }
 
-        final Component bodyComponent = messages.createDialogDescription(player, world.getName(), blockX, blockY, blockZ)
+        final Component bodyComponent = messages.createDialogDescription(
+                        player,
+                        service.resolveDimensionDisplayComponent(world.getName()),
+                        blockX,
+                        blockY,
+                        blockZ
+                )
                 .append(Component.newline())
                 .append(messages.createDialogVariation(player, variation.displayName()))
                 .append(costLine);
@@ -218,48 +224,61 @@ public final class AetheryteDialogFactory {
     private void showRootMenu(final Player player, final Aetheryte current, final WarpDialogState state) {
         final Map<UUID, String> ownerNameCache = new HashMap<>();
         final String currentOwner = service.resolveOwnerName(current, player, ownerNameCache);
-        final List<Aetheryte> allAetherytes = service.registry().getAll();
+        final String currentWorldName = AetheryteService.resolveWorldName(current.worldId(), current.worldName());
+        final Component currentWorldDisplay = service.resolveDimensionDisplayComponent(currentWorldName);
+        final Component header = messages.warpDialogHeader(player, current, currentOwner, currentWorldDisplay);
 
-        final Map<UUID, Boolean> worldRouteCache = new HashMap<>();
-        final Set<UUID> favorites = service.getFavorites(player);
-
-        final List<WorldGroup> worldGroups = WarpDestinationQuery.groupReachableWorlds(
-                current,
-                allAetherytes,
-                dest -> isWorldReachable(player, current, dest, worldRouteCache),
-                AetheryteDialogFactory::resolveWorldEnvironment
-        );
-
-        int totalReachableCount = 0;
-        for (final WorldGroup group : worldGroups) {
-            totalReachableCount += group.destinationCount();
-        }
-        int reachableFavoritesCount = 0;
-        if (!favorites.isEmpty() && totalReachableCount > 0) {
-            for (final Aetheryte dest : allAetherytes) {
-                if (!dest.id().equals(current.id())
-                        && favorites.contains(dest.id())
-                        && isWorldReachable(player, current, dest, worldRouteCache)) {
-                    reachableFavoritesCount++;
-                }
-            }
-        }
-
-        final List<ActionButton> buttons = buildRootButtons(player, current, state, worldGroups, reachableFavoritesCount, totalReachableCount);
-
-        final Component header = messages.warpDialogHeader(player, current, currentOwner);
+        final List<ActionButton> buttons;
         final Component body;
-        if (allAetherytes.size() <= 1) {
-            body = messages.warpDialogBody(player, current, currentOwner, 0);
-        } else if (totalReachableCount == 0) {
+        if (!service.isDimensionUseAllowed(player, currentWorldName)) {
+            buttons = List.of(createOperationsButton(player, current, state));
             body = messages.get(
                     player,
-                    MessageKey.DIALOG_WARP_BODY_NO_ROUTE,
-                    Placeholder.unparsed("name", current.name()),
-                    Placeholder.unparsed("owner", currentOwner)
+                    MessageKey.DIALOG_WARP_BODY_DIMENSION_DISABLED,
+                    Placeholder.component("world", currentWorldDisplay)
             );
         } else {
-            body = messages.warpRootBody(player, current, currentOwner);
+            final List<Aetheryte> allAetherytes = service.registry().getAll();
+            final Map<UUID, Boolean> worldRouteCache = new HashMap<>();
+            final Set<UUID> favorites = service.getFavorites(player);
+
+            final List<WorldGroup> worldGroups = WarpDestinationQuery.groupReachableWorlds(
+                    current,
+                    allAetherytes,
+                    dest -> isWorldReachable(player, current, dest, worldRouteCache),
+                    AetheryteDialogFactory::resolveWorldEnvironment,
+                    service::resolveDimensionPlainName
+            );
+
+            int totalReachableCount = 0;
+            for (final WorldGroup group : worldGroups) {
+                totalReachableCount += group.destinationCount();
+            }
+            int reachableFavoritesCount = 0;
+            if (!favorites.isEmpty() && totalReachableCount > 0) {
+                for (final Aetheryte dest : allAetherytes) {
+                    if (!dest.id().equals(current.id())
+                            && favorites.contains(dest.id())
+                            && isWorldReachable(player, current, dest, worldRouteCache)) {
+                        reachableFavoritesCount++;
+                    }
+                }
+            }
+
+            buttons = buildRootButtons(player, current, state, worldGroups, reachableFavoritesCount, totalReachableCount);
+
+            if (allAetherytes.size() <= 1) {
+                body = messages.warpDialogBody(player, current, currentOwner, 0);
+            } else if (totalReachableCount == 0) {
+                body = messages.get(
+                        player,
+                        MessageKey.DIALOG_WARP_BODY_NO_ROUTE,
+                        Placeholder.unparsed("name", current.name()),
+                        Placeholder.unparsed("owner", currentOwner)
+                );
+            } else {
+                body = messages.warpRootBody(player, current, currentOwner, currentWorldDisplay);
+            }
         }
 
         final Dialog dialog = Dialog.create(factory -> factory.empty()
@@ -302,17 +321,18 @@ public final class AetheryteDialogFactory {
                 .build());
 
         for (final WorldGroup group : worldGroups) {
+            final Component worldDisplay = service.resolveDimensionDisplayComponent(group.worldName());
             final Component label = messages.warpWorldCategoryLabel(
                     player,
                     group.environment(),
-                    group.worldName(),
+                    worldDisplay,
                     group.destinationCount(),
                     group.currentWorld()
             );
             final Component tooltip = messages.get(
                     player,
                     MessageKey.DIALOG_WARP_CATEGORY_WORLD_TOOLTIP,
-                    Placeholder.unparsed("world", group.worldName()),
+                    Placeholder.component("world", worldDisplay),
                     Placeholder.unparsed("count", Integer.toString(group.destinationCount()))
             );
             buttons.add(ActionButton.builder(label)
@@ -357,7 +377,8 @@ public final class AetheryteDialogFactory {
                 state,
                 favorites,
                 dest -> isWorldReachable(player, current, dest, worldRouteCache),
-                dest -> service.resolveOwnerName(dest, player, ownerNameCache)
+                dest -> service.resolveOwnerName(dest, player, ownerNameCache),
+                service::resolveDimensionPlainName
         );
         final PageSlice<Candidate> slice = WarpDestinationQuery.paginate(
                 candidates,
@@ -507,6 +528,7 @@ public final class AetheryteDialogFactory {
                 player,
                 current,
                 destination,
+                service.resolveDimensionDisplayComponent(destination.worldId(), destination.worldName()),
                 candidate.ownerName(),
                 evaluation.costDisplay(),
                 evaluation.allowed(),
@@ -637,7 +659,13 @@ public final class AetheryteDialogFactory {
                         .pause(false)
                         .afterAction(DialogBase.DialogAfterAction.NONE)
                         .body(List.of(DialogBody.plainMessage(
-                                messages.operationsDialogBody(player, current, ownerName, variation.displayName())
+                                messages.operationsDialogBody(
+                                        player,
+                                        current,
+                                        ownerName,
+                                        service.resolveDimensionDisplayComponent(current.worldId(), current.worldName()),
+                                        variation.displayName()
+                                )
                         )))
                         .build())
                 .type(DialogType.multiAction(buttons)
@@ -993,13 +1021,13 @@ public final class AetheryteDialogFactory {
                 }
                 final World loaded = Bukkit.getServer() != null ? Bukkit.getWorld(targetWorldId) : null;
                 if (loaded != null) {
-                    yield Component.text(loaded.getName());
+                    yield service.resolveDimensionDisplayComponent(loaded.getName());
                 }
                 yield allAetherytes.stream()
                         .filter(a -> a.worldId().equals(targetWorldId))
                         .map(Aetheryte::worldName)
                         .findFirst()
-                        .map(Component::text)
+                        .map(service::resolveDimensionDisplayComponent)
                         .orElseGet(() -> Component.text(targetWorldId.toString()));
             }
             default -> Component.empty();

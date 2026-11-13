@@ -602,4 +602,67 @@ class ConfiguredWarpCostEvaluatorTest {
         evaluator.commit(player, src, dest);
         assertThat(evaluator.peekPendingCharge(player, dest)).isEmpty();
     }
+
+    @Test
+    void dimensionAllowUseFalseBlocksDepartingAndArrivingAndFormatsDisplayNameUnlessBypassed() {
+        final net.sabafly.clickportals.route.DimensionRoutesConfig dimensions =
+                new net.sabafly.clickportals.route.DimensionRoutesConfig(
+                        List.of(),
+                        java.util.Map.of("world", 0.0, "world_nether", 0.0),
+                        List.of(),
+                        java.util.Map.of(
+                                "world", new net.sabafly.clickportals.route.DimensionWorldConfig("<green>Overworld</green>", true, true),
+                                "world_nether", new net.sabafly.clickportals.route.DimensionWorldConfig("<red>The Nether</red>", true, false)
+                        )
+                );
+        pluginConfig = new PluginConfig(
+                PluginConfig.LanguageSection.defaults(),
+                PluginConfig.HologramSection.defaults(),
+                PluginConfig.LimitsSection.defaults(),
+                new WarpSection(new DistanceSection(0.0, 1000.0), List.of(), true),
+                dimensions
+        );
+        when(router.findRoute(any(), any(), any())).thenReturn(Optional.of(
+                new RoutePlan(List.of("world", "world_nether"), 0.0, List.of(), new Location(otherWorld, 0, 64, 0))
+        ));
+        final ConfiguredWarpCostEvaluator evaluator = createEvaluator();
+
+        final Aetheryte overworldAetheryte = new Aetheryte(UUID.randomUUID(), "Origin", worldId, "world", 0, 64, 0, UUID.randomUUID(), 0L);
+        final Aetheryte netherAetheryte = new Aetheryte(UUID.randomUUID(), "NetherDest", otherWorldId, "world_nether", 10, 64, 0, UUID.randomUUID(), 0L);
+
+        // Arriving in disabled dimension is blocked
+        final WarpEvaluation arriveBlocked = evaluator.evaluate(player, overworldAetheryte, netherAetheryte);
+        assertThat(arriveBlocked.allowed()).isFalse();
+        assertThat(arriveBlocked.denyReasonCode()).isEqualTo(WarpEvaluation.DenyReason.DIMENSION_DISABLED);
+        assertThat(PlainTextComponentSerializer.plainText().serialize(Objects.requireNonNull(arriveBlocked.denyReason())))
+                .contains("The Nether");
+
+        // Batch evaluation reports DIMENSION_DISABLED for disabled destination and allows enabled destination
+        final Aetheryte overworldDest = new Aetheryte(UUID.randomUUID(), "OverDest", worldId, "world", 20, 64, 0, UUID.randomUUID(), 0L);
+        final List<WarpEvaluation> batchFromOverworld = evaluator.evaluateBatch(
+                player,
+                overworldAetheryte,
+                List.of(netherAetheryte, overworldDest)
+        );
+        assertThat(batchFromOverworld).hasSize(2);
+        assertThat(batchFromOverworld.get(0).allowed()).isFalse();
+        assertThat(batchFromOverworld.get(0).denyReasonCode()).isEqualTo(WarpEvaluation.DenyReason.DIMENSION_DISABLED);
+        assertThat(batchFromOverworld.get(1).allowed()).isTrue();
+
+        // Departing from disabled dimension is also blocked even to an enabled destination
+        when(player.getWorld()).thenReturn(otherWorld);
+        when(player.getLocation()).thenReturn(new Location(otherWorld, 10, 64, 0));
+        final WarpEvaluation departBlocked = evaluator.evaluate(player, netherAetheryte, overworldDest);
+        assertThat(departBlocked.allowed()).isFalse();
+        assertThat(departBlocked.denyReasonCode()).isEqualTo(WarpEvaluation.DenyReason.DIMENSION_DISABLED);
+        assertThat(PlainTextComponentSerializer.plainText().serialize(Objects.requireNonNull(departBlocked.denyReason())))
+                .contains("The Nether");
+
+        // Bypass permission allows both departing and arriving
+        when(player.hasPermission(net.sabafly.clickportals.permission.Permissions.BYPASS_DIMENSION)).thenReturn(true);
+        assertThat(evaluator.evaluate(player, netherAetheryte, overworldDest).allowed()).isTrue();
+        when(player.getWorld()).thenReturn(world);
+        when(player.getLocation()).thenReturn(new Location(world, 0, 64, 0));
+        assertThat(evaluator.evaluate(player, overworldAetheryte, netherAetheryte).allowed()).isTrue();
+    }
 }

@@ -18,7 +18,9 @@
 package net.sabafly.clickportals.config;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -28,6 +30,7 @@ import net.sabafly.clickportals.cost.expr.ExpressionParser;
 import net.sabafly.clickportals.message.LanguageLoader;
 import net.sabafly.clickportals.route.CostOverrideConfig;
 import net.sabafly.clickportals.route.DimensionRoutesConfig;
+import net.sabafly.clickportals.route.DimensionWorldConfig;
 import net.sabafly.clickportals.route.RouteEntryConfig;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -408,7 +411,33 @@ public record PluginConfig(
                 }
             }
         }
-        return new DimensionRoutesConfig(validatedDefaultCost, sanitizedAmounts, sanitizedRoutes);
+        final Map<String, DimensionWorldConfig> sanitizedWorlds = new LinkedHashMap<>();
+        if (config.worlds() != null) {
+            for (final Map.Entry<String, DimensionWorldConfig> entry : config.worlds().entrySet()) {
+                final String rawWorldName = entry.getKey();
+                if (rawWorldName == null || rawWorldName.isBlank()) {
+                    logger.warn("Ignoring blank world key in dimensions.worlds");
+                    continue;
+                }
+                final String worldKey = rawWorldName.strip();
+                final DimensionWorldConfig value = entry.getValue();
+                if (value == null) {
+                    sanitizedWorlds.put(worldKey, DimensionWorldConfig.defaults());
+                } else {
+                    sanitizedWorlds.put(worldKey, new DimensionWorldConfig(
+                            value.displayName(),
+                            value.allowPlace(),
+                            value.allowUse()
+                    ));
+                }
+            }
+        }
+        return new DimensionRoutesConfig(
+                validatedDefaultCost,
+                sanitizedAmounts,
+                sanitizedRoutes,
+                Collections.unmodifiableMap(sanitizedWorlds)
+        );
     }
 
     /**

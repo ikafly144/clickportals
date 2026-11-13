@@ -35,10 +35,12 @@ import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
 import java.util.function.Function;
 import java.util.function.IntSupplier;
+import java.util.function.Supplier;
 import java.util.function.ToLongFunction;
 import java.util.function.UnaryOperator;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
@@ -57,6 +59,8 @@ import net.sabafly.clickportals.model.AetheryteModelService;
 import net.sabafly.clickportals.model.ModelAnimationTrigger;
 import net.sabafly.clickportals.model.NoopAetheryteModelService;
 import net.sabafly.clickportals.permission.Permissions;
+import net.sabafly.clickportals.route.DimensionRoutesConfig;
+import net.sabafly.clickportals.route.DimensionWorldConfig;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.AetheryteVariation.ClearanceSection;
 import net.sabafly.clickportals.variation.VariationRegistry;
@@ -149,6 +153,7 @@ public final class AetheryteService {
             INSUFFICIENT_COST,
             NOT_FOUND,
             NO_PERMISSION,
+            DIMENSION_DISABLED,
             OTHER
         }
 
@@ -264,6 +269,7 @@ public final class AetheryteService {
     private final IntSupplier globalCooldownTicksSupplier;
     private volatile DoubleSupplier globalMinDistanceSupplier = () -> 0.0;
     private volatile IntSupplier maxFavoritesPerPlayerSupplier = () -> -1;
+    private volatile Supplier<DimensionRoutesConfig> dimensionConfigSupplier = DimensionRoutesConfig::defaults;
     private final ToLongFunction<Player> tickSupplier;
     private final CooldownPacketSender cooldownPacketSender;
     private volatile WarpCostEvaluator costEvaluator;
@@ -282,6 +288,7 @@ public final class AetheryteService {
     private final AtomicBoolean refundPersistScheduled = new AtomicBoolean(false);
     private final Set<UUID> playersPendingPdcTrim = ConcurrentHashMap.newKeySet();
     private static final double BASE_INTERACT_REACH = 6.0;
+    private static final MiniMessage MINI_MESSAGE = MiniMessage.miniMessage();
 
     /**
      * Creates a new {@link AetheryteService} with default variations, messages, and free cost evaluation.
@@ -555,6 +562,90 @@ public final class AetheryteService {
         this.maxFavoritesPerPlayerSupplier = maxFavoritesPerPlayerSupplier != null
                 ? maxFavoritesPerPlayerSupplier
                 : () -> -1;
+    }
+
+    /**
+     * Returns the active per-dimension configuration.
+     */
+    public DimensionRoutesConfig dimensionConfig() {
+        final DimensionRoutesConfig resolved = dimensionConfigSupplier.get();
+        return resolved != null ? resolved : DimensionRoutesConfig.defaults();
+    }
+
+    /**
+     * Updates the dimension configuration supplier on reload (#63).
+     */
+    public void setDimensionConfigSupplier(final Supplier<DimensionRoutesConfig> dimensionConfigSupplier) {
+        this.dimensionConfigSupplier = dimensionConfigSupplier != null
+                ? dimensionConfigSupplier
+                : DimensionRoutesConfig::defaults;
+    }
+
+    /**
+     * Resolves a world's live name when loaded, falling back to the stored name (#63).
+     */
+    public static String resolveWorldName(final UUID worldId, final String fallbackWorldName) {
+        if (Bukkit.getServer() != null) {
+            final World loaded = Bukkit.getWorld(worldId);
+            if (loaded != null) {
+                return loaded.getName();
+            }
+        }
+        return fallbackWorldName;
+    }
+
+    /**
+     * Resolves a dimension's UI display component from {@link DimensionRoutesConfig}, parsing MiniMessage only
+     * when a non-blank {@code display-name} is configured and keeping raw world names literal (#63).
+     */
+    public static Component resolveDimensionDisplayComponent(
+            final DimensionRoutesConfig dimensions,
+            final String worldName
+    ) {
+        final DimensionWorldConfig worldConfig = dimensions.worldConfig(worldName);
+        if (worldConfig.displayName() != null && !worldConfig.displayName().isBlank()) {
+            return MINI_MESSAGE.deserialize(worldConfig.displayName());
+        }
+        return Component.text(worldName);
+    }
+
+    /**
+     * Resolves a dimension's UI display component using the active configuration (#63).
+     */
+    public Component resolveDimensionDisplayComponent(final String worldName) {
+        return resolveDimensionDisplayComponent(dimensionConfig(), worldName);
+    }
+
+    /**
+     * Resolves a dimension's UI display component by world UUID with fallback name (#63).
+     */
+    public Component resolveDimensionDisplayComponent(final UUID worldId, final String fallbackWorldName) {
+        return resolveDimensionDisplayComponent(resolveWorldName(worldId, fallbackWorldName));
+    }
+
+    /**
+     * Resolves the plain-text form of a dimension's display name for search and sorting (#63).
+     */
+    public String resolveDimensionPlainName(final String worldName) {
+        return PlainTextComponentSerializer.plainText().serialize(resolveDimensionDisplayComponent(worldName));
+    }
+
+    /**
+     * Checks whether the player may use Aetherytes in {@code worldName} (bypassing via permission) (#63).
+     */
+    public boolean isDimensionUseAllowed(final Player player, final String worldName) {
+        return Permissions.canBypassDimension(player) || dimensionConfig().isUseAllowed(worldName);
+    }
+
+    /**
+     * Checks whether Aetheryte placement is allowed in {@code world} for {@code player} (#63).
+     */
+    public Optional<Component> checkPlacementDimension(final Player player, final World world) {
+        final String worldName = world.getName();
+        if (Permissions.canBypassDimension(player) || dimensionConfig().isPlaceAllowed(worldName)) {
+            return Optional.empty();
+        }
+        return Optional.of(messages.errorDimensionPlaceDisabled(player, resolveDimensionDisplayComponent(worldName)));
     }
 
     /**
@@ -1425,14 +1516,23 @@ public final class AetheryteService {
             final @Nullable Aetheryte source,
             final Aetheryte destination
     ) {
-        final WarpEvaluation evaluation = costEvaluator.evaluate(player, source, destination);
+        final WarpEvaluation raw = costEvaluator.evaluate(player, source, destination);
+        final @Nullable String sourceWorldName = resolveSourceWorldName(player, source);
+        final @Nullable Component sourceDisableError = resolveDisabledDimensionError(player, sourceWorldName);
+        final WarpEvaluation checked = applyDimensionUseCheck(
+                player,
+                sourceDisableError,
+                destination,
+                new LinkedHashMap<>(2),
+                raw
+        );
         final boolean hasUsePerm = canUse(player);
         final boolean canBypass = hasUsePerm && Permissions.canBypassWarpCost(player);
         final @Nullable String plainFree = canBypass
                 ? net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
                         .serialize(messages.freeCostLabel(player))
                 : null;
-        return applyPermissionAndBypass(player, evaluation, hasUsePerm, canBypass, null, plainFree);
+        return applyPermissionAndBypass(player, checked, hasUsePerm, canBypass, null, plainFree);
     }
 
     /**
@@ -1447,6 +1547,9 @@ public final class AetheryteService {
             return List.of();
         }
         final List<WarpEvaluation> raw = costEvaluator.evaluateBatch(player, source, destinations);
+        final @Nullable String sourceWorldName = resolveSourceWorldName(player, source);
+        final @Nullable Component sourceDisableError = resolveDisabledDimensionError(player, sourceWorldName);
+        final Map<String, Component> destDisableErrorCache = new LinkedHashMap<>();
         final boolean hasUsePerm = canUse(player);
         final @Nullable Component noPermMsg = hasUsePerm ? null : messages.get(player, MessageKey.ERROR_NO_WARP_PERMISSION);
         final boolean canBypass = hasUsePerm && Permissions.canBypassWarpCost(player);
@@ -1456,10 +1559,67 @@ public final class AetheryteService {
                 : null;
 
         final List<WarpEvaluation> results = new ArrayList<>(raw.size());
-        for (final WarpEvaluation evaluation : raw) {
-            results.add(applyPermissionAndBypass(player, evaluation, hasUsePerm, canBypass, noPermMsg, plainFree));
+        for (int i = 0; i < raw.size(); i++) {
+            final WarpEvaluation checked = applyDimensionUseCheck(
+                    player,
+                    sourceDisableError,
+                    destinations.get(i),
+                    destDisableErrorCache,
+                    raw.get(i)
+            );
+            results.add(applyPermissionAndBypass(player, checked, hasUsePerm, canBypass, noPermMsg, plainFree));
         }
         return results;
+    }
+
+    private static @Nullable String resolveSourceWorldName(final Player player, final @Nullable Aetheryte source) {
+        if (source != null) {
+            return resolveWorldName(source.worldId(), source.worldName());
+        }
+        final World playerWorld = player.getWorld();
+        return playerWorld != null ? playerWorld.getName() : null;
+    }
+
+    private @Nullable Component resolveDisabledDimensionError(
+            final Player player,
+            final @Nullable String worldName
+    ) {
+        if (worldName == null || isDimensionUseAllowed(player, worldName)) {
+            return null;
+        }
+        return messages.errorDimensionUseDisabled(player, resolveDimensionDisplayComponent(worldName));
+    }
+
+    private WarpEvaluation applyDimensionUseCheck(
+            final Player player,
+            final @Nullable Component sourceDisableError,
+            final Aetheryte destination,
+            final Map<String, Component> destDisableErrorCache,
+            final WarpEvaluation evaluation
+    ) {
+        if (evaluation.denyReasonCode() == WarpEvaluation.DenyReason.DIMENSION_DISABLED) {
+            return evaluation;
+        }
+        if (sourceDisableError != null) {
+            return WarpEvaluation.denied(
+                    evaluation.costDisplay(),
+                    sourceDisableError,
+                    WarpEvaluation.DenyReason.DIMENSION_DISABLED
+            );
+        }
+        final String destWorldName = resolveWorldName(destination.worldId(), destination.worldName());
+        if (!isDimensionUseAllowed(player, destWorldName)) {
+            final Component err = destDisableErrorCache.computeIfAbsent(
+                    destWorldName,
+                    name -> messages.errorDimensionUseDisabled(player, resolveDimensionDisplayComponent(name))
+            );
+            return WarpEvaluation.denied(
+                    evaluation.costDisplay(),
+                    err,
+                    WarpEvaluation.DenyReason.DIMENSION_DISABLED
+            );
+        }
+        return evaluation;
     }
 
     private WarpEvaluation applyPermissionAndBypass(
@@ -1532,6 +1692,11 @@ public final class AetheryteService {
     ) {
         if (!canPlace(player)) {
             messages.send(player, MessageKey.ERROR_NO_PERMISSION);
+            return;
+        }
+        final Optional<Component> dimensionPlaceError = checkPlacementDimension(player, world);
+        if (dimensionPlaceError.isPresent()) {
+            player.sendMessage(dimensionPlaceError.get());
             return;
         }
         final Optional<String> validName = sanitizeName(rawName);
