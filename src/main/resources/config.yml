@@ -13,6 +13,8 @@ hologram:
   enabled: true
   # View distance for holograms and models in blocks (minimum 4.0)
   view-distance: 32.0
+  # Opt-in fallback that re-renders client visuals at 5 and 20 ticks after join, respawn, world change, or warp (disabled by default to avoid flickering)
+  delayed-refresh-fallback: false
 
 # Global per-player Aetheryte placement limit and cooldown settings
 limits:

@@ -150,6 +150,7 @@ public final class ClickPortals extends JavaPlugin {
         service.setMaxFavoritesPerPlayerSupplier(() -> cfgManager.config().maxFavoritesPerPlayer());
         service.setGlobalCastSupplier(() -> cfgManager.config().warp().cast());
         service.setDimensionConfigSupplier(() -> cfgManager.config().dimensions());
+        service.setDelayedVisualRefreshSupplier(() -> cfgManager.config().hologramDelayedRefreshFallback());
         service.setCastImmobilizeService(immobilizeService);
         this.aetheryteService = service;
         final AetheryteDialogFactory dialogs = new AetheryteDialogFactory(service, msgService);

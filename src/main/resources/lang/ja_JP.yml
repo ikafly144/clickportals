@@ -33,6 +33,7 @@ dialog:
     variation: "<gray>種類: </gray><variation>"
     cost: "<gray>設置コスト: </gray><cost>"
     cost-bypassed: "<gray>設置コスト: </gray><strikethrough><cost></strikethrough> <green>(免除)</green>"
+    bypass-notice: "<yellow>バイパス中の制限: </yellow><white><reasons></white>"
     name-input-label: "<aqua>エーテライト名</aqua>"
     default-name: "<player>のエーテライト"
   button:
@@ -71,6 +72,8 @@ dialog:
     body-empty: "<yellow>テレポ可能な他のエーテライトがまだありません。</yellow>"
     body-no-route: "<yellow>他のディメンションへ接続可能なルートがありません。</yellow>"
     body-dimension-disabled: "<red>現在のディメンションではエーテライトからのテレポが無効化されています。</red>"
+    body-dimension-bypassed: "<yellow>注意: <world> でのエーテライト使用は通常無効ですが、権限によりバイパスしています。</yellow>"
+    body-cost-bypassed: "<yellow>注意: 権限により <reason> をバイパスしています。</yellow>"
     body-select: "<gray>テレポ先のエーテライトを選択してください。</gray>"
     root-body: "<gray>カテゴリを選択してください。</gray>"
     category-favorites: "<gold>★ お気に入り</gold> <dark_gray>(</dark_gray><white><count></white><dark_gray>)</dark_gray>"
@@ -109,6 +112,7 @@ dialog:
     distance-other-dimension: "<light_purple>別ディメンション</light_purple>"
     tooltip-allowed: "<gray>持ち主: </gray><aqua><owner></aqua><newline><gray>ワールド: </gray><gold><world></gold><newline><gray>座標: </gray><white><x>, <y>, <z></white><newline><gray>距離: </gray><distance><newline><gray>コスト: </gray><cost><newline><green>クリックしてテレポ</green>"
     tooltip-denied: "<gray>持ち主: </gray><aqua><owner></aqua><newline><gray>ワールド: </gray><gold><world></gold><newline><gray>座標: </gray><white><x>, <y>, <z></white><newline><gray>距離: </gray><distance><newline><gray>コスト: </gray><cost><newline><red>テレポ不可: </red><reason>"
+    tooltip-bypassed: "<yellow>バイパス: </yellow><white><reasons></white>"
     unknown-owner: "不明"
   remove:
     title: "<red><bold>エーテライトの撤去確認: </bold></red><white><name></white>"
@@ -141,6 +145,19 @@ aetheryte:
   owner-transferred: "<prefix><green>エーテライト「<name>」の所有者を </green><white><bold><owner></bold></white><green> に変更しました。</green>"
   variation-changed: "<prefix><green>エーテライト「<name>」の種類を </green><white><bold><variation></bold></white><green> に変更しました。</green>"
   visuals-resynced: "<prefix><aqua>エーテライト「<name>」のビジュアルを再同期しました。</aqua>"
+  bypassed-notice: "<prefix><yellow>制限をバイパスしました: </yellow><white><reasons></white>"
+
+bypass:
+  separator: "<gray>、</gray>"
+  reason:
+    dimension-place: "ディメンション設置制限（<world>）"
+    dimension-use: "ディメンション使用制限（<world>）"
+    limit-global: "総数上限（<max>）"
+    limit-variation: "<variation> 設置上限（<max>）"
+    placement-cooldown: "設置クールダウン（残り <seconds>秒）"
+    placement-distance: "最小設置距離（<distance> ブロック）"
+    cost-place: "設置コスト（<cost>）"
+    cost-warp: "ワープコスト（<cost>）"
 
 warp:
   success: "<prefix><aqua>「</aqua><white><bold><name></bold></white><aqua>」へテレポしました。</aqua>"

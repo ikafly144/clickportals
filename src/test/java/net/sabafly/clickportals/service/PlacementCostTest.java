@@ -553,6 +553,75 @@ class PlacementCostTest {
     }
 
     @Test
+    void successfulPlacementWithBypassPlaceCostSendsBypassNotice() throws Exception {
+        final org.bukkit.Server server = mock(org.bukkit.Server.class);
+        final java.lang.reflect.Field serverField = org.bukkit.Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            final io.papermc.paper.threadedregions.scheduler.RegionScheduler regionScheduler =
+                    mock(io.papermc.paper.threadedregions.scheduler.RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+            when(server.isOwnedByCurrentRegion(any(), any(int.class), any(int.class))).thenReturn(true);
+            doAnswer(inv -> {
+                ((Runnable) inv.getArgument(2)).run();
+                return null;
+            }).when(regionScheduler).execute(any(), any(Location.class), any());
+
+            final Block originBlock = mock(Block.class);
+            when(originBlock.getType()).thenReturn(Material.AIR);
+            when(originBlock.isReplaceable()).thenReturn(true);
+            when(world.getBlockAt(anyInt(), anyInt(), anyInt())).thenReturn(originBlock);
+            when(world.getBlockAt(any(Location.class))).thenReturn(originBlock);
+
+            final ItemStack mainHand = mock(ItemStack.class);
+            final PersistentDataContainer pdc = mock(PersistentDataContainer.class);
+            when(mainHand.isEmpty()).thenReturn(false);
+            when(mainHand.getAmount()).thenReturn(1);
+            when(mainHand.getPersistentDataContainer()).thenReturn(pdc);
+            when(pdc.get(AetheryteItemFactory.ITEM_MARKER_KEY, PersistentDataType.BYTE)).thenReturn((byte) 1);
+            when(pdc.get(AetheryteItemFactory.VARIATION_KEY, PersistentDataType.STRING)).thenReturn("cheap");
+            when(inventory.getItemInMainHand()).thenReturn(mainHand);
+
+            when(player.hasPermission(Permissions.BYPASS_COST_PLACE)).thenReturn(true);
+
+            final AetheryteVariation cheapVariation = new AetheryteVariation(
+                    "<aqua>Cheap</aqua>",
+                    null, null, null, null, null,
+                    new PlacementSection(null, List.of(CostEntry.of(CostType.VAULT, "50"))),
+                    null
+            );
+            when(variationRegistry.getOrDefault("cheap")).thenReturn(cheapVariation);
+
+            final AetheryteService service = new AetheryteService(
+                    plugin,
+                    registry,
+                    variationRegistry,
+                    hologramService,
+                    messages,
+                    () -> -1,
+                    () -> 0,
+                    p -> 0L,
+                    (p, t) -> {},
+                    (p, s, d) -> AetheryteService.WarpEvaluation.permitted(Component.empty())
+            );
+            service.setEconomyProvider(economy);
+
+            service.placeAetheryte(player, world, 10, 64, 20, "BypassedCostPortal", "cheap");
+
+            verify(economy, never()).withdraw(any(), anyDouble());
+            final ArgumentCaptor<Component> msgCaptor = ArgumentCaptor.forClass(Component.class);
+            verify(player, atLeastOnce()).sendMessage(msgCaptor.capture());
+            final boolean hasBypassMsg = msgCaptor.getAllValues().stream()
+                    .map(c -> PlainTextComponentSerializer.plainText().serialize(c))
+                    .anyMatch(s -> s.contains("Bypassed restrictions:") && s.contains("placement cost ($50.00)"));
+            assertThat(hasBypassMsg).isTrue();
+        } finally {
+            serverField.set(null, null);
+        }
+    }
+
+    @Test
     void placementIsRejectedWhenCloserThanGlobalMinDistance() {
         service.setGlobalMinDistanceSupplier(() -> 50.0);
         registry.register(world, new Aetheryte(UUID.randomUUID(), "Existing", worldId, "world", 100, 64, 100, playerId, 0L));

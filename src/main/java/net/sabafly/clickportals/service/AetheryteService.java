@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
 import java.util.function.Function;
@@ -288,6 +289,7 @@ public final class AetheryteService {
     private final Map<UUID, ActiveCastSession> activeCasts = new ConcurrentHashMap<>();
     private volatile Supplier<CastSection> globalCastSupplier = CastSection::defaults;
     private volatile CastImmobilizeService castImmobilizeService = NoopCastImmobilizeService.INSTANCE;
+    private volatile BooleanSupplier delayedVisualRefreshSupplier = () -> false;
 
     /**
      * Reasons why an in-progress warp cast can be cancelled (#65).
@@ -618,6 +620,15 @@ public final class AetheryteService {
         this.dimensionConfigSupplier = dimensionConfigSupplier != null
                 ? dimensionConfigSupplier
                 : DimensionRoutesConfig::defaults;
+    }
+
+    /**
+     * Updates whether delayed 5-tick and 20-tick visual refresh fallback is enabled (#70).
+     */
+    public void setDelayedVisualRefreshSupplier(final BooleanSupplier delayedVisualRefreshSupplier) {
+        this.delayedVisualRefreshSupplier = delayedVisualRefreshSupplier != null
+                ? delayedVisualRefreshSupplier
+                : () -> false;
     }
 
     /**
@@ -1611,6 +1622,10 @@ public final class AetheryteService {
         if (Permissions.canBypassLimit(player)) {
             return 0;
         }
+        return getRawRemainingCooldownTicks(player, variationId);
+    }
+
+    private int getRawRemainingCooldownTicks(final Player player, final String variationId) {
         final int cooldownTicks = effectiveCooldownTicks(variationId);
         if (cooldownTicks <= 0) {
             return 0;
@@ -1629,6 +1644,94 @@ public final class AetheryteService {
             return 0;
         }
         return (int) (cooldownTicks - elapsed);
+    }
+
+    /**
+     * Collects localized reasons for any non-cost placement restrictions currently bypassed for {@code player} (#69).
+     */
+    public List<Component> collectPlacementBypassReasons(
+            final Player player,
+            final World world,
+            final int blockX,
+            final int blockY,
+            final int blockZ,
+            final String variationId
+    ) {
+        final String normalizedVar = Aetheryte.normalizeVariation(variationId);
+        final AetheryteVariation variation = variationRegistry.getOrDefault(normalizedVar);
+        final List<Component> reasons = new ArrayList<>();
+        appendDimensionPlaceBypassReason(player, world, reasons);
+        appendLimitAndDistanceBypassReasons(
+                player,
+                world,
+                blockX,
+                blockY,
+                blockZ,
+                normalizedVar,
+                variation,
+                Permissions.canBypassLimit(player),
+                Permissions.canBypassPlacementDistance(player),
+                reasons
+        );
+        appendCooldownBypassReason(player, normalizedVar, Permissions.canBypassLimit(player), reasons);
+        return reasons;
+    }
+
+    private void appendDimensionPlaceBypassReason(
+            final Player player,
+            final World world,
+            final List<Component> reasons
+    ) {
+        final String worldName = world.getName();
+        if (Permissions.canBypassDimension(player) && !dimensionConfig().isPlaceAllowed(worldName)) {
+            reasons.add(messages.bypassReasonDimensionPlace(player, resolveDimensionDisplayComponent(worldName)));
+        }
+    }
+
+    private void appendLimitAndDistanceBypassReasons(
+            final Player player,
+            final World world,
+            final int blockX,
+            final int blockY,
+            final int blockZ,
+            final String normalizedVar,
+            final AetheryteVariation variation,
+            final boolean bypassLimit,
+            final boolean canBypassDistance,
+            final List<Component> reasons
+    ) {
+        final UUID ownerId = player.getUniqueId();
+        if (bypassLimit && ownerId != null) {
+            final int maxGlobal = globalMaxPerPlayerSupplier.getAsInt();
+            if (maxGlobal >= 0 && registry.countByOwner(ownerId) >= maxGlobal) {
+                reasons.add(messages.bypassReasonLimitGlobal(player, maxGlobal));
+            }
+            final int maxVariation = variation.limit().maxPerPlayer();
+            if (maxVariation >= 0 && registry.countByOwnerAndVariation(ownerId, normalizedVar) >= maxVariation) {
+                reasons.add(messages.bypassReasonLimitVariation(player, variation.displayName(), maxVariation));
+            }
+        }
+        if (canBypassDistance) {
+            final double minDistance = effectiveMinDistance(normalizedVar);
+            if (minDistance > 0.0 && registry.findWithinDistance(world.getUID(), blockX, blockY, blockZ, minDistance).isPresent()) {
+                reasons.add(messages.bypassReasonPlacementDistance(player, minDistance));
+            }
+        }
+    }
+
+    private void appendCooldownBypassReason(
+            final Player player,
+            final String normalizedVar,
+            final boolean bypassLimit,
+            final List<Component> reasons
+    ) {
+        if (!bypassLimit) {
+            return;
+        }
+        final int remainingTicks = getRawRemainingCooldownTicks(player, normalizedVar);
+        if (remainingTicks > 0) {
+            reasons.add(messages.bypassReasonPlacementCooldown(player, remainingTicks));
+        }
     }
 
     /**
@@ -1676,6 +1779,15 @@ public final class AetheryteService {
             final Aetheryte destination
     ) {
         final WarpEvaluation raw = costEvaluator.evaluate(player, source, destination);
+        return evaluateWarpWithRaw(player, source, destination, raw);
+    }
+
+    private WarpEvaluation evaluateWarpWithRaw(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination,
+            final WarpEvaluation raw
+    ) {
         final @Nullable String sourceWorldName = resolveSourceWorldName(player, source);
         final @Nullable Component sourceDisableError = resolveDisabledDimensionError(player, sourceWorldName);
         final WarpEvaluation checked = applyDimensionUseCheck(
@@ -1688,8 +1800,7 @@ public final class AetheryteService {
         final boolean hasUsePerm = canUse(player);
         final boolean canBypass = hasUsePerm && Permissions.canBypassWarpCost(player);
         final @Nullable String plainFree = canBypass
-                ? net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
-                        .serialize(messages.freeCostLabel(player))
+                ? PlainTextComponentSerializer.plainText().serialize(messages.freeCostLabel(player))
                 : null;
         return applyPermissionAndBypass(player, checked, hasUsePerm, canBypass, null, plainFree);
     }
@@ -1801,15 +1912,9 @@ public final class AetheryteService {
         }
         if (canBypass) {
             final Component originalCost = evaluation.costDisplay();
-            final String plainCost = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
-                    .serialize(originalCost);
-            final String plainFree = cachedPlainFree != null
-                    ? cachedPlainFree
-                    : net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
-                            .serialize(messages.freeCostLabel(player));
-            final Component bypassedCostDisplay = plainCost.equals(plainFree)
-                    ? originalCost
-                    : messages.get(player, MessageKey.COST_BYPASSED, Placeholder.component("cost", originalCost));
+            final Component bypassedCostDisplay = isNonFreeCost(player, originalCost, cachedPlainFree)
+                    ? messages.get(player, MessageKey.COST_BYPASSED, Placeholder.component("cost", originalCost))
+                    : originalCost;
 
             if (evaluation.denyReasonCode() == WarpEvaluation.DenyReason.INSUFFICIENT_COST) {
                 return WarpEvaluation.permitted(bypassedCostDisplay);
@@ -1881,6 +1986,8 @@ public final class AetheryteService {
         final UUID ownerId = player.getUniqueId();
         final boolean bypassLimit = Permissions.canBypassLimit(player);
         final Location targetLocation = new Location(world, blockX, blockY, blockZ);
+        final List<Component> initialBypassReasons = new ArrayList<>();
+        appendDimensionPlaceBypassReason(player, world, initialBypassReasons);
 
         // Step 1: Check cooldown and consume the Aetheryte item of the matching variation on the player's entity thread.
         player.getScheduler().run(plugin, task -> {
@@ -1891,6 +1998,7 @@ public final class AetheryteService {
                 return;
             }
 
+            appendCooldownBypassReason(player, normalizedVar, bypassLimit, initialBypassReasons);
             final Optional<Component> cooldownError = checkPlacementCooldown(player, normalizedVar);
             if (cooldownError.isPresent()) {
                 pendingPlacements.remove(ownerId);
@@ -1911,17 +2019,26 @@ public final class AetheryteService {
             final CostBundle placementCostBundle = new CostBundle(variation.placement().cost());
             final CostQuote placementQuote;
             final EconomyProvider activeEconomy = this.economyProvider;
-            if (!creative && !bypassCost && !placementCostBundle.isEmpty()) {
+            if (!creative && !placementCostBundle.isEmpty()) {
                 final Map<String, Double> costVars = Map.of(
                         "owned_count", (double) registry.countByOwner(ownerId),
                         "variation_count", (double) registry.countByOwnerAndVariation(ownerId, normalizedVar)
                 );
-                placementQuote = placementCostBundle.quote(player, costVars, activeEconomy);
-                if (!placementQuote.affordable()) {
-                    pendingPlacements.remove(ownerId);
-                    final Component reason = CostFormatter.formatMissingRequirements(player, placementQuote, activeEconomy, messages);
-                    player.sendMessage(messages.get(player, MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT, Placeholder.component("reason", reason)));
-                    return;
+                final CostQuote quoted = placementCostBundle.quote(player, costVars, activeEconomy);
+                if (bypassCost) {
+                    if (!quoted.isFree()) {
+                        final Component costDisplay = CostFormatter.format(player, quoted, activeEconomy, messages, true);
+                        initialBypassReasons.add(messages.bypassReasonCostPlace(player, costDisplay));
+                    }
+                    placementQuote = CostQuote.FREE;
+                } else {
+                    placementQuote = quoted;
+                    if (!placementQuote.affordable()) {
+                        pendingPlacements.remove(ownerId);
+                        final Component reason = CostFormatter.formatMissingRequirements(player, placementQuote, activeEconomy, messages);
+                        player.sendMessage(messages.get(player, MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT, Placeholder.component("reason", reason)));
+                        return;
+                    }
                 }
             } else {
                 placementQuote = CostQuote.FREE;
@@ -1984,6 +2101,20 @@ public final class AetheryteService {
                             System.currentTimeMillis(),
                             normalizedVar,
                             player.getName()
+                    );
+
+                    final List<Component> regionBypassReasons = new ArrayList<>(initialBypassReasons);
+                    appendLimitAndDistanceBypassReasons(
+                            player,
+                            world,
+                            blockX,
+                            blockY,
+                            blockZ,
+                            normalizedVar,
+                            variation,
+                            bypassLimit,
+                            canBypassDistance,
+                            regionBypassReasons
                     );
 
                     final int effectiveMaxGlobal = bypassLimit ? -1 : globalMaxPerPlayerSupplier.getAsInt();
@@ -2049,6 +2180,9 @@ public final class AetheryteService {
                             if (!chargedPlacementQuote.isFree()) {
                                 final Component paidDisplay = CostFormatter.format(player, chargedPlacementQuote, activeEconomy, messages, true);
                                 player.sendMessage(messages.get(player, MessageKey.AETHERYTE_COST_PAID, Placeholder.component("cost", paidDisplay)));
+                            }
+                            if (!regionBypassReasons.isEmpty()) {
+                                player.sendMessage(messages.bypassNotice(player, regionBypassReasons));
                             }
                         } finally {
                             pendingPlacements.remove(ownerId);
@@ -2808,7 +2942,8 @@ public final class AetheryteService {
                 return;
             }
 
-            final WarpEvaluation finalEval = evaluateWarp(player, source, destination);
+            final WarpEvaluation rawEval = activeEvaluator.evaluate(player, source, destination);
+            final WarpEvaluation finalEval = evaluateWarpWithRaw(player, source, destination, rawEval);
             if (!finalEval.allowed()) {
                 if (playerId != null) {
                     inFlightWarps.remove(playerId);
@@ -2842,6 +2977,8 @@ public final class AetheryteService {
                 paid = true;
             }
 
+            final List<Component> warpBypassReasons = collectWarpBypassReasons(player, source, destination, rawEval, bypassCost);
+
             if (source != null) {
                 modelService.triggerAnimation(source.id(), ModelAnimationTrigger.ON_WARP_DEPART);
             }
@@ -2864,6 +3001,9 @@ public final class AetheryteService {
                     }
                     modelService.triggerAnimation(destination.id(), ModelAnimationTrigger.ON_WARP_ARRIVE);
                     player.sendMessage(messages.warpedTo(player, destination));
+                    if (!warpBypassReasons.isEmpty()) {
+                        player.sendMessage(messages.bypassNotice(player, warpBypassReasons));
+                    }
                     player.getScheduler().run(plugin, postTask -> {
                         playSoundSafely(() -> player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f));
                         refreshPlayerVisuals(player, targetWorld);
@@ -3103,12 +3243,128 @@ public final class AetheryteService {
     }
 
     /**
-     * Refreshes client-side visuals for a player with staggered updates to ensure entities render
-     * cleanly across dimension loading screens.
+     * Collects a localized warp-cost bypass reason summary for the warp root dialog when at least one
+     * reachable destination has a non-free warp cost bypassed via {@link Permissions#BYPASS_COST_WARP} (#69).
+     */
+    public Optional<Component> collectRootWarpCostBypassReason(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final List<Aetheryte> reachableDestinations
+    ) {
+        if (!Permissions.canBypassWarpCost(player) || !canUse(player) || reachableDestinations.isEmpty()) {
+            return Optional.empty();
+        }
+        final List<WarpEvaluation> rawEvaluations = costEvaluator.evaluateBatch(player, source, reachableDestinations);
+        final String plainFree = PlainTextComponentSerializer.plainText().serialize(messages.freeCostLabel(player));
+        final Map<String, Component> distinctCosts = new LinkedHashMap<>();
+        final int count = Math.min(rawEvaluations.size(), reachableDestinations.size());
+        for (int i = 0; i < count; i++) {
+            final Aetheryte dest = reachableDestinations.get(i);
+            if (!isDimensionUseAllowed(player, resolveWorldName(dest.worldId(), dest.worldName()))) {
+                continue;
+            }
+            final WarpEvaluation rawEval = rawEvaluations.get(i);
+            if (!rawEval.allowed() && rawEval.denyReasonCode() != WarpEvaluation.DenyReason.INSUFFICIENT_COST) {
+                continue;
+            }
+            final String plain = PlainTextComponentSerializer.plainText().serialize(rawEval.costDisplay());
+            if (!plain.isBlank() && !plain.equals(plainFree)) {
+                distinctCosts.putIfAbsent(plain, rawEval.costDisplay());
+            }
+        }
+        if (distinctCosts.isEmpty()) {
+            return Optional.empty();
+        }
+        final Component costSummary;
+        if (distinctCosts.size() == 1) {
+            costSummary = distinctCosts.values().iterator().next();
+        } else {
+            final List<Component> preview = distinctCosts.values().stream().limit(2).toList();
+            Component joined = Component.join(
+                    net.kyori.adventure.text.JoinConfiguration.separator(messages.get(player, MessageKey.BYPASS_SEPARATOR)),
+                    preview
+            );
+            if (distinctCosts.size() > 2) {
+                joined = joined.append(Component.text(" ..."));
+            }
+            costSummary = joined;
+        }
+        return Optional.of(messages.bypassReasonCostWarp(player, costSummary));
+    }
+
+    /**
+     * Collects localized dimension-usage bypass reasons applicable when warping from {@code source}
+     * to {@code destination} (#69).
+     */
+    public List<Component> collectDestinationDimensionBypassReasons(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination
+    ) {
+        final List<Component> reasons = new ArrayList<>(2);
+        appendWarpDimensionBypassReasons(player, source, destination, reasons);
+        return reasons;
+    }
+
+    private void appendWarpDimensionBypassReasons(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination,
+            final List<Component> reasons
+    ) {
+        if (!Permissions.canBypassDimension(player)) {
+            return;
+        }
+        final @Nullable String sourceWorldName = resolveSourceWorldName(player, source);
+        if (sourceWorldName != null && !dimensionConfig().isUseAllowed(sourceWorldName)) {
+            reasons.add(messages.bypassReasonDimensionUse(player, resolveDimensionDisplayComponent(sourceWorldName)));
+        }
+        final String destWorldName = resolveWorldName(destination.worldId(), destination.worldName());
+        if (!dimensionConfig().isUseAllowed(destWorldName) && !destWorldName.equals(sourceWorldName)) {
+            reasons.add(messages.bypassReasonDimensionUse(player, resolveDimensionDisplayComponent(destWorldName)));
+        }
+    }
+
+    private boolean isNonFreeCost(
+            final Player player,
+            final Component costDisplay,
+            final @Nullable String cachedPlainFree
+    ) {
+        final String plainCost = PlainTextComponentSerializer.plainText().serialize(costDisplay);
+        if (plainCost.isBlank()) {
+            return false;
+        }
+        final String plainFree = cachedPlainFree != null
+                ? cachedPlainFree
+                : PlainTextComponentSerializer.plainText().serialize(messages.freeCostLabel(player));
+        return !plainCost.equals(plainFree);
+    }
+
+    private List<Component> collectWarpBypassReasons(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination,
+            final WarpEvaluation rawEval,
+            final boolean bypassCost
+    ) {
+        final List<Component> reasons = new ArrayList<>();
+        appendWarpDimensionBypassReasons(player, source, destination, reasons);
+        if (bypassCost && isNonFreeCost(player, rawEval.costDisplay(), null)) {
+            reasons.add(messages.bypassReasonCostWarp(player, rawEval.costDisplay()));
+        }
+        return reasons;
+    }
+
+    /**
+     * Refreshes client-side visuals for a player immediately, and optionally schedules 5-tick and 20-tick
+     * delayed fallback refreshes when opted in via {@code hologram.delayed-refresh-fallback} (#70).
      */
     public void refreshPlayerVisuals(final Player player, final World world) {
         final UUID worldId = world.getUID();
         refreshPlayerVisualsNow(player, worldId);
+        if (!delayedVisualRefreshSupplier.getAsBoolean()) {
+            return;
+        }
         player.getScheduler().runDelayed(plugin, task -> {
             if (player.getWorld().getUID().equals(worldId)) {
                 refreshPlayerVisualsNow(player, worldId);

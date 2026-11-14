@@ -975,6 +975,250 @@ class AetheryteListenerTest {
         assertThat(service.isDimensionUseAllowed(player, "world")).isTrue();
     }
 
+    @Test
+    void refreshPlayerVisualsSkipsDelayedFallbackUnlessOptedIn() {
+        final HologramService mockHolograms = mock(HologramService.class);
+        final net.sabafly.clickportals.model.AetheryteModelService mockModels = mock(net.sabafly.clickportals.model.AetheryteModelService.class);
+        service.setHologramService(mockHolograms);
+        service.setModelService(mockModels);
+
+        final Player player = mock(Player.class);
+        when(player.getWorld()).thenReturn(world);
+        final EntityScheduler entityScheduler = mock(EntityScheduler.class);
+        when(player.getScheduler()).thenReturn(entityScheduler);
+
+        // Default (false): immediate refresh only, no 5L/20L delayed fallback scheduled
+        service.refreshPlayerVisuals(player, world);
+        verify(mockHolograms, times(1)).refreshPlayer(eq(player), any());
+        verify(mockModels, times(1)).refreshPlayer(eq(player), any());
+        verify(entityScheduler, never()).runDelayed(any(), any(), any(), any(long.class));
+
+        // Opt-in (true): schedules 5L and 20L delayed fallback refreshes
+        doAnswer(inv -> {
+            @SuppressWarnings("unchecked")
+            final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+            consumer.accept(mock(ScheduledTask.class));
+            return mock(ScheduledTask.class);
+        }).when(entityScheduler).runDelayed(any(), any(), any(), any(long.class));
+
+        service.setDelayedVisualRefreshSupplier(() -> true);
+        service.refreshPlayerVisuals(player, world);
+
+        verify(entityScheduler).runDelayed(eq(plugin), any(), eq(null), eq(5L));
+        verify(entityScheduler).runDelayed(eq(plugin), any(), eq(null), eq(20L));
+        verify(mockHolograms, times(4)).refreshPlayer(eq(player), any());
+        verify(mockModels, times(4)).refreshPlayer(eq(player), any());
+    }
+
+    @Test
+    void placementSendsBypassNoticeOnlyWhenRestrictionsWouldApply() throws Exception {
+        final Server server = mock(Server.class);
+        final java.lang.reflect.Field serverField = Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            when(server.getWorld(WORLD_ID)).thenReturn(world);
+            when(server.isOwnedByCurrentRegion(any(), any(int.class), any(int.class))).thenReturn(true);
+            final RegionScheduler regionScheduler = mock(RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+            doAnswer(inv -> {
+                ((Runnable) inv.getArgument(2)).run();
+                return null;
+            }).when(regionScheduler).execute(any(), any(Location.class), any());
+
+            final Block clearanceAir = mock(Block.class);
+            when(clearanceAir.getType()).thenReturn(Material.AIR);
+            when(clearanceAir.isReplaceable()).thenReturn(true);
+            when(world.getBlockAt(any(int.class), any(int.class), any(int.class))).thenReturn(clearanceAir);
+            when(world.spawn(
+                    any(Location.class),
+                    eq(org.bukkit.entity.Marker.class),
+                    org.mockito.ArgumentMatchers.<Consumer<? super org.bukkit.entity.Marker>>any()
+            )).thenReturn(mock(org.bukkit.entity.Marker.class));
+
+            final AtomicLong tick = new AtomicLong(1000L);
+            final VariationRegistry customVars = VariationRegistry.defaults();
+            final AetheryteService testService = new AetheryteService(
+                    plugin,
+                    registry,
+                    customVars,
+                    NoopHologramService.INSTANCE,
+                    net.sabafly.clickportals.model.NoopAetheryteModelService.INSTANCE,
+                    Messages.defaults(),
+                    () -> 1,
+                    () -> 100,
+                    p -> tick.get(),
+                    (p, t) -> {},
+                    (p, s, d) -> WarpEvaluation.permitted(Component.empty())
+            );
+            testService.setGlobalMinDistanceSupplier(() -> 50.0);
+            testService.setDimensionConfigSupplier(() -> new net.sabafly.clickportals.route.DimensionRoutesConfig(
+                    List.of(),
+                    java.util.Map.of("world", 0.0),
+                    List.of(),
+                    java.util.Map.of("world", new net.sabafly.clickportals.route.DimensionWorldConfig("<aqua>Restricted</aqua>", false, true))
+            ));
+
+            final UUID playerId = registeredAetheryte.ownerId();
+            final Player player = mock(Player.class);
+            when(player.getUniqueId()).thenReturn(playerId);
+            when(player.getName()).thenReturn("Admin");
+            when(player.locale()).thenReturn(java.util.Locale.US);
+            when(player.getWorld()).thenReturn(world);
+            when(player.getGameMode()).thenReturn(org.bukkit.GameMode.CREATIVE);
+            when(player.hasPermission(Permissions.PLACE)).thenReturn(true);
+            when(player.hasPermission(Permissions.BYPASS_LIMIT)).thenReturn(true);
+            when(player.hasPermission(Permissions.BYPASS_DISTANCE)).thenReturn(true);
+            when(player.hasPermission(Permissions.BYPASS_DIMENSION)).thenReturn(true);
+
+            final PersistentDataContainer pdc = mock(PersistentDataContainer.class);
+            when(pdc.get(AetheryteService.LAST_PLACE_TICK_KEY, PersistentDataType.LONG)).thenReturn(950L);
+            when(player.getPersistentDataContainer()).thenReturn(pdc);
+
+            final EntityScheduler entityScheduler = mock(EntityScheduler.class);
+            when(player.getScheduler()).thenReturn(entityScheduler);
+            doAnswer(inv -> {
+                @SuppressWarnings("unchecked")
+                final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+                consumer.accept(mock(ScheduledTask.class));
+                return mock(ScheduledTask.class);
+            }).when(entityScheduler).run(any(), any(), any());
+
+            // Pre-check list for dialog also captures all non-cost bypassed restrictions
+            final List<Component> previewReasons = testService.collectPlacementBypassReasons(
+                    player, world, 10, 64, 10, Aetheryte.DEFAULT_VARIATION
+            );
+            assertThat(previewReasons).hasSize(4);
+
+            testService.placeAetheryte(player, world, 10, 64, 10, "BypassedGate", Aetheryte.DEFAULT_VARIATION);
+
+            final ArgumentCaptor<Component> msgCaptor = ArgumentCaptor.forClass(Component.class);
+            verify(player, times(2)).sendMessage(msgCaptor.capture());
+            final List<String> sentPlain = msgCaptor.getAllValues().stream()
+                    .map(c -> PlainTextComponentSerializer.plainText().serialize(c))
+                    .toList();
+            assertThat(sentPlain.get(0)).contains("Placed Aetheryte");
+            assertThat(sentPlain.get(1))
+                    .contains("Bypassed restrictions:")
+                    .contains("dimension placement (Restricted)")
+                    .contains("global limit (1)")
+                    .contains("minimum distance (50.0 blocks)")
+                    .contains("placement cooldown (2.5s)");
+
+            // When no restrictions are hit, even with bypass permissions, no bypass notice is sent
+            final Player cleanPlayer = mock(Player.class);
+            final UUID cleanId = UUID.randomUUID();
+            when(cleanPlayer.getUniqueId()).thenReturn(cleanId);
+            when(cleanPlayer.getName()).thenReturn("CleanAdmin");
+            when(cleanPlayer.locale()).thenReturn(java.util.Locale.US);
+            when(cleanPlayer.getWorld()).thenReturn(world);
+            when(cleanPlayer.getGameMode()).thenReturn(org.bukkit.GameMode.CREATIVE);
+            when(cleanPlayer.hasPermission(Permissions.PLACE)).thenReturn(true);
+            when(cleanPlayer.hasPermission(Permissions.BYPASS_LIMIT)).thenReturn(true);
+            when(cleanPlayer.hasPermission(Permissions.BYPASS_DISTANCE)).thenReturn(true);
+            when(cleanPlayer.hasPermission(Permissions.BYPASS_DIMENSION)).thenReturn(true);
+            when(cleanPlayer.getPersistentDataContainer()).thenReturn(mock(PersistentDataContainer.class));
+            when(cleanPlayer.getScheduler()).thenReturn(entityScheduler);
+
+            testService.setDimensionConfigSupplier(net.sabafly.clickportals.route.DimensionRoutesConfig::defaults);
+            testService.placeAetheryte(cleanPlayer, world, 500, 64, 500, "CleanGate", Aetheryte.DEFAULT_VARIATION);
+
+            final ArgumentCaptor<Component> cleanMsgCaptor = ArgumentCaptor.forClass(Component.class);
+            verify(cleanPlayer, times(1)).sendMessage(cleanMsgCaptor.capture());
+            assertThat(PlainTextComponentSerializer.plainText().serialize(cleanMsgCaptor.getValue()))
+                    .contains("Placed Aetheryte")
+                    .doesNotContain("Bypassed restrictions");
+        } finally {
+            serverField.set(null, null);
+        }
+    }
+
+    @Test
+    void warpSendsBypassNoticeWhenDimensionOrCostBypassed() throws Exception {
+        final Server server = mock(Server.class);
+        final java.lang.reflect.Field serverField = Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        serverField.set(null, server);
+        try {
+            when(server.getWorld(WORLD_ID)).thenReturn(world);
+            when(server.isOwnedByCurrentRegion(any(), any(int.class), any(int.class))).thenReturn(true);
+            final RegionScheduler regionScheduler = mock(RegionScheduler.class);
+            when(server.getRegionScheduler()).thenReturn(regionScheduler);
+            doAnswer(inv -> {
+                ((Runnable) inv.getArgument(2)).run();
+                return null;
+            }).when(regionScheduler).execute(any(), any(Location.class), any());
+            stubFlatSafeTerrain(world);
+
+            final Aetheryte destination = new Aetheryte(
+                    UUID.randomUUID(),
+                    "DestGate",
+                    WORLD_ID,
+                    "world",
+                    40,
+                    64,
+                    40,
+                    UUID.randomUUID(),
+                    1L
+            );
+            registry.register(world, destination);
+
+            final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
+            when(evaluator.evaluate(any(), any(), any()))
+                    .thenReturn(WarpEvaluation.permitted(Component.text("100 Coins")));
+            final AetheryteService warpService = new AetheryteService(
+                    plugin,
+                    registry,
+                    VariationRegistry.defaults(),
+                    NoopHologramService.INSTANCE,
+                    Messages.defaults(),
+                    () -> -1,
+                    evaluator
+            );
+            warpService.setDimensionConfigSupplier(() -> new net.sabafly.clickportals.route.DimensionRoutesConfig(
+                    List.of(),
+                    java.util.Map.of("world", 0.0),
+                    List.of(),
+                    java.util.Map.of("world", new net.sabafly.clickportals.route.DimensionWorldConfig("<aqua>DisabledUse</aqua>", true, false))
+            ));
+
+            final Player player = mock(Player.class);
+            when(player.getUniqueId()).thenReturn(UUID.randomUUID());
+            when(player.locale()).thenReturn(java.util.Locale.US);
+            when(player.getWorld()).thenReturn(world);
+            when(player.getLocation()).thenReturn(new Location(world, 5.0, 64.0, 5.0));
+            when(player.hasPermission(Permissions.USE)).thenReturn(true);
+            when(player.hasPermission(Permissions.BYPASS_DIMENSION)).thenReturn(true);
+            when(player.hasPermission(Permissions.BYPASS_COST_WARP)).thenReturn(true);
+            when(player.teleportAsync(any(Location.class))).thenReturn(CompletableFuture.completedFuture(true));
+
+            final EntityScheduler entityScheduler = mock(EntityScheduler.class);
+            when(player.getScheduler()).thenReturn(entityScheduler);
+            doAnswer(inv -> {
+                @SuppressWarnings("unchecked")
+                final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+                consumer.accept(mock(ScheduledTask.class));
+                return mock(ScheduledTask.class);
+            }).when(entityScheduler).run(any(), any(), any());
+
+            warpService.warpToAetheryte(player, registeredAetheryte, destination.id());
+
+            verify(evaluator, times(2)).evaluate(eq(player), eq(registeredAetheryte), eq(destination));
+            final ArgumentCaptor<Component> msgCaptor = ArgumentCaptor.forClass(Component.class);
+            verify(player, times(2)).sendMessage(msgCaptor.capture());
+            final List<String> sentPlain = msgCaptor.getAllValues().stream()
+                    .map(c -> PlainTextComponentSerializer.plainText().serialize(c))
+                    .toList();
+            assertThat(sentPlain.get(0)).contains("Teleported to");
+            assertThat(sentPlain.get(1))
+                    .contains("Bypassed restrictions:")
+                    .contains("dimension usage (DisabledUse)")
+                    .contains("warp cost (100 Coins)");
+        } finally {
+            serverField.set(null, null);
+        }
+    }
+
     private static void stubFlatSafeTerrain(final World mockWorld) {
         final Block safeFloor = mock(Block.class);
         when(safeFloor.isSolid()).thenReturn(true);

@@ -49,6 +49,7 @@ class PluginConfigTest {
         assertThat(loaded.useClientLocale()).isTrue();
         assertThat(loaded.hologramEnabled()).isTrue();
         assertThat(loaded.hologramViewDistance()).isEqualTo(32.0);
+        assertThat(loaded.hologramDelayedRefreshFallback()).isFalse();
         assertThat(loaded.maxAetherytesPerPlayer()).isEqualTo(-1);
         assertThat(loaded.placementCooldownTicks()).isEqualTo(100);
         assertThat(loaded.maxFavoritesPerPlayer()).isEqualTo(-1);
@@ -58,6 +59,7 @@ class PluginConfigTest {
                 .contains("ClickPortals Configuration")
                 .contains("Language and localization settings")
                 .contains("default-locale: en_US")
+                .contains("delayed-refresh-fallback: false")
                 .contains("Global per-player Aetheryte placement limit and cooldown settings")
                 .contains("max-aetherytes-per-player: -1")
                 .contains("placement-cooldown-ticks: 100");
@@ -638,5 +640,27 @@ class PluginConfigTest {
         assertThat(reloaded.config().dimensions().worlds()).containsKey("custom_void");
         assertThat(reloaded.config().dimensions().isPlaceAllowed("custom_void")).isFalse();
         assertThat(reloaded.config().dimensions().isUseAllowed("custom_void")).isFalse();
+    }
+
+    @Test
+    void delayedRefreshFallbackOptInLoadsAndPreservesAcrossSchemaSync() throws IOException {
+        final Path configFile = tempDir.resolve("delayed_refresh.yml");
+        Files.writeString(configFile, """
+                hologram:
+                  enabled: true
+                  view-distance: 32.0
+                  delayed-refresh-fallback: true
+                """, StandardCharsets.UTF_8);
+
+        final ConfigManager manager = new ConfigManager(configFile, mock(Logger.class));
+        final PluginConfig loaded = manager.load();
+
+        assertThat(loaded.hologramDelayedRefreshFallback()).isTrue();
+        assertThat(Files.readString(configFile, StandardCharsets.UTF_8))
+                .contains("delayed-refresh-fallback: true");
+
+        // Reloading preserves opted-in true value
+        final ConfigManager reloaded = new ConfigManager(configFile, mock(Logger.class));
+        assertThat(reloaded.load().hologramDelayedRefreshFallback()).isTrue();
     }
 }
