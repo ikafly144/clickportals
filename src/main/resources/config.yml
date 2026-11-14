@@ -61,6 +61,11 @@ warp:
       on-damage: true
       # Cancel casting when breaking/placing blocks, attacking entities, or interacting with other blocks/entities
       on-interact: true
+  # Cost multipliers applied according to Aetheryte visibility (#25)
+  visibility-cost:
+    public-multiplier: 1.0
+    invite-only-multiplier: 1.0
+    owner-only-multiplier: 1.0
 
 # Cross-dimension warping routes, distance origins, and dimension pricing (#9)
 dimensions:

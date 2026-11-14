@@ -119,10 +119,22 @@ public final class CostBundle {
             final Map<String, Double> externalVariables,
             final @Nullable EconomyProvider economy
     ) {
+        return quote(player, externalVariables, economy, 1.0);
+    }
+
+    /**
+     * Assesses this bundle against the given player with a scalar multiplier (#25).
+     */
+    public CostQuote quote(
+            final Player player,
+            final Map<String, Double> externalVariables,
+            final @Nullable EconomyProvider economy,
+            final double amountMultiplier
+    ) {
         if (entries.isEmpty()) {
             return CostQuote.FREE;
         }
-        return quote(PlayerResourceSnapshot.capture(player, economy), externalVariables);
+        return quote(PlayerResourceSnapshot.capture(player, economy), externalVariables, amountMultiplier);
     }
 
     /**
@@ -137,13 +149,24 @@ public final class CostBundle {
             final PlayerResourceSnapshot snapshot,
             final Map<String, Double> externalVariables
     ) {
+        return quote(snapshot, externalVariables, 1.0);
+    }
+
+    /**
+     * Assesses this bundle using a pre-captured {@link PlayerResourceSnapshot} and a scalar multiplier (#25).
+     */
+    public CostQuote quote(
+            final PlayerResourceSnapshot snapshot,
+            final Map<String, Double> externalVariables,
+            final double amountMultiplier
+    ) {
         if (entries.isEmpty()) {
             return CostQuote.FREE;
         }
         final Map<String, Double> variables = new HashMap<>(externalVariables.size() + 8);
         variables.putAll(externalVariables);
         snapshot.populateVariables(variables);
-        return quoteWithPopulatedVariables(snapshot, variables);
+        return quoteWithPopulatedVariables(snapshot, variables, amountMultiplier);
     }
 
     /**
@@ -155,11 +178,26 @@ public final class CostBundle {
             final PlayerResourceSnapshot snapshot,
             final Map<String, Double> variables
     ) {
+        return quoteWithPopulatedVariables(snapshot, variables, 1.0);
+    }
+
+    /**
+     * Assesses this bundle using a pre-captured {@link PlayerResourceSnapshot}, populated variables,
+     * and a scalar multiplier applied prior to {@link CostType} normalization (#25).
+     */
+    public CostQuote quoteWithPopulatedVariables(
+            final PlayerResourceSnapshot snapshot,
+            final Map<String, Double> variables,
+            final double amountMultiplier
+    ) {
         if (entries.isEmpty()) {
             return CostQuote.FREE;
         }
+        final double safeMultiplier = (!Double.isFinite(amountMultiplier) || amountMultiplier < 0.0)
+                ? 1.0
+                : amountMultiplier;
         if (entries.size() == 1) {
-            return quoteSingleEntry(entries.get(0), compiledExpressions.get(0), snapshot, variables);
+            return quoteSingleEntry(entries.get(0), compiledExpressions.get(0), snapshot, variables, safeMultiplier);
         }
 
         // First pass: evaluate raw amounts and aggregate required sums by CostType (#7)
@@ -182,7 +220,7 @@ public final class CostBundle {
                 continue;
             }
 
-            final double normalizedAmount = type.normalize(rawAmount);
+            final double normalizedAmount = type.normalize(rawAmount * safeMultiplier);
             evaluatedAmounts[i] = normalizedAmount;
             if (entry.required() && !(type == CostType.VAULT && snapshot.economySoftDisabled())) {
                 totalRequiredByType.merge(type, type.toBigDecimal(normalizedAmount), BigDecimal::add);
@@ -249,7 +287,8 @@ public final class CostBundle {
             final CostEntry entry,
             final Expression expr,
             final PlayerResourceSnapshot snapshot,
-            final Map<String, Double> variables
+            final Map<String, Double> variables,
+            final double amountMultiplier
     ) {
         final CostType type = entry.type();
         if (type == null || Objects.equals(expr, Expression.INVALID)) {
@@ -259,7 +298,7 @@ public final class CostBundle {
         if (!Double.isFinite(rawAmount) || rawAmount < 0.0) {
             return new CostQuote(List.of(new CostItemQuote(type, Double.POSITIVE_INFINITY, true, false, 0.0, false)));
         }
-        final double amount = type.normalize(rawAmount);
+        final double amount = type.normalize(rawAmount * amountMultiplier);
         if (type == CostType.VAULT && snapshot.economySoftDisabled()) {
             return new CostQuote(List.of(new CostItemQuote(type, 0.0, entry.required(), true, 0.0, true)));
         }
@@ -539,5 +578,59 @@ public final class CostBundle {
                 yield true;
             }
         };
+    }
+
+    /**
+     * Difference between two placement {@link CostQuote}s when visibility changes (#25).
+     */
+    public record QuoteDelta(CostQuote additionalCharge, CostQuote refund) {
+    }
+
+    /**
+     * Computes the net additional charge and refund required to move from {@code oldQuote} to {@code newQuote} (#25).
+     */
+    public static QuoteDelta computeQuoteDelta(
+            final Player player,
+            final EconomyProvider economy,
+            final CostQuote oldQuote,
+            final CostQuote newQuote
+    ) {
+        final Map<CostType, Double> oldAmounts = aggregateAmountsByType(oldQuote);
+        final Map<CostType, Double> newAmounts = aggregateAmountsByType(newQuote);
+
+        final List<CostItemQuote> chargeItems = new ArrayList<>();
+        final List<CostItemQuote> refundItems = new ArrayList<>();
+        for (final CostType type : CostType.values()) {
+            final double rawOld = oldAmounts.getOrDefault(type, 0.0);
+            final double rawNew = newAmounts.getOrDefault(type, 0.0);
+            final double oldAmt = type == CostType.VAULT ? rawOld : (double) Math.round(rawOld);
+            final double newAmt = type == CostType.VAULT ? rawNew : (double) Math.round(rawNew);
+            final double diff = newAmt - oldAmt;
+            if (diff > 1e-6) {
+                final double available = getCurrentResource(player, type, economy);
+                final boolean affordable = available >= diff;
+                chargeItems.add(new CostItemQuote(type, diff, true, affordable, available, false));
+            } else if (diff < -1e-6) {
+                final double refundAmt = -diff;
+                final double available = getCurrentResource(player, type, economy);
+                refundItems.add(new CostItemQuote(type, refundAmt, false, true, available, false));
+            }
+        }
+        final CostQuote additionalCharge = chargeItems.isEmpty() ? CostQuote.FREE : new CostQuote(chargeItems);
+        final CostQuote refund = refundItems.isEmpty() ? CostQuote.FREE : new CostQuote(refundItems);
+        return new QuoteDelta(additionalCharge, refund);
+    }
+
+    private static Map<CostType, Double> aggregateAmountsByType(final @Nullable CostQuote quote) {
+        final Map<CostType, Double> totals = new EnumMap<>(CostType.class);
+        if (quote == null || quote.items().isEmpty()) {
+            return totals;
+        }
+        for (final CostItemQuote item : quote.items()) {
+            if (!item.disabled() && item.amount() > 0.0) {
+                totals.merge(item.type(), item.amount(), Double::sum);
+            }
+        }
+        return totals;
     }
 }

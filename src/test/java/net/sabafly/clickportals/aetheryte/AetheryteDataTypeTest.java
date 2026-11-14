@@ -25,6 +25,7 @@ import static org.mockito.Mockito.when;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.bukkit.NamespacedKey;
 import org.bukkit.persistence.PersistentDataAdapterContext;
@@ -88,6 +89,41 @@ class AetheryteDataTypeTest {
         final Aetheryte restored = AetheryteDataType.INSTANCE.fromPrimitive(serialized, context);
         assertThat(restored.variation()).isEqualTo(Aetheryte.DEFAULT_VARIATION);
         assertThat(restored.ownerName()).isNull();
+        assertThat(restored.visibility()).isEqualTo(AetheryteVisibility.PUBLIC);
+        assertThat(restored.invitedPlayers()).isEmpty();
+    }
+
+    @Test
+    void roundTripSerializationPreservesVisibilityAndInvitees() {
+        final Map<NamespacedKey, Object> backingStore = new HashMap<>();
+        final PersistentDataContainer mockContainer = createInMemoryContainer(backingStore);
+        final PersistentDataAdapterContext context = mock(PersistentDataAdapterContext.class);
+        when(context.newPersistentDataContainer()).thenReturn(mockContainer);
+
+        final UUID inviteeA = UUID.fromString("aaaaaaaa-1111-2222-3333-444444444444");
+        final UUID inviteeB = UUID.fromString("bbbbbbbb-1111-2222-3333-444444444444");
+        final Aetheryte original = new Aetheryte(
+                UUID.fromString("11111111-2222-3333-4444-555555555555"),
+                "秘密の結晶",
+                UUID.fromString("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+                "world",
+                12,
+                70,
+                -34,
+                UUID.fromString("99999999-8888-7777-6666-555555555555"),
+                1_700_000_000_000L,
+                Aetheryte.DEFAULT_VARIATION,
+                "ikafly144",
+                AetheryteVisibility.INVITE_ONLY,
+                Set.of(inviteeA, inviteeB)
+        );
+
+        final PersistentDataContainer serialized = AetheryteDataType.INSTANCE.toPrimitive(original, context);
+        final Aetheryte restored = AetheryteDataType.INSTANCE.fromPrimitive(serialized, context);
+
+        assertThat(restored).isEqualTo(original);
+        assertThat(restored.visibility()).isEqualTo(AetheryteVisibility.INVITE_ONLY);
+        assertThat(restored.invitedPlayers()).containsExactlyInAnyOrder(inviteeA, inviteeB);
     }
 
     @SuppressWarnings("unchecked")

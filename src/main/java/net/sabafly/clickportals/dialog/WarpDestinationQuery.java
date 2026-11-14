@@ -29,6 +29,8 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.variation.AetheryteVariation;
+import net.sabafly.clickportals.variation.AetheryteVariation.WarpOverrideSection;
 import org.bukkit.World;
 import org.jspecify.annotations.Nullable;
 
@@ -42,7 +44,53 @@ public final class WarpDestinationQuery {
      */
     public static final int DEFAULT_PAGE_SIZE = 10;
 
+    /**
+     * Wildcard network identifier permitting warps to any destination network (#27).
+     */
+    public static final String ANY_NETWORK_WILDCARD = "*";
+
     private WarpDestinationQuery() {
+    }
+
+    /**
+     * Checks whether a source Aetheryte variation can route to a destination variation's warp network (#27).
+     * When {@code source.warp().allowedTargetNetworks()} is empty, only Aetherytes sharing the same normalized
+     * {@code warp.network} identifier can connect.
+     */
+    public static boolean canRouteBetweenVariations(
+            final AetheryteVariation sourceVariation,
+            final AetheryteVariation destinationVariation
+    ) {
+        return canRouteBetweenNetworks(
+                sourceVariation.warp().network(),
+                sourceVariation.warp().allowedTargetNetworks(),
+                destinationVariation.warp().network()
+        );
+    }
+
+    /**
+     * Evaluates warp network compatibility between {@code sourceNetwork} and {@code destinationNetwork} (#27).
+     */
+    public static boolean canRouteBetweenNetworks(
+            final @Nullable String sourceNetwork,
+            final @Nullable List<String> allowedTargetNetworks,
+            final @Nullable String destinationNetwork
+    ) {
+        final String src = WarpOverrideSection.normalizeNetwork(sourceNetwork);
+        final String dst = WarpOverrideSection.normalizeNetwork(destinationNetwork);
+        if (allowedTargetNetworks == null || allowedTargetNetworks.isEmpty()) {
+            return src.equals(dst);
+        }
+        for (final String allowed : allowedTargetNetworks) {
+            if (allowed == null || allowed.isBlank()) {
+                continue;
+            }
+            final String normAllowed = allowed.strip().toLowerCase(Locale.ROOT);
+            if (ANY_NETWORK_WILDCARD.equals(normAllowed) || normAllowed.equals(dst)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

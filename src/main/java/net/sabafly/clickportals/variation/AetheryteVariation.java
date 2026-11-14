@@ -25,6 +25,7 @@ import java.util.Map;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.config.CastSection;
 import net.sabafly.clickportals.config.DistanceSection;
+import net.sabafly.clickportals.config.VisibilityCostSection;
 import net.sabafly.clickportals.cost.CostEntry;
 import net.sabafly.clickportals.cost.expr.ExpressionException;
 import net.sabafly.clickportals.cost.expr.ExpressionParser;
@@ -447,27 +448,41 @@ public record AetheryteVariation(
 
             @Setting("min-distance")
             @Comment("Minimum block distance to another Aetheryte in the same world (-1 to inherit global, 0 to disable)")
-            @Nullable Double minDistance
+            @Nullable Double minDistance,
+
+            @Setting("visibility-cost")
+            @Comment("Optional per-variation visibility cost multiplier overrides (null fields inherit global config.yml) (#25)")
+            VisibilityCostSection visibilityCost
     ) {
+        public PlacementSection(
+                @Nullable final ClearanceSection clearance,
+                @Nullable final List<CostEntry> cost,
+                @Nullable final Double minDistance,
+                @Nullable final VisibilityCostSection visibilityCost
+        ) {
+            this.clearance = clearance == null ? ClearanceSection.defaults() : clearance;
+            this.cost = cost == null ? List.of() : List.copyOf(cost);
+            this.minDistance = minDistance;
+            this.visibilityCost = visibilityCost == null ? VisibilityCostSection.inherit() : visibilityCost;
+        }
+
         public PlacementSection(
                 @Nullable final ClearanceSection clearance,
                 @Nullable final List<CostEntry> cost,
                 @Nullable final Double minDistance
         ) {
-            this.clearance = clearance == null ? ClearanceSection.defaults() : clearance;
-            this.cost = cost == null ? List.of() : List.copyOf(cost);
-            this.minDistance = minDistance;
+            this(clearance, cost, minDistance, VisibilityCostSection.inherit());
         }
 
         public PlacementSection(
                 @Nullable final ClearanceSection clearance,
                 @Nullable final List<CostEntry> cost
         ) {
-            this(clearance, cost, -1.0);
+            this(clearance, cost, -1.0, VisibilityCostSection.inherit());
         }
 
         public PlacementSection(@Nullable final ClearanceSection clearance) {
-            this(clearance, List.of(), -1.0);
+            this(clearance, List.of(), -1.0, VisibilityCostSection.inherit());
         }
 
         public double minDistanceOrDefault(final double fallback) {
@@ -478,12 +493,12 @@ public record AetheryteVariation(
          * Returns the default placement section.
          */
         public static PlacementSection defaults() {
-            return new PlacementSection(ClearanceSection.defaults(), List.of(), -1.0);
+            return new PlacementSection(ClearanceSection.defaults(), List.of(), -1.0, VisibilityCostSection.inherit());
         }
     }
 
     /**
-     * Warp distance and cost override section for this variation (#14, #26).
+     * Warp distance, cost, cast, and network settings for this variation (#14, #26, #27).
      */
     @ConfigSerializable
     public record WarpOverrideSection(
@@ -497,13 +512,23 @@ public record AetheryteVariation(
 
             @Setting("cast")
             @Comment("Optional warp casting (cast time and player animation) overrides for warps originating from this variation (#65)")
-            CastSection cast
+            CastSection cast,
+
+            @Setting("network")
+            @Comment("Warp network identifier for this variation (empty/\"default\" for standard network) (#27)")
+            String network,
+
+            @Setting("allowed-target-networks")
+            @Comment("Destination network IDs reachable from this variation (empty = same network only, \"*\" = any) (#27)")
+            List<String> allowedTargetNetworks
     ) {
+        public static final String DEFAULT_NETWORK = "default";
+
         public WarpOverrideSection(
                 @Nullable final DistanceSection distance,
                 @Nullable final List<CostEntry> cost
         ) {
-            this(distance, cost, CastSection.inherit());
+            this(distance, cost, CastSection.inherit(), DEFAULT_NETWORK, List.of());
         }
 
         public WarpOverrideSection(
@@ -511,13 +536,45 @@ public record AetheryteVariation(
                 @Nullable final List<CostEntry> cost,
                 @Nullable final CastSection cast
         ) {
+            this(distance, cost, cast, DEFAULT_NETWORK, List.of());
+        }
+
+        public WarpOverrideSection(
+                @Nullable final DistanceSection distance,
+                @Nullable final List<CostEntry> cost,
+                @Nullable final CastSection cast,
+                @Nullable final String network,
+                @Nullable final List<String> allowedTargetNetworks
+        ) {
             this.distance = distance == null ? DistanceSection.inherit() : distance;
             this.cost = cost == null ? null : List.copyOf(cost);
             this.cast = cast == null ? CastSection.inherit() : cast;
+            this.network = normalizeNetwork(network);
+            this.allowedTargetNetworks = normalizeNetworkList(allowedTargetNetworks);
+        }
+
+        public static String normalizeNetwork(final @Nullable String raw) {
+            if (raw == null || raw.isBlank()) {
+                return DEFAULT_NETWORK;
+            }
+            return raw.strip().toLowerCase(Locale.ROOT);
+        }
+
+        public static List<String> normalizeNetworkList(final @Nullable List<String> raw) {
+            if (raw == null || raw.isEmpty()) {
+                return List.of();
+            }
+            final List<String> normalized = new ArrayList<>(raw.size());
+            for (final String entry : raw) {
+                if (entry != null && !entry.isBlank()) {
+                    normalized.add(entry.strip().toLowerCase(Locale.ROOT));
+                }
+            }
+            return List.copyOf(normalized);
         }
 
         public static WarpOverrideSection defaults() {
-            return new WarpOverrideSection(DistanceSection.inherit(), null, CastSection.inherit());
+            return new WarpOverrideSection(DistanceSection.inherit(), null, CastSection.inherit(), DEFAULT_NETWORK, List.of());
         }
     }
 
@@ -545,7 +602,12 @@ public record AetheryteVariation(
             final CastSection cast = (castNode.virtual() || castNode.isNull() || castNode.raw() == null)
                     ? CastSection.inherit()
                     : castNode.get(CastSection.class, CastSection.inherit());
-            return new WarpOverrideSection(distance, cost, cast);
+            final String network = node.node("network").getString(WarpOverrideSection.DEFAULT_NETWORK);
+            final ConfigurationNode allowedNode = node.node("allowed-target-networks");
+            final List<String> allowed = allowedNode.isList()
+                    ? allowedNode.getList(String.class, List.of())
+                    : List.of();
+            return new WarpOverrideSection(distance, cost, cast, network, allowed);
         }
 
         @Override
@@ -565,6 +627,8 @@ public record AetheryteVariation(
                 node.node("cost").setList(CostEntry.class, obj.cost());
             }
             node.node("cast").set(CastSection.class, obj.cast());
+            node.node("network").set(obj.network());
+            node.node("allowed-target-networks").setList(String.class, obj.allowedTargetNetworks());
         }
     }
 
@@ -1043,10 +1107,15 @@ public record AetheryteVariation(
         }
         final Double rawMinDistance = placement.minDistance();
         final double validMinDistance = rawMinDistance == null || !Double.isFinite(rawMinDistance) || rawMinDistance < -1.0 ? -1.0 : rawMinDistance;
+        final VisibilityCostSection validatedVisibilityCost = (placement.visibilityCost() != null
+                ? placement.visibilityCost()
+                : VisibilityCostSection.inherit())
+                .validatedOverride("variations." + cleanId + ".placement.visibility-cost", logger);
         final PlacementSection validatedPlacement = new PlacementSection(
                 new ClearanceSection(validClearanceRadius, validClearanceHeight),
                 placement.cost(),
-                validMinDistance
+                validMinDistance,
+                validatedVisibilityCost
         );
 
         // 7. Validate limit section (#43)
@@ -1101,7 +1170,13 @@ public record AetheryteVariation(
                 rawWarpCast.immobilize(),
                 rawWarpCast.cancel()
         );
-        final WarpOverrideSection validatedWarp = new WarpOverrideSection(validatedWarpDist, warp.cost(), validatedWarpCast);
+        final WarpOverrideSection validatedWarp = new WarpOverrideSection(
+                validatedWarpDist,
+                warp.cost(),
+                validatedWarpCast,
+                WarpOverrideSection.normalizeNetwork(warp.network()),
+                WarpOverrideSection.normalizeNetworkList(warp.allowedTargetNetworks())
+        );
 
         // 9. Validate BetterModel section (#46)
         final boolean bmEnabled = Boolean.TRUE.equals(bettermodel.enabled());

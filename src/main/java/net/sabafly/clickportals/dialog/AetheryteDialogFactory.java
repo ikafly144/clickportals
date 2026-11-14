@@ -28,6 +28,7 @@ import io.papermc.paper.registry.data.dialog.input.SingleOptionDialogInput;
 import io.papermc.paper.registry.data.dialog.type.DialogType;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -40,12 +41,14 @@ import net.kyori.adventure.text.event.ClickCallback;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.aetheryte.AetheryteVisibility;
 import net.sabafly.clickportals.cost.CostBundle;
 import net.sabafly.clickportals.cost.CostFormatter;
 import net.sabafly.clickportals.cost.CostQuote;
 import net.sabafly.clickportals.dialog.WarpDestinationQuery.Candidate;
 import net.sabafly.clickportals.dialog.WarpDestinationQuery.PageSlice;
 import net.sabafly.clickportals.dialog.WarpDestinationQuery.WorldGroup;
+import net.sabafly.clickportals.economy.EconomyProvider;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.permission.Permissions;
@@ -258,7 +261,7 @@ public final class AetheryteDialogFactory {
             final List<WorldGroup> worldGroups = WarpDestinationQuery.groupReachableWorlds(
                     current,
                     allAetherytes,
-                    dest -> isWorldReachable(player, current, dest, worldRouteCache),
+                    dest -> isDestinationSelectable(player, current, dest, worldRouteCache),
                     AetheryteDialogFactory::resolveWorldEnvironment,
                     service::resolveDimensionPlainName
             );
@@ -271,7 +274,7 @@ public final class AetheryteDialogFactory {
             final List<Aetheryte> reachableDestinations = totalReachableCount > 0 ? new ArrayList<>(totalReachableCount) : List.of();
             if (totalReachableCount > 0) {
                 for (final Aetheryte dest : allAetherytes) {
-                    if (!dest.id().equals(current.id()) && isWorldReachable(player, current, dest, worldRouteCache)) {
+                    if (!dest.id().equals(current.id()) && isDestinationSelectable(player, current, dest, worldRouteCache)) {
                         reachableDestinations.add(dest);
                         if (favorites.contains(dest.id())) {
                             reachableFavoritesCount++;
@@ -383,7 +386,7 @@ public final class AetheryteDialogFactory {
                 allAetherytes,
                 state,
                 favorites,
-                dest -> isWorldReachable(player, current, dest, worldRouteCache),
+                dest -> isDestinationSelectable(player, current, dest, worldRouteCache),
                 dest -> service.resolveOwnerName(dest, player, ownerNameCache),
                 service::resolveDimensionPlainName
         );
@@ -636,15 +639,15 @@ public final class AetheryteDialogFactory {
                 evaluation.denyReason()
         );
         if (evaluation.allowed()) {
-            final List<Component> dimBypassReasons = service.collectDestinationDimensionBypassReasons(
+            final List<Component> bypassReasons = service.collectDestinationBypassReasons(
                     player,
                     current,
                     destination
             );
-            if (!dimBypassReasons.isEmpty()) {
+            if (!bypassReasons.isEmpty()) {
                 baseTooltip = baseTooltip.append(Component.newline()).append(messages.warpTooltipBypassed(
                         player,
-                        dimBypassReasons
+                        bypassReasons
                 ));
             }
         }
@@ -731,6 +734,18 @@ public final class AetheryteDialogFactory {
                     .build());
         }
 
+        if (AetheryteService.canManageVisibility(player, current)) {
+            buttons.add(ActionButton.builder(messages.get(player, MessageKey.DIALOG_BUTTON_VISIBILITY))
+                    .tooltip(messages.get(player, MessageKey.DIALOG_BUTTON_VISIBILITY_TOOLTIP))
+                    .width(BUTTON_WIDTH_PRIMARY)
+                    .action(DialogAction.customClick((view, audience) -> {
+                        if (audience instanceof Player clicker) {
+                            openVisibilityDialog(clicker, current, state);
+                        }
+                    }, SINGLE_USE_CALLBACK))
+                    .build());
+        }
+
         if (AetheryteService.canRemove(player, current)) {
             buttons.add(ActionButton.builder(messages.buttonOpenRemoveConfirm(player))
                     .tooltip(messages.buttonOpenRemoveConfirmTooltip(player))
@@ -760,7 +775,8 @@ public final class AetheryteDialogFactory {
                                         current,
                                         ownerName,
                                         service.resolveDimensionDisplayComponent(current.worldId(), current.worldName()),
-                                        variation.displayName()
+                                        variation.displayName(),
+                                        variation.warp().network()
                                 )
                         )))
                         .build())
@@ -1047,6 +1063,240 @@ public final class AetheryteDialogFactory {
                 .build();
     }
 
+    private void openVisibilityDialog(
+            final Player player,
+            final Aetheryte rawTarget,
+            final WarpDialogState returnState
+    ) {
+        final Aetheryte target = service.registry().getById(rawTarget.id()).orElse(rawTarget);
+        final EconomyProvider economy = service.economyProvider();
+        final boolean creative = player.getGameMode() == GameMode.CREATIVE;
+        final boolean bypassCost = Permissions.canBypassPlaceCost(player);
+        final boolean hasPlacementCost = !service.variationFor(target).placement().cost().isEmpty();
+        final CostQuote currentQuote = (!creative && !bypassCost && hasPlacementCost)
+                ? service.computePlacementCostQuote(player, target.ownerId(), target.variation(), target.visibility(), economy)
+                : CostQuote.FREE;
+
+        final List<ActionButton> buttons = new ArrayList<>();
+        for (final AetheryteVisibility mode : AetheryteVisibility.values()) {
+            final boolean isCurrent = target.visibility() == mode;
+            final Component label = messages.visibilityOptionButtonLabel(player, mode, isCurrent);
+            final Component tooltip = buildVisibilityModeTooltip(
+                    player, target, mode, isCurrent, creative, bypassCost, hasPlacementCost, currentQuote, economy);
+            buttons.add(ActionButton.builder(label)
+                    .tooltip(tooltip)
+                    .width(BUTTON_WIDTH_PRIMARY)
+                    .action(DialogAction.customClick((view, audience) -> {
+                        if (!(audience instanceof Player clicker)) {
+                            return;
+                        }
+                        if (isCurrent) {
+                            openVisibilityDialog(clicker, target, returnState);
+                            return;
+                        }
+                        clicker.closeDialog();
+                        service.changeVisibility(clicker, target.id(), mode);
+                    }, SINGLE_USE_CALLBACK))
+                    .build());
+        }
+
+        buttons.add(ActionButton.builder(messages.get(player, MessageKey.DIALOG_BUTTON_INVITE_ADD))
+                .width(BUTTON_WIDTH_PRIMARY)
+                .action(DialogAction.customClick((view, audience) -> {
+                    if (audience instanceof Player clicker) {
+                        openInviteAddDialog(clicker, target, returnState);
+                    }
+                }, SINGLE_USE_CALLBACK))
+                .build());
+
+        buttons.add(ActionButton.builder(messages.get(
+                        player,
+                        MessageKey.DIALOG_BUTTON_INVITE_REMOVE,
+                        Placeholder.unparsed("count", Integer.toString(target.invitedPlayers().size()))
+                ))
+                .width(BUTTON_WIDTH_PRIMARY)
+                .action(DialogAction.customClick((view, audience) -> {
+                    if (audience instanceof Player clicker) {
+                        openInviteRemoveDialog(clicker, target, returnState);
+                    }
+                }, SINGLE_USE_CALLBACK))
+                .build());
+
+        final ActionButton backButton = ActionButton.builder(messages.get(player, MessageKey.DIALOG_BUTTON_BACK))
+                .width(BUTTON_WIDTH_SECONDARY)
+                .action(DialogAction.customClick((view, audience) -> {
+                    if (audience instanceof Player clicker) {
+                        openOperationsDialog(clicker, target, returnState);
+                    }
+                }, SINGLE_USE_CALLBACK))
+                .build();
+
+        final Dialog dialog = Dialog.create(factory -> factory.empty()
+                .base(DialogBase.builder(messages.get(
+                                player,
+                                MessageKey.DIALOG_VISIBILITY_TITLE,
+                                Placeholder.unparsed("name", target.name())
+                        ))
+                        .canCloseWithEscape(true)
+                        .pause(false)
+                        .afterAction(DialogBase.DialogAfterAction.NONE)
+                        .body(List.of(DialogBody.plainMessage(messages.get(
+                                player,
+                                MessageKey.DIALOG_VISIBILITY_BODY,
+                                Placeholder.component("visibility", messages.visibilityLabel(player, target.visibility())),
+                                Placeholder.unparsed("invited", Integer.toString(target.invitedPlayers().size()))
+                        ))))
+                        .build())
+                .type(DialogType.multiAction(buttons)
+                        .columns(1)
+                        .exitAction(backButton)
+                        .build())
+        );
+        player.showDialog(dialog);
+    }
+
+    private Component buildVisibilityModeTooltip(
+            final Player player,
+            final Aetheryte target,
+            final AetheryteVisibility mode,
+            final boolean isCurrent,
+            final boolean creative,
+            final boolean bypassCost,
+            final boolean hasPlacementCost,
+            final CostQuote currentQuote,
+            final EconomyProvider economy
+    ) {
+        final Component modeLabel = messages.visibilityLabel(player, mode);
+        if (!isCurrent && !creative && !bypassCost && hasPlacementCost) {
+            final CostQuote newQuote = service.computePlacementCostQuote(
+                    player, target.ownerId(), target.variation(), mode, economy);
+            final CostBundle.QuoteDelta delta = CostBundle.computeQuoteDelta(player, economy, currentQuote, newQuote);
+            if (!delta.additionalCharge().isFree()) {
+                final Component costText = CostFormatter.format(
+                        messages.locale(player), delta.additionalCharge(), economy, messages, false);
+                return messages.get(
+                        player,
+                        MessageKey.DIALOG_VISIBILITY_TOOLTIP_CHARGE,
+                        Placeholder.component("mode", modeLabel),
+                        Placeholder.component("cost", costText)
+                );
+            }
+            if (!delta.refund().isFree()) {
+                final Component costText = CostFormatter.format(
+                        messages.locale(player), delta.refund(), economy, messages, false);
+                return messages.get(
+                        player,
+                        MessageKey.DIALOG_VISIBILITY_TOOLTIP_REFUND,
+                        Placeholder.component("mode", modeLabel),
+                        Placeholder.component("cost", costText)
+                );
+            }
+        }
+        return messages.get(
+                player,
+                MessageKey.DIALOG_VISIBILITY_TOOLTIP_NO_CHANGE,
+                Placeholder.component("mode", modeLabel)
+        );
+    }
+
+    private void openInviteAddDialog(
+            final Player player,
+            final Aetheryte target,
+            final WarpDialogState returnState
+    ) {
+        final ActionButton confirmInvite = ActionButton.builder(messages.get(player, MessageKey.DIALOG_BUTTON_INVITE_ADD))
+                .width(BUTTON_WIDTH_SECONDARY)
+                .action(DialogAction.customClick((view, audience) -> {
+                    if (!(audience instanceof Player clicker)) {
+                        return;
+                    }
+                    clicker.closeDialog();
+                    final String targetPlayer = view.getText(INPUT_KEY_TARGET_PLAYER);
+                    if (targetPlayer == null || targetPlayer.isBlank()) {
+                        messages.send(clicker, MessageKey.ERROR_PLAYER_NOT_FOUND, Placeholder.unparsed("player", ""));
+                        return;
+                    }
+                    service.addInvitee(clicker, target.id(), targetPlayer);
+                }, SINGLE_USE_CALLBACK))
+                .build();
+
+        showConfirmationDialog(
+                player,
+                messages.get(player, MessageKey.DIALOG_INVITE_ADD_TITLE, Placeholder.unparsed("name", target.name())),
+                messages.get(player, MessageKey.DIALOG_INVITE_ADD_BODY, Placeholder.unparsed("name", target.name())),
+                List.of(
+                        DialogInput.text(INPUT_KEY_TARGET_PLAYER, messages.get(player, MessageKey.DIALOG_INVITE_ADD_INPUT_LABEL))
+                                .width(BUTTON_WIDTH_PRIMARY)
+                                .maxLength(32)
+                                .initial("")
+                                .build()
+                ),
+                confirmInvite,
+                target,
+                returnState
+        );
+    }
+
+    private void openInviteRemoveDialog(
+            final Player player,
+            final Aetheryte rawTarget,
+            final WarpDialogState returnState
+    ) {
+        final Aetheryte target = service.registry().getById(rawTarget.id()).orElse(rawTarget);
+        final record InviteeOption(UUID id, String name) {
+        }
+        final List<InviteeOption> invitees = new ArrayList<>(target.invitedPlayers().size());
+        for (final UUID inviteeId : target.invitedPlayers()) {
+            invitees.add(new InviteeOption(inviteeId, service.resolvePlayerName(inviteeId, player)));
+        }
+        invitees.sort(Comparator.comparing(InviteeOption::name, String.CASE_INSENSITIVE_ORDER));
+
+        final List<ActionButton> buttons = new ArrayList<>(invitees.size());
+        for (final InviteeOption invitee : invitees) {
+            buttons.add(ActionButton.builder(Component.text("✖ " + invitee.name()))
+                    .width(BUTTON_WIDTH_PRIMARY)
+                    .action(DialogAction.customClick((view, audience) -> {
+                        if (!(audience instanceof Player clicker)) {
+                            return;
+                        }
+                        clicker.closeDialog();
+                        service.removeInvitee(clicker, target.id(), invitee.id());
+                    }, SINGLE_USE_CALLBACK))
+                    .build());
+        }
+
+        final ActionButton backButton = ActionButton.builder(messages.get(player, MessageKey.DIALOG_BUTTON_BACK))
+                .width(BUTTON_WIDTH_SECONDARY)
+                .action(DialogAction.customClick((view, audience) -> {
+                    if (audience instanceof Player clicker) {
+                        openVisibilityDialog(clicker, target, returnState);
+                    }
+                }, SINGLE_USE_CALLBACK))
+                .build();
+
+        final Component body = invitees.isEmpty()
+                ? messages.get(player, MessageKey.DIALOG_INVITE_EMPTY)
+                : messages.get(player, MessageKey.DIALOG_INVITE_REMOVE_BODY, Placeholder.unparsed("name", target.name()));
+
+        final Dialog dialog = Dialog.create(factory -> factory.empty()
+                .base(DialogBase.builder(messages.get(
+                                player,
+                                MessageKey.DIALOG_INVITE_REMOVE_TITLE,
+                                Placeholder.unparsed("name", target.name())
+                        ))
+                        .canCloseWithEscape(true)
+                        .pause(false)
+                        .afterAction(DialogBase.DialogAfterAction.NONE)
+                        .body(List.of(DialogBody.plainMessage(body)))
+                        .build())
+                .type(DialogType.multiAction(buttons)
+                        .columns(1)
+                        .exitAction(backButton)
+                        .build())
+        );
+        player.showDialog(dialog);
+    }
+
     private ActionButton createBackToRootButton(
             final Player player,
             final Aetheryte current,
@@ -1084,6 +1334,17 @@ public final class AetheryteDialogFactory {
                     }
                 }, SINGLE_USE_CALLBACK))
                 .build();
+    }
+
+    private boolean isDestinationSelectable(
+            final Player player,
+            final Aetheryte current,
+            final Aetheryte destination,
+            final Map<UUID, Boolean> worldRouteCache
+    ) {
+        return AetheryteService.canAccessAetheryte(player, destination)
+                && service.isNetworkRoutable(current, destination)
+                && isWorldReachable(player, current, destination, worldRouteCache);
     }
 
     private boolean isWorldReachable(

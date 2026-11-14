@@ -79,6 +79,11 @@ placement:
   cost: []
   # Minimum block distance to another Aetheryte in the same world (-1 to inherit global, 0 to disable)
   min-distance: -1.0
+  # Optional visibility cost multiplier overrides (null inherits global config.yml) (#25)
+  visibility-cost:
+    public-multiplier: null
+    invite-only-multiplier: null
+    owner-only-multiplier: null
 
 # Optional warp overrides applied when warping from this variation (#14, #26)
 warp:
@@ -108,6 +113,10 @@ warp:
       on-move: null
       on-damage: null
       on-interact: null
+  # Warp network identifier for this variation (empty/"default" for standard network) (#27)
+  network: "default"
+  # Destination network IDs reachable from this variation (empty = same network only, "*" = any) (#27)
+  allowed-target-networks: []
 
 # Per-player placement limit and cooldown for this variation
 limit:

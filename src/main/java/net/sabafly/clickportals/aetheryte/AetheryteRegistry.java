@@ -102,7 +102,9 @@ public final class AetheryteRegistry {
                     entry.ownerId(),
                     entry.createdAt(),
                     entry.variation(),
-                    entry.ownerName()
+                    entry.ownerName(),
+                    entry.visibility(),
+                    entry.invitedPlayers()
             );
             final Aetheryte previous = indexEntry(normalized);
             if (previous != null && !previous.worldId().equals(worldId)) {

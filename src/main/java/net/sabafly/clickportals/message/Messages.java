@@ -34,7 +34,9 @@ import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.aetheryte.AetheryteVisibility;
 import net.sabafly.clickportals.dialog.WarpSortOrder;
+import net.sabafly.clickportals.variation.AetheryteVariation.WarpOverrideSection;
 import net.sabafly.clickportals.message.LanguageLoader.TranslationBundle;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
@@ -1136,6 +1138,24 @@ public final class Messages {
             final Component worldDisplay,
             final String variationDisplayNameMiniMessage
     ) {
+        return operationsDialogBody(
+                viewer,
+                current,
+                ownerName,
+                worldDisplay,
+                variationDisplayNameMiniMessage,
+                WarpOverrideSection.DEFAULT_NETWORK
+        );
+    }
+
+    public Component operationsDialogBody(
+            final CommandSender viewer,
+            final Aetheryte current,
+            final String ownerName,
+            final Component worldDisplay,
+            final String variationDisplayNameMiniMessage,
+            final String network
+    ) {
         return get(
                 viewer,
                 MessageKey.DIALOG_OPERATIONS_BODY,
@@ -1145,7 +1165,10 @@ public final class Messages {
                 Placeholder.unparsed("x", Integer.toString(current.blockX())),
                 Placeholder.unparsed("y", Integer.toString(current.blockY())),
                 Placeholder.unparsed("z", Integer.toString(current.blockZ())),
-                Placeholder.component("variation", MINI_MESSAGE.deserialize(variationDisplayNameMiniMessage))
+                Placeholder.component("variation", MINI_MESSAGE.deserialize(variationDisplayNameMiniMessage)),
+                Placeholder.component("visibility", visibilityLabel(viewer, current.visibility())),
+                Placeholder.unparsed("network", WarpOverrideSection.normalizeNetwork(network)),
+                Placeholder.unparsed("invited", Integer.toString(current.invitedPlayers().size()))
         );
     }
 
@@ -1428,6 +1451,97 @@ public final class Messages {
                 viewer,
                 MessageKey.DIALOG_WARP_TOOLTIP_BYPASSED,
                 Placeholder.component("reasons", joinBypassReasons(viewer, reasons))
+        );
+    }
+
+    /**
+     * Formats the localized visibility badge component (#24).
+     */
+    public Component visibilityLabel(final CommandSender viewer, final AetheryteVisibility visibility) {
+        return switch (visibility) {
+            case PUBLIC -> get(viewer, MessageKey.VISIBILITY_PUBLIC);
+            case INVITE_ONLY -> get(viewer, MessageKey.VISIBILITY_INVITE_ONLY);
+            case OWNER_ONLY -> get(viewer, MessageKey.VISIBILITY_OWNER_ONLY);
+        };
+    }
+
+    /**
+     * Formats the bypass reason for visibility restrictions (#24).
+     */
+    public Component bypassReasonVisibility(final CommandSender viewer, final AetheryteVisibility visibility) {
+        return get(
+                viewer,
+                MessageKey.BYPASS_REASON_VISIBILITY,
+                Placeholder.component("visibility", visibilityLabel(viewer, visibility))
+        );
+    }
+
+    /**
+     * Returns the notification sent when Aetheryte visibility is changed (#24).
+     */
+    public Component aetheryteVisibilityChanged(final CommandSender viewer, final Aetheryte updated) {
+        return get(
+                viewer,
+                MessageKey.AETHERYTE_VISIBILITY_CHANGED,
+                Placeholder.unparsed("name", updated.name()),
+                Placeholder.component("visibility", visibilityLabel(viewer, updated.visibility()))
+        );
+    }
+
+    /**
+     * Returns the notification sent when extra placement cost is charged for a visibility change (#25).
+     */
+    public Component aetheryteVisibilityCostCharged(final CommandSender viewer, final Component costDisplay) {
+        return get(viewer, MessageKey.AETHERYTE_VISIBILITY_COST_CHARGED, Placeholder.component("cost", costDisplay));
+    }
+
+    /**
+     * Returns the notification sent when placement cost difference is refunded for a visibility change (#25).
+     */
+    public Component aetheryteVisibilityCostRefunded(final CommandSender viewer, final Component costDisplay) {
+        return get(viewer, MessageKey.AETHERYTE_VISIBILITY_COST_REFUNDED, Placeholder.component("cost", costDisplay));
+    }
+
+    /**
+     * Returns the notification sent when a player is invited to an Aetheryte (#24).
+     */
+    public Component aetheryteInviteeAdded(final CommandSender viewer, final Aetheryte updated, final String playerName) {
+        return get(
+                viewer,
+                MessageKey.AETHERYTE_INVITEE_ADDED,
+                Placeholder.unparsed("name", updated.name()),
+                Placeholder.unparsed("player", playerName)
+        );
+    }
+
+    /**
+     * Returns the notification sent when a player is removed from an Aetheryte invite list (#24).
+     */
+    public Component aetheryteInviteeRemoved(final CommandSender viewer, final Aetheryte updated, final String playerName) {
+        return get(
+                viewer,
+                MessageKey.AETHERYTE_INVITEE_REMOVED,
+                Placeholder.unparsed("name", updated.name()),
+                Placeholder.unparsed("player", playerName)
+        );
+    }
+
+    /**
+     * Formats the button label for choosing a visibility tier (#24).
+     */
+    public Component visibilityOptionButtonLabel(
+            final CommandSender viewer,
+            final AetheryteVisibility visibility,
+            final boolean current
+    ) {
+        final Component badge = current
+                ? get(viewer, MessageKey.DIALOG_BUTTON_VISIBILITY_CURRENT_BADGE)
+                : Component.empty();
+        return get(
+                viewer,
+                MessageKey.DIALOG_BUTTON_VISIBILITY_OPTION,
+                Placeholder.component("mode", visibilityLabel(viewer, visibility)),
+                Placeholder.component("current", badge)
         );
     }
 }

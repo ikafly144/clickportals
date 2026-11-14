@@ -82,6 +82,12 @@ public enum MessageKey {
     DIALOG_BUTTON_CONFIRM_VARIATION("dialog.button.confirm-variation"),
     DIALOG_BUTTON_ADMIN_RESYNC("dialog.button.admin-resync"),
     DIALOG_BUTTON_ADMIN_RESYNC_TOOLTIP("dialog.button.admin-resync-tooltip"),
+    DIALOG_BUTTON_VISIBILITY("dialog.button.visibility"),
+    DIALOG_BUTTON_VISIBILITY_TOOLTIP("dialog.button.visibility-tooltip"),
+    DIALOG_BUTTON_VISIBILITY_OPTION("dialog.button.visibility-option"),
+    DIALOG_BUTTON_VISIBILITY_CURRENT_BADGE("dialog.button.visibility-current-badge"),
+    DIALOG_BUTTON_INVITE_ADD("dialog.button.invite-add"),
+    DIALOG_BUTTON_INVITE_REMOVE("dialog.button.invite-remove"),
 
     DIALOG_WARP_TITLE("dialog.warp.title"),
     DIALOG_WARP_HEADER("dialog.warp.header"),
@@ -146,6 +152,21 @@ public enum MessageKey {
     DIALOG_VARIATION_TITLE("dialog.variation.title"),
     DIALOG_VARIATION_BODY("dialog.variation.body"),
     DIALOG_VARIATION_SELECT_LABEL("dialog.variation.select-label"),
+    DIALOG_VISIBILITY_TITLE("dialog.visibility.title"),
+    DIALOG_VISIBILITY_BODY("dialog.visibility.body"),
+    DIALOG_VISIBILITY_TOOLTIP_CHARGE("dialog.visibility.tooltip-charge"),
+    DIALOG_VISIBILITY_TOOLTIP_REFUND("dialog.visibility.tooltip-refund"),
+    DIALOG_VISIBILITY_TOOLTIP_NO_CHANGE("dialog.visibility.tooltip-no-change"),
+    DIALOG_INVITE_ADD_TITLE("dialog.invite-add.title"),
+    DIALOG_INVITE_ADD_BODY("dialog.invite-add.body"),
+    DIALOG_INVITE_ADD_INPUT_LABEL("dialog.invite-add.input-label"),
+    DIALOG_INVITE_REMOVE_TITLE("dialog.invite-remove.title"),
+    DIALOG_INVITE_REMOVE_BODY("dialog.invite-remove.body"),
+    DIALOG_INVITE_EMPTY("dialog.invite.empty"),
+
+    VISIBILITY_PUBLIC("visibility.public"),
+    VISIBILITY_INVITE_ONLY("visibility.invite-only"),
+    VISIBILITY_OWNER_ONLY("visibility.owner-only"),
 
     AETHERYTE_CREATED("aetheryte.created"),
     AETHERYTE_REMOVED("aetheryte.removed"),
@@ -209,7 +230,20 @@ public enum MessageKey {
     COMMAND_RELOAD_FAILED("command.reload-failed"),
 
     UPDATE_AVAILABLE_CONSOLE("update.available-console"),
-    UPDATE_AVAILABLE_PLAYER("update.available-player");
+    UPDATE_AVAILABLE_PLAYER("update.available-player"),
+
+    BYPASS_REASON_VISIBILITY("bypass.reason.visibility"),
+    AETHERYTE_VISIBILITY_CHANGED("aetheryte.visibility-changed"),
+    AETHERYTE_VISIBILITY_COST_CHARGED("aetheryte.visibility-cost-charged"),
+    AETHERYTE_VISIBILITY_COST_REFUNDED("aetheryte.visibility-cost-refunded"),
+    AETHERYTE_INVITEE_ADDED("aetheryte.invitee-added"),
+    AETHERYTE_INVITEE_REMOVED("aetheryte.invitee-removed"),
+    ERROR_VISIBILITY_DENIED("error.visibility-denied"),
+    ERROR_NETWORK_MISMATCH("error.network-mismatch"),
+    ERROR_VISIBILITY_UNCHANGED("error.visibility-unchanged"),
+    ERROR_INVITE_SELF("error.invite-self"),
+    ERROR_ALREADY_INVITED("error.already-invited"),
+    ERROR_NOT_INVITED("error.not-invited");
 
     private final String path;
     private final boolean listValue;

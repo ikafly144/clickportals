@@ -66,6 +66,12 @@ dialog:
     confirm-variation: "<light_purple><bold>Change Variation</bold></light_purple>"
     admin-resync: "<aqua>🔄 [Admin] Resync Visuals</aqua>"
     admin-resync-tooltip: "<gray>Respawn hologram and BetterModel entities for this Aetheryte</gray>"
+    visibility: "<aqua>👁 Visibility & Access</aqua>"
+    visibility-tooltip: "<gray>Change who can warp to this Aetheryte and manage invited players</gray>"
+    visibility-option: "<mode><current>"
+    visibility-current-badge: " <green>(Current)</green>"
+    invite-add: "<green>➕ Invite Player</green>"
+    invite-remove: "<yellow>➖ Remove Invitee</yellow> <dark_gray>(</dark_gray><white><count></white><dark_gray>)</dark_gray>"
   warp:
     title: "<aqua>✦ Aetheryte: </aqua><white><bold><name></bold></white>"
     header: "<gray>Current location: </gray><white><name></white> <dark_gray>(</dark_gray><gray>Owner: </gray><aqua><owner></aqua><dark_gray>)</dark_gray><newline><gray>Coordinates: </gray><white><world> (<x>, <y>, <z>)</white>"
@@ -119,7 +125,7 @@ dialog:
     body: "<gray>Are you sure you want to remove \"</gray><white><name></white><gray>\"?</gray><newline><yellow>The Aetheryte item will be returned to you.</yellow>"
   operations:
     title: "<aqua>⚙ Operations: </aqua><white><bold><name></bold></white>"
-    body: "<gray>Name: </gray><white><name></white><newline><gray>Owner: </gray><aqua><owner></aqua><newline><gray>World: </gray><gold><world></gold> <white>(<x>, <y>, <z>)</white><newline><gray>Variation: </gray><variation>"
+    body: "<gray>Name: </gray><white><name></white><newline><gray>Owner: </gray><aqua><owner></aqua><newline><gray>World: </gray><gold><world></gold> <white>(<x>, <y>, <z>)</white><newline><gray>Variation: </gray><variation><newline><gray>Visibility: </gray><visibility> <dark_gray>|</dark_gray> <gray>Network: </gray><white><network></white><newline><gray>Invited players: </gray><white><invited></white>"
   rename:
     title: "<aqua><bold>Rename Aetheryte</bold></aqua>"
     body: "<gray>Current name: </gray><white><name></white>"
@@ -135,9 +141,34 @@ dialog:
     title: "<light_purple><bold>Change Variation: </bold></light_purple><white><name></white>"
     body: "<gray>Current variation: </gray><white><variation></white><newline><gray>Select the variation preset to apply.</gray>"
     select-label: "<light_purple>Variation</light_purple>"
+  visibility:
+    title: "<aqua>👁 Visibility & Access: </aqua><white><bold><name></bold></white>"
+    body: "<gray>Current visibility: </gray><visibility><newline><gray>Invited players: </gray><white><invited></white><newline><gray>Select a visibility mode or manage invited players.</gray>"
+    tooltip-charge: "<gray>Switch to </gray><mode><newline><yellow>Additional cost: </yellow><cost>"
+    tooltip-refund: "<gray>Switch to </gray><mode><newline><green>Refund: </green><cost>"
+    tooltip-no-change: "<gray>Switch to </gray><mode><newline><gray>No cost adjustment</gray>"
+  invite-add:
+    title: "<green><bold>Invite Player: </bold></green><white><name></white>"
+    body: "<gray>Enter the name of the player to invite to \"</gray><white><name></white><gray>\".</gray>"
+    input-label: "<green>Player Name</green>"
+  invite-remove:
+    title: "<yellow><bold>Remove Invitee: </bold></yellow><white><name></white>"
+    body: "<gray>Click a player to remove them from the invite list of \"</gray><white><name></white><gray>\".</gray>"
+  invite:
+    empty: "<gray>No players are currently invited to this Aetheryte.</gray>"
+
+visibility:
+  public: "<green>Public</green>"
+  invite-only: "<gold>Invite Only</gold>"
+  owner-only: "<red>Owner Only</red>"
 
 aetheryte:
   created: "<prefix><green>Placed Aetheryte \"</green><white><bold><name></bold></white><green>\".</green>"
+  visibility-changed: "<prefix><green>Updated visibility of \"</green><white><name></white><green>\" to </green><visibility><green>.</green>"
+  visibility-cost-charged: "<prefix><yellow>Charged additional visibility cost: </yellow><cost>"
+  visibility-cost-refunded: "<prefix><green>Refunded visibility cost difference: </green><cost>"
+  invitee-added: "<prefix><green>Invited </green><aqua><player></aqua><green> to \"</green><white><name></white><green>\".</green>"
+  invitee-removed: "<prefix><yellow>Removed </yellow><aqua><player></aqua><yellow> from the invite list of \"</yellow><white><name></white><yellow>\".</yellow>"
   removed: "<prefix><yellow>Removed Aetheryte \"</yellow><white><bold><name></bold></white><yellow>\".</yellow>"
   cost-paid: "<prefix><gray>Paid <cost> for Aetheryte placement.</gray>"
   renamed: "<prefix><green>Renamed Aetheryte \"<old_name>\" to \"</green><white><bold><name></bold></white><green>\".</green>"
@@ -158,6 +189,7 @@ bypass:
     placement-distance: "minimum distance (<distance> blocks)"
     cost-place: "placement cost (<cost>)"
     cost-warp: "warp cost (<cost>)"
+    visibility: "visibility restriction (<visibility>)"
 
 warp:
   success: "<prefix><aqua>Teleported to \"</aqua><white><bold><name></bold></white><aqua>\".</aqua>"
@@ -195,6 +227,12 @@ error:
   destination-unsafe: "<prefix><red>Cannot teleport because the destination landing area is obstructed or unsafe.</red>"
   protected-break: "<prefix><red>Aetherytes cannot be broken directly. Please remove it from the right-click menu.</red>"
   player-not-found: "<prefix><red>Player \"<player>\" was not found in server history.</red>"
+  visibility-denied: "<red>This Aetheryte is private</red>"
+  network-mismatch: "<red>Destination is on an unreachable network</red>"
+  visibility-unchanged: "<prefix><yellow>Visibility is already set to that mode.</yellow>"
+  invite-self: "<prefix><red>The owner already has access and cannot be invited.</red>"
+  already-invited: "<prefix><yellow><player> is already invited to this Aetheryte.</yellow>"
+  not-invited: "<prefix><red>That player is not on the invite list.</red>"
 
 command:
   given-item: "<prefix><green>Gave <amount> Aetheryte(s) to </green><white><player></white><green>.</green>"

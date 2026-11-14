@@ -50,11 +50,14 @@ import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry.RegistrationOutcome;
+import net.sabafly.clickportals.aetheryte.AetheryteVisibility;
 import net.sabafly.clickportals.config.CastSection;
+import net.sabafly.clickportals.config.VisibilityCostSection;
 import net.sabafly.clickportals.cost.CostBundle;
 import net.sabafly.clickportals.cost.CostFormatter;
 import net.sabafly.clickportals.cost.CostItemQuote;
 import net.sabafly.clickportals.cost.CostQuote;
+import net.sabafly.clickportals.dialog.WarpDestinationQuery;
 import net.sabafly.clickportals.dialog.WarpSortOrder;
 import net.sabafly.clickportals.economy.EconomyProvider;
 import net.sabafly.clickportals.economy.NoopEconomyProvider;
@@ -163,6 +166,8 @@ public final class AetheryteService {
             NOT_FOUND,
             NO_PERMISSION,
             DIMENSION_DISABLED,
+            VISIBILITY_DENIED,
+            NETWORK_MISMATCH,
             OTHER
         }
 
@@ -289,6 +294,7 @@ public final class AetheryteService {
     private final Set<UUID> inFlightWarps = ConcurrentHashMap.newKeySet();
     private final Map<UUID, ActiveCastSession> activeCasts = new ConcurrentHashMap<>();
     private volatile Supplier<CastSection> globalCastSupplier = CastSection::defaults;
+    private volatile Supplier<VisibilityCostSection> globalVisibilityCostSupplier = VisibilityCostSection::defaults;
     private volatile CastImmobilizeService castImmobilizeService = NoopCastImmobilizeService.INSTANCE;
     private volatile BooleanSupplier delayedVisualRefreshSupplier = () -> false;
     private volatile SoundService soundService = SoundService.noop();
@@ -622,6 +628,15 @@ public final class AetheryteService {
         this.dimensionConfigSupplier = dimensionConfigSupplier != null
                 ? dimensionConfigSupplier
                 : DimensionRoutesConfig::defaults;
+    }
+
+    /**
+     * Updates the global visibility cost multiplier configuration supplier (#25).
+     */
+    public void setGlobalVisibilityCostSupplier(final Supplier<VisibilityCostSection> globalVisibilityCostSupplier) {
+        this.globalVisibilityCostSupplier = globalVisibilityCostSupplier != null
+                ? globalVisibilityCostSupplier
+                : VisibilityCostSection::defaults;
     }
 
     /**
@@ -1316,6 +1331,29 @@ public final class AetheryteService {
     }
 
     /**
+     * Resolves a human-readable player name for any player UUID (e.g. invitee lists), falling back to localized unknown (#24).
+     */
+    public String resolvePlayerName(final UUID playerId, final CommandSender viewer) {
+        String resolved = null;
+        try {
+            if (Bukkit.getServer() != null) {
+                final Player online = Bukkit.getPlayer(playerId);
+                if (online != null) {
+                    resolved = online.getName();
+                }
+            }
+        } catch (final Throwable ignored) {
+            // Fall back to ownerNameLookup in test environments
+        }
+        if (resolved == null || resolved.isBlank()) {
+            resolved = ownerNameLookup.apply(playerId);
+        }
+        return (resolved != null && !resolved.isBlank())
+                ? resolved
+                : PlainTextComponentSerializer.plainText().serialize(messages.get(viewer, MessageKey.DIALOG_WARP_UNKNOWN_OWNER));
+    }
+
+    /**
      * Lazily refreshes the stored {@code ownerName} when the owner interacts with their own Aetheryte after a rename (#53).
      */
     public Aetheryte refreshOwnerNameIfNeeded(final Player player, final Aetheryte aetheryte) {
@@ -1594,6 +1632,75 @@ public final class AetheryteService {
     }
 
     /**
+     * Checks whether the given player may warp to {@code aetheryte} under visibility rules & bypass permissions (#24).
+     */
+    public static boolean canAccessAetheryte(final Player player, final Aetheryte aetheryte) {
+        return Permissions.canAccessVisibility(player, player.getUniqueId(), aetheryte);
+    }
+
+    /**
+     * Checks whether the given player may manage visibility and invitees for {@code aetheryte} (#24).
+     */
+    public static boolean canManageVisibility(final Player player, final Aetheryte aetheryte) {
+        return Permissions.canManageVisibility(player, player.getUniqueId(), aetheryte);
+    }
+
+    /**
+     * Checks whether warping from {@code source} to {@code destination} is allowed by their network configuration (#27).
+     */
+    public boolean isNetworkRoutable(final @Nullable Aetheryte source, final Aetheryte destination) {
+        if (source == null) {
+            return true;
+        }
+        final AetheryteVariation sourceVar = variationRegistry.getOrDefault(source.variation());
+        final AetheryteVariation destVar = variationRegistry.getOrDefault(destination.variation());
+        return WarpDestinationQuery.canRouteBetweenVariations(sourceVar, destVar);
+    }
+
+    /**
+     * Resolves the {@link AetheryteVariation} configured for {@code aetheryte}, falling back to default.
+     */
+    public AetheryteVariation variationFor(final Aetheryte aetheryte) {
+        return variationRegistry.getOrDefault(aetheryte.variation());
+    }
+
+    /**
+     * Computes the effective cost multiplier for a variation and visibility tier (#25).
+     */
+    public double effectiveVisibilityMultiplier(
+            final String variationId,
+            final AetheryteVisibility visibility
+    ) {
+        final AetheryteVariation variation = variationRegistry.getOrDefault(Aetheryte.normalizeVariation(variationId));
+        final VisibilityCostSection global = globalVisibilityCostSupplier.get();
+        return variation.placement().visibilityCost().resolve(global).multiplierFor(visibility);
+    }
+
+    /**
+     * Computes the effective placement {@link CostQuote} for {@code player} and {@code visibility} (#25).
+     */
+    public CostQuote computePlacementCostQuote(
+            final Player player,
+            final UUID ownerId,
+            final String variationId,
+            final AetheryteVisibility visibility,
+            final EconomyProvider economy
+    ) {
+        final String normalizedVar = Aetheryte.normalizeVariation(variationId);
+        final AetheryteVariation variation = variationRegistry.getOrDefault(normalizedVar);
+        final CostBundle bundle = new CostBundle(variation.placement().cost());
+        if (bundle.isEmpty()) {
+            return CostQuote.FREE;
+        }
+        final Map<String, Double> costVars = Map.of(
+                "owned_count", (double) registry.countByOwner(ownerId),
+                "variation_count", (double) registry.countByOwnerAndVariation(ownerId, normalizedVar)
+        );
+        final double multiplier = effectiveVisibilityMultiplier(normalizedVar, visibility);
+        return bundle.quote(player, costVars, economy, multiplier);
+    }
+
+    /**
      * Checks whether the player has already reached the global or variation-specific placement limit (#43).
      *
      * @return an error {@link Component} if a limit is reached, or {@link Optional#empty()} if allowed
@@ -1810,12 +1917,17 @@ public final class AetheryteService {
     ) {
         final @Nullable String sourceWorldName = resolveSourceWorldName(player, source);
         final @Nullable Component sourceDisableError = resolveDisabledDimensionError(player, sourceWorldName);
-        final WarpEvaluation checked = applyDimensionUseCheck(
+        final WarpEvaluation checked = applyVisibilityAndNetworkCheck(
                 player,
-                sourceDisableError,
+                source,
                 destination,
-                new LinkedHashMap<>(2),
-                raw
+                applyDimensionUseCheck(
+                        player,
+                        sourceDisableError,
+                        destination,
+                        new LinkedHashMap<>(2),
+                        raw
+                )
         );
         final boolean hasUsePerm = canUse(player);
         final boolean canBypass = hasUsePerm && Permissions.canBypassWarpCost(player);
@@ -1850,16 +1962,52 @@ public final class AetheryteService {
 
         final List<WarpEvaluation> results = new ArrayList<>(raw.size());
         for (int i = 0; i < raw.size(); i++) {
-            final WarpEvaluation checked = applyDimensionUseCheck(
+            final Aetheryte dest = destinations.get(i);
+            final WarpEvaluation checked = applyVisibilityAndNetworkCheck(
                     player,
-                    sourceDisableError,
-                    destinations.get(i),
-                    destDisableErrorCache,
-                    raw.get(i)
+                    source,
+                    dest,
+                    applyDimensionUseCheck(
+                            player,
+                            sourceDisableError,
+                            dest,
+                            destDisableErrorCache,
+                            raw.get(i)
+                    )
             );
             results.add(applyPermissionAndBypass(player, checked, hasUsePerm, canBypass, noPermMsg, plainFree));
         }
         return results;
+    }
+
+    private WarpEvaluation applyVisibilityAndNetworkCheck(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination,
+            final WarpEvaluation evaluation
+    ) {
+        final WarpEvaluation.DenyReason existing = evaluation.denyReasonCode();
+        if (existing == WarpEvaluation.DenyReason.DIMENSION_DISABLED
+                || existing == WarpEvaluation.DenyReason.NOT_FOUND
+                || existing == WarpEvaluation.DenyReason.VISIBILITY_DENIED
+                || existing == WarpEvaluation.DenyReason.NETWORK_MISMATCH) {
+            return evaluation;
+        }
+        if (!canAccessAetheryte(player, destination)) {
+            return WarpEvaluation.denied(
+                    evaluation.costDisplay(),
+                    messages.get(player, MessageKey.ERROR_VISIBILITY_DENIED),
+                    WarpEvaluation.DenyReason.VISIBILITY_DENIED
+            );
+        }
+        if (!isNetworkRoutable(source, destination)) {
+            return WarpEvaluation.denied(
+                    evaluation.costDisplay(),
+                    messages.get(player, MessageKey.ERROR_NETWORK_MISMATCH),
+                    WarpEvaluation.DenyReason.NETWORK_MISMATCH
+            );
+        }
+        return evaluation;
     }
 
     private static @Nullable String resolveSourceWorldName(final Player player, final @Nullable Aetheryte source) {
@@ -2044,7 +2192,8 @@ public final class AetheryteService {
                         "owned_count", (double) registry.countByOwner(ownerId),
                         "variation_count", (double) registry.countByOwnerAndVariation(ownerId, normalizedVar)
                 );
-                final CostQuote quoted = placementCostBundle.quote(player, costVars, activeEconomy);
+                final double visibilityMultiplier = effectiveVisibilityMultiplier(normalizedVar, AetheryteVisibility.PUBLIC);
+                final CostQuote quoted = placementCostBundle.quote(player, costVars, activeEconomy, visibilityMultiplier);
                 if (bypassCost) {
                     if (!quoted.isFree()) {
                         final Component costDisplay = CostFormatter.format(player, quoted, activeEconomy, messages, true);
@@ -2547,6 +2696,251 @@ public final class AetheryteService {
         });
     }
 
+    /**
+     * Changes the {@link AetheryteVisibility} of an existing Aetheryte (#24), applying placement cost delta (#25).
+     */
+    public void changeVisibility(
+            final Player actor,
+            final UUID aetheryteId,
+            final AetheryteVisibility targetVisibility
+    ) {
+        final Optional<Aetheryte> targetOpt = registry.getById(aetheryteId);
+        if (targetOpt.isEmpty()) {
+            messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+            return;
+        }
+        final Aetheryte initial = targetOpt.get();
+        if (!canManageVisibility(actor, initial)) {
+            messages.send(actor, MessageKey.ERROR_NOT_OWNER);
+            return;
+        }
+        if (initial.visibility() == targetVisibility) {
+            messages.send(actor, MessageKey.ERROR_VISIBILITY_UNCHANGED);
+            return;
+        }
+
+        final String normalizedVar = Aetheryte.normalizeVariation(initial.variation());
+        final AetheryteVariation variation = variationRegistry.getOrDefault(normalizedVar);
+        final CostBundle placementCostBundle = new CostBundle(variation.placement().cost());
+        final EconomyProvider activeEconomy = this.economyProvider;
+        final boolean creative = actor.getGameMode() == GameMode.CREATIVE;
+        final boolean bypassCost = Permissions.canBypassPlaceCost(actor);
+
+        CostQuote chargedExtra = CostQuote.FREE;
+        CostQuote pendingRefund = CostQuote.FREE;
+        if (!creative && !bypassCost && !placementCostBundle.isEmpty()) {
+            final CostQuote oldQuote = computePlacementCostQuote(
+                    actor, initial.ownerId(), normalizedVar, initial.visibility(), activeEconomy);
+            final CostQuote newQuote = computePlacementCostQuote(
+                    actor, initial.ownerId(), normalizedVar, targetVisibility, activeEconomy);
+            final CostBundle.QuoteDelta delta = CostBundle.computeQuoteDelta(
+                    actor, activeEconomy, oldQuote, newQuote);
+            if (!delta.additionalCharge().isFree()) {
+                if (!delta.additionalCharge().affordable()) {
+                    final Component reason = CostFormatter.format(
+                            messages.locale(actor),
+                            delta.additionalCharge(),
+                            activeEconomy,
+                            messages,
+                            false
+                    );
+                    actor.sendMessage(messages.get(
+                            actor,
+                            MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT,
+                            Placeholder.component("reason", reason)
+                    ));
+                    soundService.playError(actor, normalizedVar);
+                    return;
+                }
+                final CostBundle.ChargeResult chargeResult = placementCostBundle.chargeWithResult(
+                        actor, delta.additionalCharge(), activeEconomy);
+                if (!chargeResult.success()) {
+                    if (!chargeResult.unrefundedItems().isEmpty()) {
+                        recordPendingRefund(actor.getUniqueId(), chargeResult.unrefundedItems());
+                    }
+                    final Component reason = CostFormatter.format(
+                            messages.locale(actor),
+                            delta.additionalCharge(),
+                            activeEconomy,
+                            messages,
+                            false
+                    );
+                    actor.sendMessage(messages.get(
+                            actor,
+                            MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT,
+                            Placeholder.component("reason", reason)
+                    ));
+                    soundService.playError(actor, normalizedVar);
+                    return;
+                }
+                chargedExtra = chargeResult.chargedQuote();
+            }
+            pendingRefund = delta.refund();
+        }
+
+        final AetheryteVisibility expectedVisibility = initial.visibility();
+        final CostQuote finalChargedExtra = chargedExtra;
+        final CostQuote finalPendingRefund = pendingRefund;
+        final Runnable rollbackExtraCharge = () -> {
+            if (!finalChargedExtra.isFree()) {
+                refundCostQuoteToPlayer(actor, placementCostBundle, finalChargedExtra, activeEconomy);
+            }
+        };
+
+        executeAetheryteUpdate(
+                actor,
+                initial,
+                current -> {
+                    if (!canManageVisibility(actor, current)) {
+                        return MessageKey.ERROR_NOT_OWNER;
+                    }
+                    if (current.visibility() != expectedVisibility) {
+                        return MessageKey.ERROR_NOT_FOUND;
+                    }
+                    return null;
+                },
+                current -> current.withVisibility(targetVisibility),
+                (world, previous, updated) -> {
+                    hologramService.showAetheryte(updated);
+                    if (!finalPendingRefund.isFree()) {
+                        refundCostQuoteToPlayer(actor, placementCostBundle, finalPendingRefund, activeEconomy);
+                    }
+                    actor.sendMessage(messages.aetheryteVisibilityChanged(actor, updated));
+                    if (!finalChargedExtra.isFree()) {
+                        actor.sendMessage(messages.aetheryteVisibilityCostCharged(
+                                actor,
+                                CostFormatter.format(messages.locale(actor), finalChargedExtra, activeEconomy, messages, false)
+                        ));
+                    } else if (!finalPendingRefund.isFree()) {
+                        actor.sendMessage(messages.aetheryteVisibilityCostRefunded(
+                                actor,
+                                CostFormatter.format(messages.locale(actor), finalPendingRefund, activeEconomy, messages, false)
+                        ));
+                    }
+                },
+                rollbackExtraCharge
+        );
+    }
+
+    /**
+     * Adds an invited player to an Aetheryte (#24).
+     */
+    public void addInvitee(final Player actor, final UUID aetheryteId, final String targetPlayerName) {
+        final Optional<Aetheryte> targetOpt = registry.getById(aetheryteId);
+        if (targetOpt.isEmpty()) {
+            messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+            return;
+        }
+        final Aetheryte target = targetOpt.get();
+        if (!canManageVisibility(actor, target)) {
+            messages.send(actor, MessageKey.ERROR_NOT_OWNER);
+            return;
+        }
+        final @Nullable ResolvedPlayer resolved = playerByNameLookup.apply(targetPlayerName.strip());
+        if (resolved == null) {
+            messages.send(actor, MessageKey.ERROR_PLAYER_NOT_FOUND, Placeholder.unparsed("player", targetPlayerName.strip()));
+            return;
+        }
+        if (target.ownerId().equals(resolved.id())) {
+            messages.send(actor, MessageKey.ERROR_INVITE_SELF);
+            return;
+        }
+        if (target.invitedPlayers().contains(resolved.id())) {
+            messages.send(actor, MessageKey.ERROR_ALREADY_INVITED, Placeholder.unparsed("player", resolved.name()));
+            return;
+        }
+
+        executeAetheryteUpdate(
+                actor,
+                target,
+                current -> {
+                    if (!canManageVisibility(actor, current)) {
+                        return MessageKey.ERROR_NOT_OWNER;
+                    }
+                    if (current.ownerId().equals(resolved.id())) {
+                        return MessageKey.ERROR_INVITE_SELF;
+                    }
+                    if (current.invitedPlayers().contains(resolved.id())) {
+                        return MessageKey.ERROR_ALREADY_INVITED;
+                    }
+                    return null;
+                },
+                current -> current.addInvitee(resolved.id()),
+                (world, previous, updated) -> {
+                    hologramService.showAetheryte(updated);
+                    actor.sendMessage(messages.aetheryteInviteeAdded(actor, updated, resolved.name()));
+                }
+        );
+    }
+
+    /**
+     * Removes an invited player from an Aetheryte (#24).
+     */
+    public void removeInvitee(final Player actor, final UUID aetheryteId, final UUID inviteeId) {
+        final Optional<Aetheryte> targetOpt = registry.getById(aetheryteId);
+        if (targetOpt.isEmpty()) {
+            messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+            return;
+        }
+        final Aetheryte target = targetOpt.get();
+        if (!canManageVisibility(actor, target)) {
+            messages.send(actor, MessageKey.ERROR_NOT_OWNER);
+            return;
+        }
+        if (!target.invitedPlayers().contains(inviteeId)) {
+            messages.send(actor, MessageKey.ERROR_NOT_INVITED);
+            return;
+        }
+        final String inviteeName = resolvePlayerName(inviteeId, actor);
+
+        executeAetheryteUpdate(
+                actor,
+                target,
+                current -> {
+                    if (!canManageVisibility(actor, current)) {
+                        return MessageKey.ERROR_NOT_OWNER;
+                    }
+                    if (!current.invitedPlayers().contains(inviteeId)) {
+                        return MessageKey.ERROR_NOT_INVITED;
+                    }
+                    return null;
+                },
+                current -> current.removeInvitee(inviteeId),
+                (world, previous, updated) -> {
+                    hologramService.showAetheryte(updated);
+                    actor.sendMessage(messages.aetheryteInviteeRemoved(actor, updated, inviteeName));
+                }
+        );
+    }
+
+    private void refundCostQuoteToPlayer(
+            final Player player,
+            final CostBundle costBundle,
+            final CostQuote costQuote,
+            final EconomyProvider paymentProvider
+    ) {
+        if (costQuote.isFree()) {
+            return;
+        }
+        try {
+            final ScheduledTask scheduled = player.getScheduler().run(
+                    plugin,
+                    t -> {
+                        final CostBundle.RefundResult result = costBundle.refundWithResult(player, costQuote, paymentProvider);
+                        if (!result.success()) {
+                            recordPendingRefund(player.getUniqueId(), result.unrefundedItems());
+                        }
+                    },
+                    () -> recordPendingRefund(player.getUniqueId(), costQuote.items())
+            );
+            if (scheduled == null) {
+                recordPendingRefund(player.getUniqueId(), costQuote.items());
+            }
+        } catch (final Throwable t) {
+            recordPendingRefund(player.getUniqueId(), costQuote.items());
+        }
+    }
+
     @FunctionalInterface
     private interface AetheryteUpdateCallback {
         void onUpdated(World world, Aetheryte previous, Aetheryte updated);
@@ -2559,19 +2953,33 @@ public final class AetheryteService {
             final UnaryOperator<Aetheryte> updater,
             final AetheryteUpdateCallback onUpdated
     ) {
+        executeAetheryteUpdate(actor, target, regionValidator, updater, onUpdated, () -> {});
+    }
+
+    private void executeAetheryteUpdate(
+            final Player actor,
+            final Aetheryte target,
+            final Function<Aetheryte, @Nullable MessageKey> regionValidator,
+            final UnaryOperator<Aetheryte> updater,
+            final AetheryteUpdateCallback onUpdated,
+            final Runnable onRejected
+    ) {
         final World world = Bukkit.getWorld(target.worldId());
         if (world == null) {
+            onRejected.run();
             messages.send(actor, MessageKey.ERROR_NOT_FOUND);
             return;
         }
         Bukkit.getRegionScheduler().execute(plugin, target.blockLocation(world), () -> {
             final Optional<Aetheryte> latestOpt = registry.getById(target.id());
             if (latestOpt.isEmpty()) {
+                onRejected.run();
                 messages.send(actor, MessageKey.ERROR_NOT_FOUND);
                 return;
             }
             final MessageKey validationError = regionValidator.apply(latestOpt.get());
             if (validationError != null) {
+                onRejected.run();
                 messages.send(actor, validationError);
                 return;
             }
@@ -2582,6 +2990,7 @@ public final class AetheryteService {
             });
             final Aetheryte previous = previousRef.get();
             if (updatedOpt.isEmpty() || previous == null) {
+                onRejected.run();
                 messages.send(actor, MessageKey.ERROR_NOT_FOUND);
                 return;
             }
@@ -3336,6 +3745,31 @@ public final class AetheryteService {
         return reasons;
     }
 
+    /**
+     * Collects all localized destination bypass reasons (dimension + visibility) shown on warp button tooltips (#24, #69).
+     */
+    public List<Component> collectDestinationBypassReasons(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination
+    ) {
+        final List<Component> reasons = new ArrayList<>(3);
+        appendWarpDimensionBypassReasons(player, source, destination, reasons);
+        appendVisibilityBypassReason(player, destination, reasons);
+        return reasons;
+    }
+
+    private void appendVisibilityBypassReason(
+            final Player player,
+            final Aetheryte destination,
+            final List<Component> reasons
+    ) {
+        if (!destination.isAccessibleTo(player.getUniqueId())
+                && Permissions.canAccessVisibility(player, player.getUniqueId(), destination)) {
+            reasons.add(messages.bypassReasonVisibility(player, destination.visibility()));
+        }
+    }
+
     private void appendWarpDimensionBypassReasons(
             final Player player,
             final @Nullable Aetheryte source,
@@ -3379,6 +3813,7 @@ public final class AetheryteService {
     ) {
         final List<Component> reasons = new ArrayList<>();
         appendWarpDimensionBypassReasons(player, source, destination, reasons);
+        appendVisibilityBypassReason(player, destination, reasons);
         if (bypassCost && isNonFreeCost(player, rawEval.costDisplay(), null)) {
             reasons.add(messages.bypassReasonCostWarp(player, rawEval.costDisplay()));
         }

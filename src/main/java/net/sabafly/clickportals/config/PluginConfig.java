@@ -283,7 +283,11 @@ public record PluginConfig(
 
             @Setting("cast")
             @Comment("Default warp casting (cast time and BetterModel player animation) settings (#65)")
-            CastSection cast
+            CastSection cast,
+
+            @Setting("visibility-cost")
+            @Comment("Cost multipliers applied according to destination/placed Aetheryte visibility (#25)")
+            VisibilityCostSection visibilityCost
     ) {
         public WarpSection {
             if (distance == null) {
@@ -295,6 +299,9 @@ public record PluginConfig(
             if (cast == null) {
                 cast = CastSection.defaults();
             }
+            if (visibilityCost == null) {
+                visibilityCost = VisibilityCostSection.defaults();
+            }
         }
 
         public WarpSection(
@@ -302,11 +309,26 @@ public record PluginConfig(
                 final List<CostEntry> cost,
                 final boolean showOptionalCosts
         ) {
-            this(distance, cost, showOptionalCosts, CastSection.defaults());
+            this(distance, cost, showOptionalCosts, CastSection.defaults(), VisibilityCostSection.defaults());
+        }
+
+        public WarpSection(
+                final DistanceSection distance,
+                final List<CostEntry> cost,
+                final boolean showOptionalCosts,
+                final CastSection cast
+        ) {
+            this(distance, cost, showOptionalCosts, cast, VisibilityCostSection.defaults());
         }
 
         public static WarpSection defaults() {
-            return new WarpSection(DistanceSection.defaults(), List.of(), true, CastSection.defaults());
+            return new WarpSection(
+                    DistanceSection.defaults(),
+                    List.of(),
+                    true,
+                    CastSection.defaults(),
+                    VisibilityCostSection.defaults()
+            );
         }
     }
 
@@ -521,7 +543,16 @@ public record PluginConfig(
                 validCancel
         );
 
-        final WarpSection validWarp = new WarpSection(validDist, warp.cost(), warp.showOptionalCosts(), validCast);
+        final VisibilityCostSection validVisibilityCost =
+                (warp.visibilityCost() != null ? warp.visibilityCost() : VisibilityCostSection.defaults())
+                        .validatedGlobal(logger);
+        final WarpSection validWarp = new WarpSection(
+                validDist,
+                warp.cost(),
+                warp.showOptionalCosts(),
+                validCast,
+                validVisibilityCost
+        );
 
         final DimensionRoutesConfig validDimensions;
         if (dimensions == null) {

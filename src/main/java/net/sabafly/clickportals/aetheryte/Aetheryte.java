@@ -17,15 +17,17 @@
  */
 package net.sabafly.clickportals.aetheryte;
 
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.OptionalDouble;
+import java.util.Set;
 import java.util.UUID;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Immutable domain model representing a placed Aetheryte warp point (#6, #12, #37, #53).
+ * Immutable domain model representing a placed Aetheryte warp point (#6, #12, #24, #37, #53).
  */
 public record Aetheryte(
         UUID id,
@@ -38,7 +40,9 @@ public record Aetheryte(
         UUID ownerId,
         long createdAt,
         String variation,
-        @Nullable String ownerName
+        @Nullable String ownerName,
+        AetheryteVisibility visibility,
+        Set<UUID> invitedPlayers
 ) {
 
     /**
@@ -47,15 +51,17 @@ public record Aetheryte(
     public static final String DEFAULT_VARIATION = "default";
 
     /**
-     * Compact constructor normalizing variation identifiers and optional owner names.
+     * Compact constructor normalizing variation identifiers, optional owner names, visibility, and invitees.
      */
     public Aetheryte {
         variation = normalizeVariation(variation);
         ownerName = normalizeOwnerName(ownerName);
+        visibility = visibility == null ? AetheryteVisibility.PUBLIC : visibility;
+        invitedPlayers = invitedPlayers == null ? Set.of() : Set.copyOf(invitedPlayers);
     }
 
     /**
-     * Convenience constructor using {@link #DEFAULT_VARIATION} and no cached owner name.
+     * Convenience constructor using {@link #DEFAULT_VARIATION}, no cached owner name, and {@link AetheryteVisibility#PUBLIC}.
      */
     public Aetheryte(
             final UUID id,
@@ -68,11 +74,12 @@ public record Aetheryte(
             final UUID ownerId,
             final long createdAt
     ) {
-        this(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt, DEFAULT_VARIATION, null);
+        this(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt,
+                DEFAULT_VARIATION, null, AetheryteVisibility.PUBLIC, Set.of());
     }
 
     /**
-     * Convenience constructor using no cached owner name.
+     * Convenience constructor using no cached owner name and {@link AetheryteVisibility#PUBLIC}.
      */
     public Aetheryte(
             final UUID id,
@@ -86,7 +93,28 @@ public record Aetheryte(
             final long createdAt,
             final String variation
     ) {
-        this(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt, variation, null);
+        this(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt,
+                variation, null, AetheryteVisibility.PUBLIC, Set.of());
+    }
+
+    /**
+     * Convenience constructor defaulting visibility to {@link AetheryteVisibility#PUBLIC} and empty invitees (#24).
+     */
+    public Aetheryte(
+            final UUID id,
+            final String name,
+            final UUID worldId,
+            final String worldName,
+            final int blockX,
+            final int blockY,
+            final int blockZ,
+            final UUID ownerId,
+            final long createdAt,
+            final String variation,
+            @Nullable final String ownerName
+    ) {
+        this(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt,
+                variation, ownerName, AetheryteVisibility.PUBLIC, Set.of());
     }
 
     /**
@@ -103,28 +131,86 @@ public record Aetheryte(
      * Returns a copy of this Aetheryte with an updated display name.
      */
     public Aetheryte withName(final String newName) {
-        return new Aetheryte(id, newName, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt, variation, ownerName);
+        return new Aetheryte(id, newName, worldId, worldName, blockX, blockY, blockZ,
+                ownerId, createdAt, variation, ownerName, visibility, invitedPlayers);
     }
 
     /**
      * Returns a copy of this Aetheryte with an updated owner UUID and cached name.
      */
     public Aetheryte withOwner(final UUID newOwnerId, @Nullable final String newOwnerName) {
-        return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ, newOwnerId, createdAt, variation, newOwnerName);
+        return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ,
+                newOwnerId, createdAt, variation, newOwnerName, visibility, invitedPlayers);
     }
 
     /**
      * Returns a copy of this Aetheryte with an updated cached owner name.
      */
     public Aetheryte withOwnerName(@Nullable final String newOwnerName) {
-        return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt, variation, newOwnerName);
+        return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ,
+                ownerId, createdAt, variation, newOwnerName, visibility, invitedPlayers);
     }
 
     /**
      * Returns a copy of this Aetheryte with an updated variation identifier.
      */
     public Aetheryte withVariation(final String newVariation) {
-        return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt, newVariation, ownerName);
+        return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ,
+                ownerId, createdAt, newVariation, ownerName, visibility, invitedPlayers);
+    }
+
+    /**
+     * Returns a copy of this Aetheryte with an updated {@link AetheryteVisibility} (#24).
+     */
+    public Aetheryte withVisibility(final AetheryteVisibility newVisibility) {
+        return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ,
+                ownerId, createdAt, variation, ownerName, newVisibility, invitedPlayers);
+    }
+
+    /**
+     * Returns a copy of this Aetheryte with an updated set of invited players (#24).
+     */
+    public Aetheryte withInvitedPlayers(final Set<UUID> newInvitees) {
+        return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ,
+                ownerId, createdAt, variation, ownerName, visibility, newInvitees);
+    }
+
+    /**
+     * Returns a copy of this Aetheryte with {@code inviteeId} added (#24).
+     */
+    public Aetheryte addInvitee(final UUID inviteeId) {
+        final Set<UUID> updated = new LinkedHashSet<>(invitedPlayers);
+        updated.add(inviteeId);
+        return withInvitedPlayers(updated);
+    }
+
+    /**
+     * Returns a copy of this Aetheryte with {@code inviteeId} removed (#24).
+     */
+    public Aetheryte removeInvitee(final UUID inviteeId) {
+        if (!invitedPlayers.contains(inviteeId)) {
+            return this;
+        }
+        final Set<UUID> updated = new LinkedHashSet<>(invitedPlayers);
+        updated.remove(inviteeId);
+        return withInvitedPlayers(updated);
+    }
+
+    /**
+     * Checks whether a player with {@code playerId} is permitted to see and warp to this Aetheryte
+     * according to its visibility mode and invitee list (excluding bypass permissions) (#24).
+     */
+    public boolean isAccessibleTo(final @Nullable UUID playerId) {
+        if (visibility == AetheryteVisibility.PUBLIC) {
+            return true;
+        }
+        if (playerId == null) {
+            return false;
+        }
+        if (ownerId.equals(playerId)) {
+            return true;
+        }
+        return visibility == AetheryteVisibility.INVITE_ONLY && invitedPlayers.contains(playerId);
     }
 
     /**
