@@ -73,6 +73,7 @@ dialog:
     body-no-route: "<yellow>No connecting routes to other dimensions are available.</yellow>"
     body-dimension-disabled: "<red>Using Aetherytes in this dimension is currently disabled.</red>"
     body-dimension-bypassed: "<yellow>Note: Using Aetherytes in <world> is normally disabled (bypassed via permission).</yellow>"
+    body-cost-bypassed: "<yellow>Note: Bypassing <reason> via permission.</yellow>"
     body-select: "<gray>Select an Aetheryte destination to teleport to.</gray>"
     root-body: "<gray>Select a category to browse teleport destinations.</gray>"
     category-favorites: "<gold>★ Favorites</gold> <dark_gray>(</dark_gray><white><count></white><dark_gray>)</dark_gray>"
@@ -111,6 +112,7 @@ dialog:
     distance-other-dimension: "<light_purple>Other dimension</light_purple>"
     tooltip-allowed: "<gray>Owner: </gray><aqua><owner></aqua><newline><gray>World: </gray><gold><world></gold><newline><gray>Coordinates: </gray><white><x>, <y>, <z></white><newline><gray>Distance: </gray><distance><newline><gray>Cost: </gray><cost><newline><green>Click to teleport</green>"
     tooltip-denied: "<gray>Owner: </gray><aqua><owner></aqua><newline><gray>World: </gray><gold><world></gold><newline><gray>Coordinates: </gray><white><x>, <y>, <z></white><newline><gray>Distance: </gray><distance><newline><gray>Cost: </gray><cost><newline><red>Unavailable: </red><reason>"
+    tooltip-bypassed: "<yellow>Bypassed: </yellow><white><reasons></white>"
     unknown-owner: "Unknown"
   remove:
     title: "<red><bold>Confirm Removal: </bold></red><white><name></white>"

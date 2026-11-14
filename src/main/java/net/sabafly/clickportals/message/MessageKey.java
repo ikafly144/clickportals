@@ -89,6 +89,7 @@ public enum MessageKey {
     DIALOG_WARP_BODY_NO_ROUTE("dialog.warp.body-no-route"),
     DIALOG_WARP_BODY_DIMENSION_DISABLED("dialog.warp.body-dimension-disabled"),
     DIALOG_WARP_BODY_DIMENSION_BYPASSED("dialog.warp.body-dimension-bypassed"),
+    DIALOG_WARP_BODY_COST_BYPASSED("dialog.warp.body-cost-bypassed"),
     DIALOG_WARP_BODY_SELECT("dialog.warp.body-select"),
     DIALOG_WARP_ROOT_BODY("dialog.warp.root-body"),
     DIALOG_WARP_CATEGORY_FAVORITES("dialog.warp.category-favorites"),
@@ -126,6 +127,7 @@ public enum MessageKey {
     DIALOG_WARP_DISTANCE_OTHER_DIMENSION("dialog.warp.distance-other-dimension"),
     DIALOG_WARP_TOOLTIP_ALLOWED("dialog.warp.tooltip-allowed"),
     DIALOG_WARP_TOOLTIP_DENIED("dialog.warp.tooltip-denied"),
+    DIALOG_WARP_TOOLTIP_BYPASSED("dialog.warp.tooltip-bypassed"),
     DIALOG_WARP_UNKNOWN_OWNER("dialog.warp.unknown-owner"),
 
     DIALOG_REMOVE_TITLE("dialog.remove.title"),

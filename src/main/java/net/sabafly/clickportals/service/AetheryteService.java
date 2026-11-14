@@ -1779,6 +1779,15 @@ public final class AetheryteService {
             final Aetheryte destination
     ) {
         final WarpEvaluation raw = costEvaluator.evaluate(player, source, destination);
+        return evaluateWarpWithRaw(player, source, destination, raw);
+    }
+
+    private WarpEvaluation evaluateWarpWithRaw(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination,
+            final WarpEvaluation raw
+    ) {
         final @Nullable String sourceWorldName = resolveSourceWorldName(player, source);
         final @Nullable Component sourceDisableError = resolveDisabledDimensionError(player, sourceWorldName);
         final WarpEvaluation checked = applyDimensionUseCheck(
@@ -1791,8 +1800,7 @@ public final class AetheryteService {
         final boolean hasUsePerm = canUse(player);
         final boolean canBypass = hasUsePerm && Permissions.canBypassWarpCost(player);
         final @Nullable String plainFree = canBypass
-                ? net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
-                        .serialize(messages.freeCostLabel(player))
+                ? PlainTextComponentSerializer.plainText().serialize(messages.freeCostLabel(player))
                 : null;
         return applyPermissionAndBypass(player, checked, hasUsePerm, canBypass, null, plainFree);
     }
@@ -1904,15 +1912,9 @@ public final class AetheryteService {
         }
         if (canBypass) {
             final Component originalCost = evaluation.costDisplay();
-            final String plainCost = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
-                    .serialize(originalCost);
-            final String plainFree = cachedPlainFree != null
-                    ? cachedPlainFree
-                    : net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
-                            .serialize(messages.freeCostLabel(player));
-            final Component bypassedCostDisplay = plainCost.equals(plainFree)
-                    ? originalCost
-                    : messages.get(player, MessageKey.COST_BYPASSED, Placeholder.component("cost", originalCost));
+            final Component bypassedCostDisplay = isNonFreeCost(player, originalCost, cachedPlainFree)
+                    ? messages.get(player, MessageKey.COST_BYPASSED, Placeholder.component("cost", originalCost))
+                    : originalCost;
 
             if (evaluation.denyReasonCode() == WarpEvaluation.DenyReason.INSUFFICIENT_COST) {
                 return WarpEvaluation.permitted(bypassedCostDisplay);
@@ -2940,7 +2942,8 @@ public final class AetheryteService {
                 return;
             }
 
-            final WarpEvaluation finalEval = evaluateWarp(player, source, destination);
+            final WarpEvaluation rawEval = activeEvaluator.evaluate(player, source, destination);
+            final WarpEvaluation finalEval = evaluateWarpWithRaw(player, source, destination, rawEval);
             if (!finalEval.allowed()) {
                 if (playerId != null) {
                     inFlightWarps.remove(playerId);
@@ -2974,7 +2977,7 @@ public final class AetheryteService {
                 paid = true;
             }
 
-            final List<Component> warpBypassReasons = collectWarpBypassReasons(player, source, destination, activeEvaluator, bypassCost);
+            final List<Component> warpBypassReasons = collectWarpBypassReasons(player, source, destination, rawEval, bypassCost);
 
             if (source != null) {
                 modelService.triggerAnimation(source.id(), ModelAnimationTrigger.ON_WARP_DEPART);
@@ -3239,31 +3242,115 @@ public final class AetheryteService {
         }
     }
 
+    /**
+     * Collects a localized warp-cost bypass reason summary for the warp root dialog when at least one
+     * reachable destination has a non-free warp cost bypassed via {@link Permissions#BYPASS_COST_WARP} (#69).
+     */
+    public Optional<Component> collectRootWarpCostBypassReason(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final List<Aetheryte> reachableDestinations
+    ) {
+        if (!Permissions.canBypassWarpCost(player) || !canUse(player) || reachableDestinations.isEmpty()) {
+            return Optional.empty();
+        }
+        final List<WarpEvaluation> rawEvaluations = costEvaluator.evaluateBatch(player, source, reachableDestinations);
+        final String plainFree = PlainTextComponentSerializer.plainText().serialize(messages.freeCostLabel(player));
+        final Map<String, Component> distinctCosts = new LinkedHashMap<>();
+        final int count = Math.min(rawEvaluations.size(), reachableDestinations.size());
+        for (int i = 0; i < count; i++) {
+            final Aetheryte dest = reachableDestinations.get(i);
+            if (!isDimensionUseAllowed(player, resolveWorldName(dest.worldId(), dest.worldName()))) {
+                continue;
+            }
+            final WarpEvaluation rawEval = rawEvaluations.get(i);
+            if (!rawEval.allowed() && rawEval.denyReasonCode() != WarpEvaluation.DenyReason.INSUFFICIENT_COST) {
+                continue;
+            }
+            final String plain = PlainTextComponentSerializer.plainText().serialize(rawEval.costDisplay());
+            if (!plain.isBlank() && !plain.equals(plainFree)) {
+                distinctCosts.putIfAbsent(plain, rawEval.costDisplay());
+            }
+        }
+        if (distinctCosts.isEmpty()) {
+            return Optional.empty();
+        }
+        final Component costSummary;
+        if (distinctCosts.size() == 1) {
+            costSummary = distinctCosts.values().iterator().next();
+        } else {
+            final List<Component> preview = distinctCosts.values().stream().limit(2).toList();
+            Component joined = Component.join(
+                    net.kyori.adventure.text.JoinConfiguration.separator(messages.get(player, MessageKey.BYPASS_SEPARATOR)),
+                    preview
+            );
+            if (distinctCosts.size() > 2) {
+                joined = joined.append(Component.text(" ..."));
+            }
+            costSummary = joined;
+        }
+        return Optional.of(messages.bypassReasonCostWarp(player, costSummary));
+    }
+
+    /**
+     * Collects localized dimension-usage bypass reasons applicable when warping from {@code source}
+     * to {@code destination} (#69).
+     */
+    public List<Component> collectDestinationDimensionBypassReasons(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination
+    ) {
+        final List<Component> reasons = new ArrayList<>(2);
+        appendWarpDimensionBypassReasons(player, source, destination, reasons);
+        return reasons;
+    }
+
+    private void appendWarpDimensionBypassReasons(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination,
+            final List<Component> reasons
+    ) {
+        if (!Permissions.canBypassDimension(player)) {
+            return;
+        }
+        final @Nullable String sourceWorldName = resolveSourceWorldName(player, source);
+        if (sourceWorldName != null && !dimensionConfig().isUseAllowed(sourceWorldName)) {
+            reasons.add(messages.bypassReasonDimensionUse(player, resolveDimensionDisplayComponent(sourceWorldName)));
+        }
+        final String destWorldName = resolveWorldName(destination.worldId(), destination.worldName());
+        if (!dimensionConfig().isUseAllowed(destWorldName) && !destWorldName.equals(sourceWorldName)) {
+            reasons.add(messages.bypassReasonDimensionUse(player, resolveDimensionDisplayComponent(destWorldName)));
+        }
+    }
+
+    private boolean isNonFreeCost(
+            final Player player,
+            final Component costDisplay,
+            final @Nullable String cachedPlainFree
+    ) {
+        final String plainCost = PlainTextComponentSerializer.plainText().serialize(costDisplay);
+        if (plainCost.isBlank()) {
+            return false;
+        }
+        final String plainFree = cachedPlainFree != null
+                ? cachedPlainFree
+                : PlainTextComponentSerializer.plainText().serialize(messages.freeCostLabel(player));
+        return !plainCost.equals(plainFree);
+    }
+
     private List<Component> collectWarpBypassReasons(
             final Player player,
             final @Nullable Aetheryte source,
             final Aetheryte destination,
-            final WarpCostEvaluator activeEvaluator,
+            final WarpEvaluation rawEval,
             final boolean bypassCost
     ) {
         final List<Component> reasons = new ArrayList<>();
-        if (Permissions.canBypassDimension(player)) {
-            final @Nullable String sourceWorldName = resolveSourceWorldName(player, source);
-            if (sourceWorldName != null && !dimensionConfig().isUseAllowed(sourceWorldName)) {
-                reasons.add(messages.bypassReasonDimensionUse(player, resolveDimensionDisplayComponent(sourceWorldName)));
-            }
-            final String destWorldName = resolveWorldName(destination.worldId(), destination.worldName());
-            if (!dimensionConfig().isUseAllowed(destWorldName) && !destWorldName.equals(sourceWorldName)) {
-                reasons.add(messages.bypassReasonDimensionUse(player, resolveDimensionDisplayComponent(destWorldName)));
-            }
-        }
-        if (bypassCost) {
-            final WarpEvaluation rawEval = activeEvaluator.evaluate(player, source, destination);
-            final String plainRawCost = PlainTextComponentSerializer.plainText().serialize(rawEval.costDisplay());
-            final String plainFree = PlainTextComponentSerializer.plainText().serialize(messages.freeCostLabel(player));
-            if (!plainRawCost.isBlank() && !plainRawCost.equals(plainFree)) {
-                reasons.add(messages.bypassReasonCostWarp(player, rawEval.costDisplay()));
-            }
+        appendWarpDimensionBypassReasons(player, source, destination, reasons);
+        if (bypassCost && isNonFreeCost(player, rawEval.costDisplay(), null)) {
+            reasons.add(messages.bypassReasonCostWarp(player, rawEval.costDisplay()));
         }
         return reasons;
     }

@@ -1163,6 +1163,9 @@ class AetheryteListenerTest {
             );
             registry.register(world, destination);
 
+            final AetheryteService.WarpCostEvaluator evaluator = mock(AetheryteService.WarpCostEvaluator.class);
+            when(evaluator.evaluate(any(), any(), any()))
+                    .thenReturn(WarpEvaluation.permitted(Component.text("100 Coins")));
             final AetheryteService warpService = new AetheryteService(
                     plugin,
                     registry,
@@ -1170,7 +1173,7 @@ class AetheryteListenerTest {
                     NoopHologramService.INSTANCE,
                     Messages.defaults(),
                     () -> -1,
-                    (p, src, dst) -> WarpEvaluation.permitted(Component.text("100 Coins"))
+                    evaluator
             );
             warpService.setDimensionConfigSupplier(() -> new net.sabafly.clickportals.route.DimensionRoutesConfig(
                     List.of(),
@@ -1200,6 +1203,7 @@ class AetheryteListenerTest {
 
             warpService.warpToAetheryte(player, registeredAetheryte, destination.id());
 
+            verify(evaluator, times(2)).evaluate(eq(player), eq(registeredAetheryte), eq(destination));
             final ArgumentCaptor<Component> msgCaptor = ArgumentCaptor.forClass(Component.class);
             verify(player, times(2)).sendMessage(msgCaptor.capture());
             final List<String> sentPlain = msgCaptor.getAllValues().stream()

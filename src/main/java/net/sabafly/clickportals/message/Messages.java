@@ -1412,4 +1412,22 @@ public final class Messages {
     public Component bypassReasonCostWarp(final CommandSender viewer, final Component costDisplay) {
         return get(viewer, MessageKey.BYPASS_REASON_COST_WARP, Placeholder.component("cost", costDisplay));
     }
+
+    /**
+     * Formats the warp root dialog notice shown when warp costs are bypassed (#69).
+     */
+    public Component warpBodyCostBypassed(final CommandSender viewer, final Component reason) {
+        return get(viewer, MessageKey.DIALOG_WARP_BODY_COST_BYPASSED, Placeholder.component("reason", reason));
+    }
+
+    /**
+     * Formats the tooltip line shown on warp buttons when restrictions are bypassed (#69).
+     */
+    public Component warpTooltipBypassed(final CommandSender viewer, final List<Component> reasons) {
+        return get(
+                viewer,
+                MessageKey.DIALOG_WARP_TOOLTIP_BYPASSED,
+                Placeholder.component("reasons", joinBypassReasons(viewer, reasons))
+        );
+    }
 }
