@@ -1024,6 +1024,7 @@ public record AetheryteVariation(
                 validPlayerModel,
                 validCastAnim,
                 validArriveAnim,
+                rawWarpCast.immobilize(),
                 rawWarpCast.cancel()
         );
         final WarpOverrideSection validatedWarp = new WarpOverrideSection(validatedWarpDist, warp.cost(), validatedWarpCast);

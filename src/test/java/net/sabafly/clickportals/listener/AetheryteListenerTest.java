@@ -757,6 +757,183 @@ class AetheryteListenerTest {
         when(deathEvent.getEntity()).thenReturn(player);
         listener.onPlayerDeath(deathEvent);
         verify(mockService).cancelCast(player, AetheryteService.CastCancelReason.DIED);
+
+        listener.onBlockBreakDuringCast(new BlockBreakEvent(normalBlock, player));
+        listener.onBlockPlaceDuringCast(mock(BlockPlaceEvent.class, inv -> {
+            if ("getPlayer".equals(inv.getMethod().getName())) {
+                return player;
+            }
+            return org.mockito.Answers.RETURNS_DEFAULTS.answer(inv);
+        }));
+        listener.onPlayerAttackEntityDuringCast(new io.papermc.paper.event.player.PrePlayerAttackEntityEvent(
+                player,
+                mock(Entity.class),
+                true
+        ));
+        final org.bukkit.event.entity.EntityDamageByEntityEvent attackDamage = mock(org.bukkit.event.entity.EntityDamageByEntityEvent.class);
+        when(attackDamage.getDamager()).thenReturn(player);
+        when(attackDamage.getEntity()).thenReturn(mock(Entity.class));
+        listener.onEntityDamageByEntityDuringCast(attackDamage);
+
+        // Self-damage (damager == entity) must not trigger on-interact cancellation
+        final org.bukkit.event.entity.EntityDamageByEntityEvent selfDamage = mock(org.bukkit.event.entity.EntityDamageByEntityEvent.class);
+        when(selfDamage.getDamager()).thenReturn(player);
+        when(selfDamage.getEntity()).thenReturn(player);
+        listener.onEntityDamageByEntityDuringCast(selfDamage);
+
+        listener.onPlayerInteractEntityDuringCast(new org.bukkit.event.player.PlayerInteractEntityEvent(
+                player,
+                mock(Entity.class),
+                EquipmentSlot.HAND
+        ));
+        listener.onPlayerArmorStandManipulateDuringCast(new org.bukkit.event.player.PlayerArmorStandManipulateEvent(
+                player,
+                mock(org.bukkit.entity.ArmorStand.class),
+                mock(ItemStack.class),
+                mock(ItemStack.class),
+                EquipmentSlot.HAND,
+                EquipmentSlot.CHEST
+        ));
+
+        // RIGHT_CLICK_BLOCK on other block (DEFAULT) -> triggers
+        final org.bukkit.event.player.PlayerInteractEvent rightClickOther = new org.bukkit.event.player.PlayerInteractEvent(
+                player,
+                org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK,
+                null,
+                normalBlock,
+                BlockFace.UP,
+                EquipmentSlot.HAND
+        );
+        listener.onPlayerInteractCastCancel(rightClickOther);
+
+        // Cancelled RIGHT_CLICK_BLOCK (both DENY) -> skipped
+        final org.bukkit.event.player.PlayerInteractEvent deniedRightClick = new org.bukkit.event.player.PlayerInteractEvent(
+                player,
+                org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK,
+                null,
+                normalBlock,
+                BlockFace.UP,
+                EquipmentSlot.HAND
+        );
+        deniedRightClick.setCancelled(true);
+        listener.onPlayerInteractCastCancel(deniedRightClick);
+
+        // Empty-hand RIGHT_CLICK_BLOCK with block denied (e.g. Spawn Protection) -> skipped
+        final org.bukkit.event.player.PlayerInteractEvent deniedBlockEmptyHand = new org.bukkit.event.player.PlayerInteractEvent(
+                player,
+                org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK,
+                null,
+                normalBlock,
+                BlockFace.UP,
+                EquipmentSlot.HAND
+        );
+        deniedBlockEmptyHand.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY);
+        listener.onPlayerInteractCastCancel(deniedBlockEmptyHand);
+
+        // Held-item RIGHT_CLICK_BLOCK with only block denied -> item use still triggers
+        final ItemStack pearl = mock(ItemStack.class);
+        final org.bukkit.event.player.PlayerInteractEvent deniedBlockWithItem = new org.bukkit.event.player.PlayerInteractEvent(
+                player,
+                org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK,
+                pearl,
+                normalBlock,
+                BlockFace.UP,
+                EquipmentSlot.HAND
+        );
+        deniedBlockWithItem.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY);
+        listener.onPlayerInteractCastCancel(deniedBlockWithItem);
+
+        // RIGHT_CLICK_AIR with non-denied item use (useInteractedBlock == DENY, useItemInHand == DEFAULT) -> triggers
+        final org.bukkit.event.player.PlayerInteractEvent rightClickAir = new org.bukkit.event.player.PlayerInteractEvent(
+                player,
+                org.bukkit.event.block.Action.RIGHT_CLICK_AIR,
+                pearl,
+                null,
+                BlockFace.SELF,
+                EquipmentSlot.HAND
+        );
+        listener.onPlayerInteractCastCancel(rightClickAir);
+
+        // Denied RIGHT_CLICK_AIR -> skipped
+        final org.bukkit.event.player.PlayerInteractEvent deniedAir = new org.bukkit.event.player.PlayerInteractEvent(
+                player,
+                org.bukkit.event.block.Action.RIGHT_CLICK_AIR,
+                pearl,
+                null,
+                BlockFace.SELF,
+                EquipmentSlot.HAND
+        );
+        deniedAir.setUseItemInHand(org.bukkit.event.Event.Result.DENY);
+        listener.onPlayerInteractCastCancel(deniedAir);
+
+        verify(mockService, times(9)).onPlayerInteractDuringCast(player);
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void rightClickAetheryteCancelsActiveCastWithoutOpeningDialog() {
+        final AetheryteService mockService = mock(AetheryteService.class);
+        final net.sabafly.clickportals.model.AetheryteModelService mockModelService =
+                mock(net.sabafly.clickportals.model.AetheryteModelService.class);
+        when(mockService.modelService()).thenReturn(mockModelService);
+        final AetheryteDialogFactory mockDialogs = mock(AetheryteDialogFactory.class);
+        final AetheryteListener customListener = new AetheryteListener(
+                plugin,
+                registry,
+                mockService,
+                mockDialogs,
+                NoopHologramService.INSTANCE,
+                Messages.defaults()
+        );
+
+        final Player player = mock(Player.class);
+        when(mockService.cancelCast(player, AetheryteService.CastCancelReason.INTERACT)).thenReturn(true);
+
+        // 1. Direct right-click on Aetheryte block cancels cast and does not open warp dialog
+        final org.bukkit.event.player.PlayerInteractEvent directEvent = new org.bukkit.event.player.PlayerInteractEvent(
+                player,
+                org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK,
+                null,
+                aetheryteBlock,
+                BlockFace.NORTH,
+                EquipmentSlot.HAND
+        );
+        customListener.onPlayerInteract(directEvent);
+        assertThat(directEvent.useInteractedBlock()).isEqualTo(org.bukkit.event.Event.Result.DENY);
+        verify(mockService).cancelCast(player, AetheryteService.CastCancelReason.INTERACT);
+        verify(mockModelService, never()).triggerAnimation(any(), any());
+        verify(mockDialogs, never()).openWarpDialog(any(), any());
+
+        // 2. Support-face right-click targeting relative Aetheryte cancels cast without opening dialog
+        when(normalBlock.getRelative(BlockFace.UP)).thenReturn(aetheryteBlock);
+        final Material nonInteractable = mock(Material.class);
+        when(nonInteractable.isInteractable()).thenReturn(false);
+        when(normalBlock.getType()).thenReturn(nonInteractable);
+        final org.bukkit.event.player.PlayerInteractEvent relativeEvent = new org.bukkit.event.player.PlayerInteractEvent(
+                player,
+                org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK,
+                null,
+                normalBlock,
+                BlockFace.UP,
+                EquipmentSlot.HAND
+        );
+        customListener.onPlayerInteract(relativeEvent);
+        assertThat(relativeEvent.useInteractedBlock()).isEqualTo(org.bukkit.event.Event.Result.DENY);
+        verify(mockService, times(2)).cancelCast(player, AetheryteService.CastCancelReason.INTERACT);
+        verify(mockDialogs, never()).openWarpDialog(any(), any());
+
+        // 3. Shared handler (used by hologram interaction entity) cancels while casting, opens when idle
+        AetheryteListener.handleAetheryteInteract(mockService, mockModelService, mockDialogs, player, registeredAetheryte);
+        verify(mockService, times(3)).cancelCast(player, AetheryteService.CastCancelReason.INTERACT);
+        verify(mockDialogs, never()).openWarpDialog(any(), any());
+
+        when(mockService.cancelCast(player, AetheryteService.CastCancelReason.INTERACT)).thenReturn(false);
+        AetheryteListener.handleAetheryteInteract(mockService, mockModelService, mockDialogs, player, registeredAetheryte);
+        verify(mockModelService).triggerAnimation(
+                registeredAetheryte.id(),
+                net.sabafly.clickportals.model.ModelAnimationTrigger.ON_INTERACT
+        );
+        verify(mockDialogs).openWarpDialog(player, registeredAetheryte);
     }
 
     @Test

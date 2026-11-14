@@ -37,6 +37,7 @@ import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
 import java.util.function.Function;
 import java.util.function.IntSupplier;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.function.ToLongFunction;
 import java.util.function.UnaryOperator;
@@ -68,7 +69,9 @@ import net.sabafly.clickportals.route.DimensionWorldConfig;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.AetheryteVariation.ClearanceSection;
 import net.sabafly.clickportals.variation.VariationRegistry;
+import net.sabafly.clickportals.visual.CastImmobilizeService;
 import net.sabafly.clickportals.visual.HologramService;
+import net.sabafly.clickportals.visual.NoopCastImmobilizeService;
 import net.sabafly.clickportals.visual.PacketEventsHologramService;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
@@ -284,6 +287,7 @@ public final class AetheryteService {
     private final Set<UUID> inFlightWarps = ConcurrentHashMap.newKeySet();
     private final Map<UUID, ActiveCastSession> activeCasts = new ConcurrentHashMap<>();
     private volatile Supplier<CastSection> globalCastSupplier = CastSection::defaults;
+    private volatile CastImmobilizeService castImmobilizeService = NoopCastImmobilizeService.INSTANCE;
 
     /**
      * Reasons why an in-progress warp cast can be cancelled (#65).
@@ -291,6 +295,7 @@ public final class AetheryteService {
     public enum CastCancelReason {
         MOVED,
         DAMAGED,
+        INTERACT,
         DIED,
         QUIT,
         NEW_WARP,
@@ -742,8 +747,20 @@ public final class AetheryteService {
                 task.cancel();
             }
             modelService.stopPlayerAnimation(session.player);
+            if (session.castSettings.immobilize()) {
+                castImmobilizeService.release(session.player);
+            }
         }
         inFlightWarps.remove(playerId);
+    }
+
+    /**
+     * Sets the service responsible for immobilizing casting players (#67).
+     */
+    public void setCastImmobilizeService(final CastImmobilizeService castImmobilizeService) {
+        this.castImmobilizeService = castImmobilizeService != null
+                ? castImmobilizeService
+                : NoopCastImmobilizeService.INSTANCE;
     }
 
     /**
@@ -765,27 +782,35 @@ public final class AetheryteService {
      * Cancels the player's active cast if movement cancellation is enabled (#65).
      */
     public void onPlayerMoveDuringCast(final Player player) {
-        final UUID playerId = player.getUniqueId();
-        if (playerId == null) {
-            return;
-        }
-        final ActiveCastSession session = activeCasts.get(playerId);
-        if (session != null && session.castSettings.cancelOnMove()) {
-            cancelCast(player, CastCancelReason.MOVED);
-        }
+        cancelCastIfConfigured(player, CastSection.Resolved::cancelOnMove, CastCancelReason.MOVED);
     }
 
     /**
      * Cancels the player's active cast if damage cancellation is enabled (#65).
      */
     public void onPlayerDamageDuringCast(final Player player) {
+        cancelCastIfConfigured(player, CastSection.Resolved::cancelOnDamage, CastCancelReason.DAMAGED);
+    }
+
+    /**
+     * Cancels the player's active cast if non-Aetheryte interaction cancellation is enabled.
+     */
+    public void onPlayerInteractDuringCast(final Player player) {
+        cancelCastIfConfigured(player, CastSection.Resolved::cancelOnInteract, CastCancelReason.INTERACT);
+    }
+
+    private void cancelCastIfConfigured(
+            final Player player,
+            final Predicate<CastSection.Resolved> condition,
+            final CastCancelReason reason
+    ) {
         final UUID playerId = player.getUniqueId();
         if (playerId == null) {
             return;
         }
         final ActiveCastSession session = activeCasts.get(playerId);
-        if (session != null && session.castSettings.cancelOnDamage()) {
-            cancelCast(player, CastCancelReason.DAMAGED);
+        if (session != null && condition.test(session.castSettings)) {
+            cancelCast(player, reason);
         }
     }
 
@@ -810,12 +835,15 @@ public final class AetheryteService {
             task.cancel();
         }
         modelService.stopPlayerAnimation(player);
+        if (session.castSettings.immobilize()) {
+            castImmobilizeService.release(player);
+        }
         if (reason != CastCancelReason.QUIT && reason != CastCancelReason.NEW_WARP && player.isOnline()) {
             final MessageKey key = switch (reason) {
                 case MOVED -> MessageKey.WARP_CAST_CANCELLED_MOVE;
                 case DAMAGED -> MessageKey.WARP_CAST_CANCELLED_DAMAGE;
                 case OUT_OF_REACH -> MessageKey.ERROR_TOO_FAR;
-                case DIED, OTHER, QUIT, NEW_WARP -> MessageKey.WARP_CAST_CANCELLED;
+                case INTERACT, DIED, OTHER, QUIT, NEW_WARP -> MessageKey.WARP_CAST_CANCELLED;
             };
             messages.send(player, key);
         }
@@ -832,6 +860,7 @@ public final class AetheryteService {
                 cancelCast(session.player, CastCancelReason.OTHER);
             }
         }
+        castImmobilizeService.releaseAll();
     }
 
     /**
@@ -2637,6 +2666,16 @@ public final class AetheryteService {
         if (playerId != null) {
             activeCasts.put(playerId, session);
         }
+        if (castSettings.immobilize()) {
+            castImmobilizeService.immobilize(player);
+            if (session.cancelled.get()) {
+                castImmobilizeService.release(player);
+                return;
+            }
+        }
+        if (session.cancelled.get()) {
+            return;
+        }
 
         modelService.playPlayerAnimation(
                 player,
@@ -2644,6 +2683,13 @@ public final class AetheryteService {
                 castSettings.castAnimation(),
                 AetheryteModelService.PlayerAnimationMode.HOLD_ON_LAST
         );
+        if (session.cancelled.get()) {
+            modelService.stopPlayerAnimation(player);
+            if (castSettings.immobilize()) {
+                castImmobilizeService.release(player);
+            }
+            return;
+        }
         player.sendMessage(messages.get(
                 player,
                 MessageKey.WARP_CAST_STARTED,
@@ -2662,6 +2708,9 @@ public final class AetheryteService {
                             inFlightWarps.remove(playerId);
                         }
                         modelService.stopPlayerAnimation(player);
+                        if (session.castSettings.immobilize()) {
+                            castImmobilizeService.release(player);
+                        }
                     }
                 },
                 1L,
@@ -2674,6 +2723,9 @@ public final class AetheryteService {
                     inFlightWarps.remove(playerId);
                 }
                 modelService.stopPlayerAnimation(player);
+                if (session.castSettings.immobilize()) {
+                    castImmobilizeService.release(player);
+                }
             }
             return;
         }
@@ -2721,6 +2773,9 @@ public final class AetheryteService {
             activeCasts.remove(session.playerId, session);
         }
         modelService.stopPlayerAnimation(player);
+        if (session.castSettings.immobilize()) {
+            castImmobilizeService.release(player);
+        }
         executeWarpTeleport(
                 player,
                 session.playerId,

@@ -19,6 +19,7 @@ package net.sabafly.clickportals.listener;
 
 import io.papermc.paper.event.packet.PlayerChunkLoadEvent;
 import io.papermc.paper.event.packet.PlayerChunkUnloadEvent;
+import io.papermc.paper.event.player.PrePlayerAttackEntityEvent;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -42,6 +43,7 @@ import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
+import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -51,10 +53,13 @@ import org.bukkit.event.block.BlockExplodeEvent;
 import org.bukkit.event.block.BlockPistonExtendEvent;
 import org.bukkit.event.block.BlockPistonRetractEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
+import org.bukkit.event.player.PlayerArmorStandManipulateEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerLocaleChangeEvent;
@@ -66,6 +71,7 @@ import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.plugin.Plugin;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Bukkit event listener handling Aetheryte placement, interaction, protection, and world lifecycle
@@ -209,9 +215,7 @@ public final class AetheryteListener implements Listener {
         if (existingDirect.isPresent()) {
             event.setCancelled(true);
             if (event.getHand() == EquipmentSlot.HAND) {
-                final Aetheryte aetheryte = existingDirect.get();
-                service.modelService().triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
-                dialogFactory.openWarpDialog(player, aetheryte);
+                handleAetheryteInteract(service, service.modelService(), dialogFactory, player, existingDirect.get());
             }
             return;
         }
@@ -229,9 +233,7 @@ public final class AetheryteListener implements Listener {
                 && itemVariationOpt.isEmpty()) {
             event.setCancelled(true);
             if (event.getHand() == EquipmentSlot.HAND) {
-                final Aetheryte aetheryte = existingRelative.get();
-                service.modelService().triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
-                dialogFactory.openWarpDialog(player, aetheryte);
+                handleAetheryteInteract(service, service.modelService(), dialogFactory, player, existingRelative.get());
             }
             return;
         }
@@ -299,6 +301,7 @@ public final class AetheryteListener implements Listener {
             return;
         }
 
+        handleInteractDuringCast(player);
         dialogFactory.openCreateDialog(
                 player,
                 world,
@@ -307,6 +310,26 @@ public final class AetheryteListener implements Listener {
                 targetBlock.getZ(),
                 variationId
         );
+    }
+
+    /**
+     * Handles right-clicking a placed or virtual Aetheryte: cancels an in-progress warp cast if present,
+     * otherwise triggers the interact animation and opens the warp dialog.
+     */
+    public static void handleAetheryteInteract(
+            final AetheryteService service,
+            final @Nullable AetheryteModelService modelService,
+            final AetheryteDialogFactory dialogFactory,
+            final Player player,
+            final Aetheryte aetheryte
+    ) {
+        if (service.cancelCast(player, AetheryteService.CastCancelReason.INTERACT)) {
+            return;
+        }
+        if (modelService != null) {
+            modelService.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
+        }
+        dialogFactory.openWarpDialog(player, aetheryte);
     }
 
     /**
@@ -466,6 +489,81 @@ public final class AetheryteListener implements Listener {
             return;
         }
         service.cancelCast(player, AetheryteService.CastCancelReason.DIED);
+    }
+
+    /**
+     * Cancels an in-progress warp cast when interacting with non-Aetheryte blocks or using items in air if enabled.
+     * Note: {@code ignoreCancelled} is intentionally omitted because Bukkit marks {@code RIGHT_CLICK_AIR} as cancelled by default.
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerInteractCastCancel(final PlayerInteractEvent event) {
+        final Action action = event.getAction();
+        final boolean validInteract = switch (action) {
+            case RIGHT_CLICK_BLOCK -> event.useInteractedBlock() != Event.Result.DENY
+                    || (event.getItem() != null && event.useItemInHand() != Event.Result.DENY);
+            case RIGHT_CLICK_AIR -> event.useItemInHand() != Event.Result.DENY;
+            default -> false;
+        };
+        if (validInteract) {
+            handleInteractDuringCast(event.getPlayer());
+        }
+    }
+
+    /**
+     * Cancels an in-progress warp cast if the player breaks another block and {@code cancel.on-interact} is enabled.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onBlockBreakDuringCast(final BlockBreakEvent event) {
+        handleInteractDuringCast(event.getPlayer());
+    }
+
+    /**
+     * Cancels an in-progress warp cast if the player places another block and {@code cancel.on-interact} is enabled.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onBlockPlaceDuringCast(final BlockPlaceEvent event) {
+        handleInteractDuringCast(event.getPlayer());
+    }
+
+    /**
+     * Cancels an in-progress warp cast if the player attacks another entity and {@code cancel.on-interact} is enabled.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPlayerAttackEntityDuringCast(final PrePlayerAttackEntityEvent event) {
+        handleInteractDuringCast(event.getPlayer());
+    }
+
+    /**
+     * Cancels an in-progress warp cast if the player damages another entity and {@code cancel.on-interact} is enabled.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onEntityDamageByEntityDuringCast(final EntityDamageByEntityEvent event) {
+        if (event.getDamager() instanceof Player attacker && !attacker.equals(event.getEntity())) {
+            handleInteractDuringCast(attacker);
+        }
+    }
+
+    /**
+     * Cancels an in-progress warp cast if the player right-clicks another entity and {@code cancel.on-interact} is enabled.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPlayerInteractEntityDuringCast(final PlayerInteractEntityEvent event) {
+        handleInteractDuringCast(event.getPlayer());
+    }
+
+    /**
+     * Cancels an in-progress warp cast if the player manipulates an armor stand and {@code cancel.on-interact} is enabled.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPlayerArmorStandManipulateDuringCast(final PlayerArmorStandManipulateEvent event) {
+        handleInteractDuringCast(event.getPlayer());
+    }
+
+    private void handleInteractDuringCast(final Player player) {
+        final java.util.UUID playerId = player.getUniqueId();
+        if (playerId != null && service.isCasting(playerId)) {
+            service.onPlayerInteractDuringCast(player);
+        }
     }
 
     private static boolean hasCoordinateChanged(final Location from, final Location to) {

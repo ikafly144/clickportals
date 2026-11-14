@@ -54,6 +54,7 @@ import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.AetheryteVariation.WarpOverrideSection;
 import net.sabafly.clickportals.variation.VariationRegistry;
+import net.sabafly.clickportals.visual.CastImmobilizeService;
 import net.sabafly.clickportals.visual.NoopHologramService;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -285,6 +286,39 @@ class WarpCastServiceTest {
         service.onPlayerDamageDuringCast(player);
         assertThat(service.isCasting(playerId)).isFalse();
         verify(modelService, times(2)).stopPlayerAnimation(player);
+
+        // Now test cancel.on-interact: false allows non-Aetheryte interact while Aetheryte interact still cancels
+        final CastSection interactAllowed = new CastSection(
+                10,
+                "steve",
+                "cast_anim",
+                "",
+                new CastCancelSection(true, true, false)
+        );
+        service.setGlobalCastSupplier(() -> interactAllowed);
+        service.warpToAetheryte(player, sourceAetheryte, destAetheryte.id());
+        assertThat(service.isCasting(playerId)).isTrue();
+
+        service.onPlayerInteractDuringCast(player);
+        assertThat(service.isCasting(playerId)).isTrue();
+
+        assertThat(service.cancelCast(player, CastCancelReason.INTERACT)).isTrue();
+        assertThat(service.isCasting(playerId)).isFalse();
+
+        // Now test cancel.on-interact: true cancels on non-Aetheryte interact
+        final CastSection interactCancels = new CastSection(
+                10,
+                "steve",
+                "cast_anim",
+                "",
+                new CastCancelSection(true, true, true)
+        );
+        service.setGlobalCastSupplier(() -> interactCancels);
+        service.warpToAetheryte(player, sourceAetheryte, destAetheryte.id());
+        assertThat(service.isCasting(playerId)).isTrue();
+
+        service.onPlayerInteractDuringCast(player);
+        assertThat(service.isCasting(playerId)).isFalse();
     }
 
     @Test
@@ -368,5 +402,83 @@ class WarpCastServiceTest {
         assertThat(plain.serialize(AetheryteService.buildCastBar(20, 20))).isEqualTo("[░░░░░░░░░░░░░░░░]");
         assertThat(plain.serialize(AetheryteService.buildCastBar(10, 20))).isEqualTo("[████████░░░░░░░░]");
         assertThat(plain.serialize(AetheryteService.buildCastBar(0, 20))).isEqualTo("[████████████████]");
+    }
+
+    @Test
+    void immobilizesOnCastStartAndReleasesOnCompleteAndCancel() {
+        final WarpCostEvaluator evaluator = mock(WarpCostEvaluator.class);
+        when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
+        when(evaluator.charge(any(), any(), any())).thenReturn(true);
+
+        final CastImmobilizeService immobilizeService = mock(CastImmobilizeService.class);
+        final CastSection castEnabled = new CastSection(2, "steve", "", "", true, CastCancelSection.defaults());
+        final AetheryteService service = createService(castEnabled, VariationRegistry.defaults(), evaluator);
+        service.setCastImmobilizeService(immobilizeService);
+
+        service.warpToAetheryte(player, sourceAetheryte, destAetheryte.id());
+        verify(immobilizeService).immobilize(player);
+        verify(immobilizeService, never()).release(any());
+
+        activeTickConsumer.get().accept(activeTickTask);
+        activeTickConsumer.get().accept(activeTickTask);
+        verify(immobilizeService).release(player);
+
+        // Cancel releases immobilization
+        service.warpToAetheryte(player, sourceAetheryte, destAetheryte.id());
+        verify(immobilizeService, times(2)).immobilize(player);
+        service.cancelCast(player, CastCancelReason.DAMAGED);
+        verify(immobilizeService, times(2)).release(player);
+
+        // Disabled immobilize skips immobilizer
+        final CastSection castDisabled = new CastSection(2, "steve", "", "", false, CastCancelSection.defaults());
+        service.setGlobalCastSupplier(() -> castDisabled);
+        service.warpToAetheryte(player, sourceAetheryte, destAetheryte.id());
+        verify(immobilizeService, times(2)).immobilize(player);
+    }
+
+    @Test
+    void releasesImmobilizeWhenCancelledConcurrentlyDuringStart() {
+        final WarpCostEvaluator evaluator = mock(WarpCostEvaluator.class);
+        when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
+
+        final CastImmobilizeService immobilizeService = mock(CastImmobilizeService.class);
+        final CastSection castEnabled = new CastSection(4, "steve", "cast", "", true, CastCancelSection.defaults());
+        final AetheryteService service = createService(castEnabled, VariationRegistry.defaults(), evaluator);
+        service.setCastImmobilizeService(immobilizeService);
+
+        doAnswer(invocation -> {
+            service.cancelCast(player, CastCancelReason.OTHER);
+            return null;
+        }).when(immobilizeService).immobilize(player);
+
+        service.warpToAetheryte(player, sourceAetheryte, destAetheryte.id());
+
+        // cancelCast triggers first release before immobilize completes, then startWarpCast detects
+        // session.cancelled and calls release again so the player cannot remain immobilized.
+        verify(immobilizeService).immobilize(player);
+        verify(immobilizeService, times(2)).release(player);
+        assertThat(service.isCasting(playerId)).isFalse();
+        assertThat(activeTickConsumer.get()).isNull();
+    }
+
+    @Test
+    void cancelCastOnInteractReleasesImmobilizeStopsAnimationAndReturnsTrue() {
+        final WarpCostEvaluator evaluator = mock(WarpCostEvaluator.class);
+        when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
+
+        final CastImmobilizeService immobilizeService = mock(CastImmobilizeService.class);
+        final CastSection castEnabled = new CastSection(4, "steve", "cast", "", true, CastCancelSection.defaults());
+        final AetheryteService service = createService(castEnabled, VariationRegistry.defaults(), evaluator);
+        service.setCastImmobilizeService(immobilizeService);
+
+        assertThat(service.cancelCast(player, CastCancelReason.INTERACT)).isFalse();
+
+        service.warpToAetheryte(player, sourceAetheryte, destAetheryte.id());
+        assertThat(service.isCasting(playerId)).isTrue();
+
+        assertThat(service.cancelCast(player, CastCancelReason.INTERACT)).isTrue();
+        assertThat(service.isCasting(playerId)).isFalse();
+        verify(immobilizeService).release(player);
+        verify(modelService).stopPlayerAnimation(player);
     }
 }

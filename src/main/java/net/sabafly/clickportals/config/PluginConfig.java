@@ -360,13 +360,15 @@ public record PluginConfig(
         final String validArriveAnim = rawCast.arriveAnimation() == null ? "" : rawCast.arriveAnimation().strip();
         final CastSection.CastCancelSection validCancel = new CastSection.CastCancelSection(
                 rawCast.cancelOnMoveOrDefault(true),
-                rawCast.cancelOnDamageOrDefault(true)
+                rawCast.cancelOnDamageOrDefault(true),
+                rawCast.cancelOnInteractOrDefault(true)
         );
         final CastSection validCast = new CastSection(
                 validCastTicks,
                 validPlayerModel,
                 validCastAnim,
                 validArriveAnim,
+                rawCast.immobilizeOrDefault(true),
                 validCancel
         );
 

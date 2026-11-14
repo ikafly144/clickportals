@@ -43,22 +43,70 @@ public record CastSection(
         @Comment("BetterModel player animation played after teleport arrival with PLAY_ONCE (empty to disable; in variations: null to inherit global)")
         @Nullable String arriveAnimation,
 
+        @Setting("immobilize")
+        @Comment("Whether to prevent the player from moving via PacketEvents while casting (head rotation remains allowed; in variations: null to inherit global)")
+        @Nullable Boolean immobilize,
+
         @Setting("cancel")
         @Comment("Cancellation conditions while casting")
         @Nullable CastCancelSection cancel
 ) {
 
     /**
-     * Concrete, non-null resolved cast settings after merging variation overrides with global defaults (#65).
+     * Backward-compatible constructor preserving 5-argument call sites (inherits {@code immobilize}).
+     */
+    public CastSection(
+            final @Nullable Integer ticks,
+            final @Nullable String playerModel,
+            final @Nullable String castAnimation,
+            final @Nullable String arriveAnimation,
+            final @Nullable CastCancelSection cancel
+    ) {
+        this(ticks, playerModel, castAnimation, arriveAnimation, null, cancel);
+    }
+
+    /**
+     * Concrete, non-null resolved cast settings after merging variation overrides with global defaults (#65, #67).
      */
     public record Resolved(
             int ticks,
             String playerModel,
             String castAnimation,
             String arriveAnimation,
+            boolean immobilize,
             boolean cancelOnMove,
-            boolean cancelOnDamage
+            boolean cancelOnDamage,
+            boolean cancelOnInteract
     ) {
+        /**
+         * Backward-compatible constructor preserving 6-argument call sites.
+         */
+        public Resolved(
+                final int ticks,
+                final String playerModel,
+                final String castAnimation,
+                final String arriveAnimation,
+                final boolean cancelOnMove,
+                final boolean cancelOnDamage
+        ) {
+            this(ticks, playerModel, castAnimation, arriveAnimation, true, cancelOnMove, cancelOnDamage, true);
+        }
+
+        /**
+         * Backward-compatible constructor preserving 7-argument call sites.
+         */
+        public Resolved(
+                final int ticks,
+                final String playerModel,
+                final String castAnimation,
+                final String arriveAnimation,
+                final boolean immobilize,
+                final boolean cancelOnMove,
+                final boolean cancelOnDamage
+        ) {
+            this(ticks, playerModel, castAnimation, arriveAnimation, immobilize, cancelOnMove, cancelOnDamage, true);
+        }
+
         /**
          * Returns whether casting is enabled ({@code ticks > 0}).
          */
@@ -78,20 +126,34 @@ public record CastSection(
 
             @Setting("on-damage")
             @Comment("Cancel casting when the player takes damage (in variations: null to inherit global)")
-            @Nullable Boolean onDamage
+            @Nullable Boolean onDamage,
+
+            @Setting("on-interact")
+            @Comment("Cancel casting when breaking/placing blocks, attacking entities, or interacting with other blocks/entities (in variations: null to inherit global)")
+            @Nullable Boolean onInteract
     ) {
+        /**
+         * Backward-compatible constructor preserving 2-argument call sites (inherits {@code onInteract}).
+         */
+        public CastCancelSection(
+                final @Nullable Boolean onMove,
+                final @Nullable Boolean onDamage
+        ) {
+            this(onMove, onDamage, null);
+        }
+
         /**
          * Returns the global default cancellation settings.
          */
         public static CastCancelSection defaults() {
-            return new CastCancelSection(true, true);
+            return new CastCancelSection(true, true, true);
         }
 
         /**
          * Returns an inherit-all cancellation section for variations.
          */
         public static CastCancelSection inherit() {
-            return new CastCancelSection(null, null);
+            return new CastCancelSection(null, null, null);
         }
 
         /**
@@ -107,20 +169,27 @@ public record CastSection(
         public boolean onDamageOrDefault(final boolean fallback) {
             return onDamage != null ? onDamage : fallback;
         }
+
+        /**
+         * Returns {@code onInteract} if configured, otherwise {@code fallback}.
+         */
+        public boolean onInteractOrDefault(final boolean fallback) {
+            return onInteract != null ? onInteract : fallback;
+        }
     }
 
     /**
-     * Returns the global default cast section (0 ticks = instant warp).
+     * Returns the global default cast section (0 ticks = instant warp, immobilize = true).
      */
     public static CastSection defaults() {
-        return new CastSection(0, "steve", "", "", CastCancelSection.defaults());
+        return new CastSection(0, "steve", "", "", true, CastCancelSection.defaults());
     }
 
     /**
      * Returns an inherit-all cast section for variations.
      */
     public static CastSection inherit() {
-        return new CastSection(-1, null, null, null, CastCancelSection.inherit());
+        return new CastSection(-1, null, null, null, null, CastCancelSection.inherit());
     }
 
     /**
@@ -152,6 +221,13 @@ public record CastSection(
     }
 
     /**
+     * Returns {@code immobilize} if non-null, otherwise {@code fallback}.
+     */
+    public boolean immobilizeOrDefault(final boolean fallback) {
+        return immobilize != null ? immobilize : fallback;
+    }
+
+    /**
      * Returns {@code cancel.onMove} if non-null, otherwise {@code fallback}.
      */
     public boolean cancelOnMoveOrDefault(final boolean fallback) {
@@ -166,6 +242,13 @@ public record CastSection(
     }
 
     /**
+     * Returns {@code cancel.onInteract} if non-null, otherwise {@code fallback}.
+     */
+    public boolean cancelOnInteractOrDefault(final boolean fallback) {
+        return cancel != null ? cancel.onInteractOrDefault(fallback) : fallback;
+    }
+
+    /**
      * Resolves this (potentially partial/inheriting) cast section against {@code global} defaults.
      */
     public Resolved resolve(final CastSection global) {
@@ -173,15 +256,19 @@ public record CastSection(
         final String globalModel = global.playerModelOrDefault("steve");
         final String globalCastAnim = global.castAnimationOrDefault("");
         final String globalArriveAnim = global.arriveAnimationOrDefault("");
+        final boolean globalImmobilize = global.immobilizeOrDefault(true);
         final boolean globalOnMove = global.cancelOnMoveOrDefault(true);
         final boolean globalOnDamage = global.cancelOnDamageOrDefault(true);
+        final boolean globalOnInteract = global.cancelOnInteractOrDefault(true);
         return new Resolved(
                 ticksOrDefault(globalTicks),
                 playerModelOrDefault(globalModel),
                 castAnimationOrDefault(globalCastAnim),
                 arriveAnimationOrDefault(globalArriveAnim),
+                immobilizeOrDefault(globalImmobilize),
                 cancelOnMoveOrDefault(globalOnMove),
-                cancelOnDamageOrDefault(globalOnDamage)
+                cancelOnDamageOrDefault(globalOnDamage),
+                cancelOnInteractOrDefault(globalOnInteract)
         );
     }
 
