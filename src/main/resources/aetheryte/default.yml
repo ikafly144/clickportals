@@ -132,3 +132,45 @@ bettermodel:
     on-warp-depart: ""
     # Animation played when a player arrives at this Aetheryte (leave empty to disable)
     on-warp-arrive: ""
+
+# Optional per-variation event and ambient sound overrides (null inherits global config.yml) (#77)
+sounds:
+  place:
+    sound: null
+    volume: null
+    pitch: null
+  destroy:
+    sound: null
+    volume: null
+    pitch: null
+  interact:
+    sound: null
+    volume: null
+    pitch: null
+  warp-cast-start:
+    sound: null
+    volume: null
+    pitch: null
+  warp-cast-cancel:
+    sound: null
+    volume: null
+    pitch: null
+  warp-depart:
+    sound: null
+    volume: null
+    pitch: null
+  warp-arrive:
+    sound: null
+    volume: null
+    pitch: null
+  error:
+    sound: null
+    volume: null
+    pitch: null
+  ambient:
+    enabled: null
+    sound: null
+    volume: null
+    pitch: null
+    range: null
+    interval-ticks: null

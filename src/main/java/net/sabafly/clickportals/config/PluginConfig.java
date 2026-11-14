@@ -32,6 +32,7 @@ import net.sabafly.clickportals.route.CostOverrideConfig;
 import net.sabafly.clickportals.route.DimensionRoutesConfig;
 import net.sabafly.clickportals.route.DimensionWorldConfig;
 import net.sabafly.clickportals.route.RouteEntryConfig;
+import net.sabafly.clickportals.sound.SoundsConfig;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.spongepowered.configurate.objectmapping.ConfigSerializable;
@@ -65,7 +66,11 @@ public record PluginConfig(
 
         @Setting("update-checker")
         @Comment("Automatic update check settings using the Modrinth API (#76)")
-        UpdateCheckerSection updateChecker
+        UpdateCheckerSection updateChecker,
+
+        @Setting("sounds")
+        @Comment("Global event sound effects and ambient sound settings (#77)")
+        SoundsConfig.SoundsSection sounds
 ) {
 
     /**
@@ -327,10 +332,27 @@ public record PluginConfig(
         if (updateChecker == null) {
             updateChecker = UpdateCheckerSection.defaults();
         }
+        if (sounds == null) {
+            sounds = SoundsConfig.SoundsSection.defaults();
+        }
     }
 
     /**
-     * Backward-compatible constructor defaulting {@code updateChecker} (#76).
+     * Backward-compatible constructor defaulting {@code sounds} (#77).
+     */
+    public PluginConfig(
+            final LanguageSection language,
+            final HologramSection hologram,
+            final LimitsSection limits,
+            final WarpSection warp,
+            final DimensionRoutesConfig dimensions,
+            final UpdateCheckerSection updateChecker
+    ) {
+        this(language, hologram, limits, warp, dimensions, updateChecker, SoundsConfig.SoundsSection.defaults());
+    }
+
+    /**
+     * Backward-compatible constructor defaulting {@code updateChecker} (#76) and {@code sounds} (#77).
      */
     public PluginConfig(
             final LanguageSection language,
@@ -339,7 +361,15 @@ public record PluginConfig(
             final WarpSection warp,
             final DimensionRoutesConfig dimensions
     ) {
-        this(language, hologram, limits, warp, dimensions, UpdateCheckerSection.defaults());
+        this(
+                language,
+                hologram,
+                limits,
+                warp,
+                dimensions,
+                UpdateCheckerSection.defaults(),
+                SoundsConfig.SoundsSection.defaults()
+        );
     }
 
     /**
@@ -352,7 +382,8 @@ public record PluginConfig(
                 LimitsSection.defaults(),
                 WarpSection.defaults(),
                 DimensionRoutesConfig.defaults(),
-                UpdateCheckerSection.defaults()
+                UpdateCheckerSection.defaults(),
+                SoundsConfig.SoundsSection.defaults()
         );
     }
 
@@ -516,6 +547,9 @@ public record PluginConfig(
                 validCheckInterval
         );
 
+        final SoundsConfig.SoundsSection validSounds =
+                (sounds != null ? sounds : SoundsConfig.SoundsSection.defaults()).validatedGlobal(logger);
+
         return new PluginConfig(
                 new LanguageSection(
                         validDefaultLocale,
@@ -529,7 +563,8 @@ public record PluginConfig(
                 new LimitsSection(validMaxPerPlayer, validCooldownTicks, validMinDistBetween, validMaxFavorites),
                 validWarp,
                 validDimensions,
-                validUpdateChecker
+                validUpdateChecker,
+                validSounds
         );
     }
 

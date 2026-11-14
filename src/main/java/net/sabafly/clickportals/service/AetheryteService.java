@@ -67,6 +67,8 @@ import net.sabafly.clickportals.model.NoopAetheryteModelService;
 import net.sabafly.clickportals.permission.Permissions;
 import net.sabafly.clickportals.route.DimensionRoutesConfig;
 import net.sabafly.clickportals.route.DimensionWorldConfig;
+import net.sabafly.clickportals.sound.SoundEventType;
+import net.sabafly.clickportals.sound.SoundService;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.AetheryteVariation.ClearanceSection;
 import net.sabafly.clickportals.variation.VariationRegistry;
@@ -81,7 +83,6 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.OfflinePlayer;
-import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.command.CommandSender;
@@ -290,6 +291,7 @@ public final class AetheryteService {
     private volatile Supplier<CastSection> globalCastSupplier = CastSection::defaults;
     private volatile CastImmobilizeService castImmobilizeService = NoopCastImmobilizeService.INSTANCE;
     private volatile BooleanSupplier delayedVisualRefreshSupplier = () -> false;
+    private volatile SoundService soundService = SoundService.noop();
 
     /**
      * Reasons why an in-progress warp cast can be cancelled (#65).
@@ -766,6 +768,20 @@ public final class AetheryteService {
     }
 
     /**
+     * Sets the service responsible for playing global and per-variation event and ambient sounds (#77).
+     */
+    public void setSoundService(final SoundService soundService) {
+        this.soundService = soundService != null ? soundService : SoundService.noop();
+    }
+
+    /**
+     * Returns the active {@link SoundService} (#77).
+     */
+    public SoundService soundService() {
+        return soundService;
+    }
+
+    /**
      * Sets the service responsible for immobilizing casting players (#67).
      */
     public void setCastImmobilizeService(final CastImmobilizeService castImmobilizeService) {
@@ -857,6 +873,10 @@ public final class AetheryteService {
                 case INTERACT, DIED, OTHER, QUIT, NEW_WARP -> MessageKey.WARP_CAST_CANCELLED;
             };
             messages.send(player, key);
+            final String cancelVariation = session.source != null
+                    ? session.source.variation()
+                    : session.destination.variation();
+            soundService.playToPlayer(player, SoundEventType.WARP_CAST_CANCEL, cancelVariation);
         }
         return true;
     }
@@ -2086,6 +2106,7 @@ public final class AetheryteService {
                         refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
                         pendingPlacements.remove(ownerId);
                         sendClearanceError(player, variation);
+                        soundService.playError(player, normalizedVar);
                         return;
                     }
 
@@ -2145,6 +2166,7 @@ public final class AetheryteService {
                             default -> {
                             }
                         }
+                        soundService.playError(player, normalizedVar);
                         return;
                     }
 
@@ -2163,16 +2185,11 @@ public final class AetheryteService {
                         plugin.getSLF4JLogger().warn("Failed to display hologram for newly placed Aetheryte {}", aetheryte.id(), e);
                     }
 
-                    try {
-                        world.playSound(
-                                aetheryte.markerLocation(world),
-                                Sound.BLOCK_LODESTONE_PLACE,
-                                1.0f,
-                                1.0f
-                        );
-                    } catch (final Throwable ignored) {
-                        // Sound playback is non-fatal if sound registry is unavailable in test environments
-                    }
+                    soundService.playAtLocation(
+                            aetheryte.markerLocation(world),
+                            SoundEventType.PLACE,
+                            aetheryte.variation()
+                    );
                     final ScheduledTask postPlaceScheduled = player.getScheduler().run(plugin, postPlaceTask -> {
                         try {
                             recordPlacementCooldown(player, normalizedVar);
@@ -2374,7 +2391,7 @@ public final class AetheryteService {
 
             modelService.unregisterAetheryte(removedTarget.id());
             hologramService.hideAetheryte(removedTarget.id());
-            playSoundSafely(() -> world.playSound(blockLoc, Sound.BLOCK_LODESTONE_BREAK, 1.0f, 1.0f));
+            soundService.playAtLocation(blockLoc, SoundEventType.DESTROY, removedTarget.variation());
 
             if (refundItem && player.getGameMode() != GameMode.CREATIVE) {
                 refundItemToPlayer(player, blockLoc, removedTarget.variation());
@@ -2572,14 +2589,6 @@ public final class AetheryteService {
             updateMarkerDataAt(world, updated);
             onUpdated.onUpdated(world, previous, updated);
         });
-    }
-
-    private static void playSoundSafely(final Runnable action) {
-        try {
-            action.run();
-        } catch (final Throwable ignored) {
-            // Sound playback is non-fatal if sound registry is unavailable in test environments
-        }
     }
 
     private void refreshAllVisuals(final World world, final Aetheryte aetheryte, final AetheryteVariation variation) {
@@ -2831,6 +2840,8 @@ public final class AetheryteService {
                 Placeholder.unparsed("seconds", formatCastSeconds(castSettings.ticks()))
         ));
         sendCastActionBar(player, destination.name(), castSettings.ticks(), castSettings.ticks());
+        final String castVariation = source != null ? source.variation() : destination.variation();
+        soundService.playToPlayer(player, SoundEventType.WARP_CAST_START, castVariation);
 
         final ScheduledTask castTask = player.getScheduler().runAtFixedRate(
                 plugin,
@@ -2971,6 +2982,7 @@ public final class AetheryteService {
                         inFlightWarps.remove(playerId);
                     }
                     player.sendMessage(messages.errorWarpDenied(player, messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST)));
+                    soundService.playError(player, source != null ? source.variation() : destination.variation());
                     return;
                 }
             } else {
@@ -2979,8 +2991,19 @@ public final class AetheryteService {
 
             final List<Component> warpBypassReasons = collectWarpBypassReasons(player, source, destination, rawEval, bypassCost);
 
+            final String departVariation = source != null ? source.variation() : destination.variation();
             if (source != null) {
                 modelService.triggerAnimation(source.id(), ModelAnimationTrigger.ON_WARP_DEPART);
+                soundService.playAtLocation(
+                        source.markerLocation(player.getWorld()),
+                        SoundEventType.WARP_DEPART,
+                        departVariation
+                );
+            } else {
+                final Location departLoc = player.getLocation();
+                if (departLoc != null) {
+                    soundService.playAtLocation(departLoc, SoundEventType.WARP_DEPART, departVariation);
+                }
             }
             final CompletableFuture<Void> unused = player.teleportAsync(destinationLoc).thenAccept(success -> {
                 if (playerId != null) {
@@ -3005,7 +3028,7 @@ public final class AetheryteService {
                         player.sendMessage(messages.bypassNotice(player, warpBypassReasons));
                     }
                     player.getScheduler().run(plugin, postTask -> {
-                        playSoundSafely(() -> player.playSound(destinationLoc, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f));
+                        soundService.playAtLocation(destinationLoc, SoundEventType.WARP_ARRIVE, destination.variation());
                         refreshPlayerVisuals(player, targetWorld);
                         modelService.playPlayerAnimation(
                                 player,
@@ -3113,6 +3136,7 @@ public final class AetheryteService {
                 }
             }
             messages.send(player, errorKey);
+            soundService.playError(player, destination.variation());
         }, () -> {
             if (!bypassCost) {
                 final List<CostItemQuote> unrefunded = evaluator.popPendingCharge(player, destination);

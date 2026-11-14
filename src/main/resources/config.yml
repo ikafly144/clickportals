@@ -115,3 +115,54 @@ update-checker:
   notify-on-join: true
   # How often in minutes to re-check Modrinth for updates (0 to check on startup/reload only)
   check-interval-minutes: 360
+
+# Global event sound effects and ambient sound settings (#77)
+sounds:
+  # Sound played when placing an Aetheryte
+  place:
+    sound: "minecraft:block.beacon.activate"
+    volume: 1.0
+    pitch: 1.2
+  # Sound played when removing an Aetheryte
+  destroy:
+    sound: "minecraft:block.beacon.deactivate"
+    volume: 1.0
+    pitch: 0.9
+  # Sound played when interacting with an Aetheryte
+  interact:
+    sound: "minecraft:block.amethyst_block.chime"
+    volume: 1.0
+    pitch: 1.0
+  # Sound played when warp casting begins
+  warp-cast-start:
+    sound: "minecraft:block.portal.trigger"
+    volume: 0.5
+    pitch: 1.5
+  # Sound played when warp casting is cancelled
+  warp-cast-cancel:
+    sound: "minecraft:block.note_block.bass"
+    volume: 0.8
+    pitch: 0.7
+  # Sound played at departure when a player teleports away
+  warp-depart:
+    sound: "minecraft:entity.enderman.teleport"
+    volume: 0.9
+    pitch: 1.1
+  # Sound played upon teleport arrival
+  warp-arrive:
+    sound: "minecraft:entity.enderman.teleport"
+    volume: 1.0
+    pitch: 1.2
+  # Sound played to the player on errors or denied actions
+  error:
+    sound: "minecraft:entity.villager.no"
+    volume: 0.8
+    pitch: 1.0
+  # Periodic ambient sound settings for nearby Aetherytes
+  ambient:
+    enabled: true
+    sound: "minecraft:block.beacon.ambient"
+    volume: 0.6
+    pitch: 1.2
+    range: 12.0
+    interval-ticks: 80
