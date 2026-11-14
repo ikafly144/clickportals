@@ -126,6 +126,53 @@ class AetheryteDataTypeTest {
         assertThat(restored.invitedPlayers()).containsExactlyInAnyOrder(inviteeA, inviteeB);
     }
 
+    @Test
+    void roundTripSerializationPreservesNetworkIdAndAetheryteNetworkDataType() {
+        final PersistentDataAdapterContext context = mock(PersistentDataAdapterContext.class);
+        when(context.newPersistentDataContainer()).thenAnswer(inv -> createInMemoryContainer(new HashMap<>()));
+
+        final UUID networkId = UUID.fromString("cccccccc-1111-2222-3333-444444444444");
+        final UUID worldId = UUID.fromString("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        final UUID ownerId = UUID.fromString("99999999-8888-7777-6666-555555555555");
+        final UUID invitee = UUID.fromString("dddddddd-1111-2222-3333-444444444444");
+
+        final Aetheryte withNetwork = new Aetheryte(
+                UUID.fromString("11111111-2222-3333-4444-555555555555"),
+                "ネットワーク拠点",
+                worldId,
+                "world",
+                12,
+                70,
+                -34,
+                ownerId,
+                1_700_000_000_000L,
+                "guild_net",
+                "ikafly144",
+                AetheryteVisibility.INVITE_ONLY,
+                Set.of(invitee),
+                networkId
+        );
+        final PersistentDataContainer aetherytePdc = AetheryteDataType.INSTANCE.toPrimitive(withNetwork, context);
+        final Aetheryte restoredAetheryte = AetheryteDataType.INSTANCE.fromPrimitive(aetherytePdc, context);
+        assertThat(restoredAetheryte).isEqualTo(withNetwork);
+        assertThat(restoredAetheryte.networkId()).isEqualTo(networkId);
+
+        final AetheryteNetwork network = new AetheryteNetwork(
+                networkId,
+                "Guild Net",
+                worldId,
+                "world",
+                ownerId,
+                "ikafly144",
+                1_700_000_000_000L,
+                AetheryteVisibility.INVITE_ONLY,
+                Set.of(invitee)
+        );
+        final PersistentDataContainer netPdc = AetheryteNetworkDataType.INSTANCE.toPrimitive(network, context);
+        final AetheryteNetwork restoredNet = AetheryteNetworkDataType.INSTANCE.fromPrimitive(netPdc, context);
+        assertThat(restoredNet).isEqualTo(network);
+    }
+
     @SuppressWarnings("unchecked")
     static PersistentDataContainer createInMemoryContainer(final Map<NamespacedKey, Object> store) {
         final PersistentDataContainer container = mock(PersistentDataContainer.class);

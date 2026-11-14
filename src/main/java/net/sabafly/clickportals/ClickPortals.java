@@ -130,7 +130,9 @@ public final class ClickPortals extends JavaPlugin {
                 variations,
                 () -> this.economyProvider,
                 () -> this.dimensionRouter,
-                msgService
+                msgService,
+                Bukkit::getWorld,
+                aetheryteRegistry
         );
 
         final AetheryteService service = new AetheryteService(
@@ -153,8 +155,8 @@ public final class ClickPortals extends JavaPlugin {
         service.setCostEvaluator(warpEvaluator);
         service.setEconomyProvider(this.economyProvider);
         service.setMaxFavoritesPerPlayerSupplier(() -> cfgManager.config().maxFavoritesPerPlayer());
+        service.setMaxNetworksPerPlayerSupplier(() -> cfgManager.config().limits().maxNetworksPerPlayer());
         service.setGlobalCastSupplier(() -> cfgManager.config().warp().cast());
-        service.setGlobalVisibilityCostSupplier(() -> cfgManager.config().warp().visibilityCost());
         service.setDimensionConfigSupplier(() -> cfgManager.config().dimensions());
         service.setDelayedVisualRefreshSupplier(() -> cfgManager.config().hologramDelayedRefreshFallback());
         service.setCastImmobilizeService(immobilizeService);
@@ -339,13 +341,15 @@ public final class ClickPortals extends JavaPlugin {
             this.dimensionRouter = new DimensionRouter(reloadedConfig.dimensions());
             service.setEconomyProvider(this.economyProvider);
             service.setGlobalCastSupplier(() -> cfgManager.config().warp().cast());
-            service.setGlobalVisibilityCostSupplier(() -> cfgManager.config().warp().visibilityCost());
+            service.setMaxNetworksPerPlayerSupplier(() -> cfgManager.config().limits().maxNetworksPerPlayer());
             service.setCostEvaluator(new ConfiguredWarpCostEvaluator(
                     () -> cfgManager.config(),
                     variations,
                     () -> this.economyProvider,
                     () -> this.dimensionRouter,
-                    msgService
+                    msgService,
+                    Bukkit::getWorld,
+                    aetheryteRegistry
             ));
 
             syncAllAetheryteModels();

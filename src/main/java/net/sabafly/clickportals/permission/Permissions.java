@@ -19,6 +19,7 @@ package net.sabafly.clickportals.permission;
 
 import java.util.UUID;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.aetheryte.AetheryteNetwork;
 import org.bukkit.permissions.Permissible;
 
 /**
@@ -214,9 +215,23 @@ public final class Permissions {
     }
 
     /**
+     * Checks whether the given permissible with {@code playerId} can view and warp to {@code network} (#27).
+     */
+    public static boolean canAccessVisibility(final Permissible permissible, final UUID playerId, final AetheryteNetwork network) {
+        return network.isAccessibleTo(playerId, canBypassVisibility(permissible));
+    }
+
+    /**
      * Checks whether the given permissible with {@code playerId} can manage visibility and invitees for {@code aetheryte} (#24).
      */
     public static boolean canManageVisibility(final Permissible permissible, final UUID playerId, final Aetheryte aetheryte) {
         return aetheryte.ownerId().equals(playerId) || canAdmin(permissible);
+    }
+
+    /**
+     * Checks whether the given permissible with {@code playerId} can manage {@code network} (#27).
+     */
+    public static boolean canManageNetwork(final Permissible permissible, final UUID playerId, final AetheryteNetwork network) {
+        return network.ownerId().equals(playerId) || canAdmin(permissible);
     }
 }

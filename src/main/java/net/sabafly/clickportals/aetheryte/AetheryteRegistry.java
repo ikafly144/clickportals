@@ -41,23 +41,35 @@ import org.jspecify.annotations.Nullable;
 public final class AetheryteRegistry {
 
     public static final NamespacedKey WORLD_AETHERYTES_KEY = new NamespacedKey("clickportals", "aetherytes");
+    public static final NamespacedKey WORLD_NETWORKS_KEY = new NamespacedKey("clickportals", "networks");
     public static final NamespacedKey MARKER_AETHERYTE_KEY = new NamespacedKey("clickportals", "aetheryte");
     private static final ListPersistentDataType<PersistentDataContainer, Aetheryte> LIST_TYPE =
             PersistentDataType.LIST.listTypeFrom(AetheryteDataType.INSTANCE);
+    private static final ListPersistentDataType<PersistentDataContainer, AetheryteNetwork> NETWORK_LIST_TYPE =
+            PersistentDataType.LIST.listTypeFrom(AetheryteNetworkDataType.INSTANCE);
     private static final Comparator<Aetheryte> DEFAULT_ORDER = Comparator
             .comparingLong(Aetheryte::createdAt)
             .thenComparing(Aetheryte::name)
             .thenComparing(Aetheryte::id);
+    private static final Comparator<AetheryteNetwork> NETWORK_ORDER = Comparator
+            .comparingLong(AetheryteNetwork::createdAt)
+            .thenComparing(AetheryteNetwork::name)
+            .thenComparing(AetheryteNetwork::id);
 
     /**
-     * Result of attempting to register a new Aetheryte while enforcing per-player limits (#43).
+     * Result of attempting to register a new Aetheryte while enforcing per-player limits (#43, #27).
      */
     public enum RegistrationOutcome {
         REGISTERED,
         ALREADY_EXISTS,
         TOO_CLOSE,
         GLOBAL_LIMIT_REACHED,
-        VARIATION_LIMIT_REACHED
+        VARIATION_LIMIT_REACHED,
+        NETWORK_NOT_FOUND,
+        GLOBAL_NETWORK_LIMIT_REACHED,
+        VARIATION_NETWORK_LIMIT_REACHED,
+        NETWORK_AETHERYTE_LIMIT_REACHED,
+        NETWORK_TOO_FAR
     }
 
     /**
@@ -75,21 +87,50 @@ public final class AetheryteRegistry {
     private final Map<UUID, List<Aetheryte>> byWorldCache = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> ownerCounts = new ConcurrentHashMap<>();
     private final Map<OwnerVariationKey, Integer> ownerVariationCounts = new ConcurrentHashMap<>();
+    private final Map<UUID, Integer> networkMemberCounts = new ConcurrentHashMap<>();
+    private final Map<UUID, AetheryteNetwork> networksById = new ConcurrentHashMap<>();
+    private final Map<UUID, List<AetheryteNetwork>> networksByWorldCache = new ConcurrentHashMap<>();
+    private final Map<UUID, Integer> ownerNetworkCounts = new ConcurrentHashMap<>();
     private final Set<UUID> loadedWorlds = ConcurrentHashMap.newKeySet();
     private volatile List<Aetheryte> allCache = List.of();
+    private volatile List<AetheryteNetwork> allNetworksCache = List.of();
 
     /**
-     * Loads all Aetherytes stored in the given world's {@link PersistentDataContainer} into the in-memory index.
+     * Loads all Aetherytes and networks stored in the given world's {@link PersistentDataContainer} into memory.
      */
     public synchronized List<Aetheryte> loadWorld(final World world) {
-        loadedWorlds.add(world.getUID());
+        final UUID worldId = world.getUID();
+        loadedWorlds.add(worldId);
         final PersistentDataContainer pdc = world.getPersistentDataContainer();
+
+        final List<AetheryteNetwork> storedNetworks = pdc.get(WORLD_NETWORKS_KEY, NETWORK_LIST_TYPE);
+        if (storedNetworks != null && !storedNetworks.isEmpty()) {
+            for (final AetheryteNetwork net : storedNetworks) {
+                final AetheryteNetwork normalizedNet = new AetheryteNetwork(
+                        net.id(),
+                        net.name(),
+                        worldId,
+                        world.getName(),
+                        net.ownerId(),
+                        net.ownerName(),
+                        net.createdAt(),
+                        net.visibility(),
+                        net.invitedPlayers()
+                );
+                final AetheryteNetwork previousNet = indexNetworkEntry(normalizedNet);
+                if (previousNet != null && !previousNet.worldId().equals(worldId)) {
+                    rebuildNetworkWorldCache(previousNet.worldId());
+                }
+            }
+            rebuildNetworkWorldCache(worldId);
+            rebuildAllNetworksCache();
+        }
+
         final List<Aetheryte> stored = pdc.get(WORLD_AETHERYTES_KEY, LIST_TYPE);
         if (stored == null || stored.isEmpty()) {
             return List.of();
         }
         final List<Aetheryte> loaded = new ArrayList<>(stored.size());
-        final UUID worldId = world.getUID();
         for (final Aetheryte entry : stored) {
             final Aetheryte normalized = new Aetheryte(
                     entry.id(),
@@ -104,7 +145,8 @@ public final class AetheryteRegistry {
                     entry.variation(),
                     entry.ownerName(),
                     entry.visibility(),
-                    entry.invitedPlayers()
+                    entry.invitedPlayers(),
+                    entry.networkId()
             );
             final Aetheryte previous = indexEntry(normalized);
             if (previous != null && !previous.worldId().equals(worldId)) {
@@ -159,6 +201,21 @@ public final class AetheryteRegistry {
         byWorldCache.remove(worldId);
         if (!removed.isEmpty()) {
             rebuildAllCache();
+        }
+        final List<AetheryteNetwork> removedNets = new ArrayList<>();
+        networksById.values().removeIf(net -> {
+            if (net.worldId().equals(worldId)) {
+                removedNets.add(net);
+                return true;
+            }
+            return false;
+        });
+        for (final AetheryteNetwork net : removedNets) {
+            removeNetworkFromIndexes(net);
+        }
+        networksByWorldCache.remove(worldId);
+        if (!removedNets.isEmpty()) {
+            rebuildAllNetworksCache();
         }
     }
 
@@ -216,6 +273,84 @@ public final class AetheryteRegistry {
     }
 
     /**
+     * Atomically verifies Aetheryte and network limits/distance and registers a network Aetheryte (creating a new
+     * {@link AetheryteNetwork} when {@code newNetwork != null}, or joining an existing network otherwise) (#27).
+     */
+    public synchronized RegistrationOutcome tryRegisterInNetwork(
+            final World world,
+            final Aetheryte aetheryte,
+            final @Nullable AetheryteNetwork newNetwork,
+            final int maxGlobal,
+            final int maxVariation,
+            final double minDistance,
+            final int maxGlobalNetworks,
+            final int maxVariationNetworks,
+            final int maxNetworkAetherytes,
+            final double maxNetworkDistance
+    ) {
+        final UUID worldId = world.getUID();
+        loadedWorlds.add(worldId);
+        final BlockPosKey posKey = aetheryte.posKey();
+        if (byPos.containsKey(posKey)) {
+            return RegistrationOutcome.ALREADY_EXISTS;
+        }
+        if (minDistance > 0.0 && findWithinDistance(worldId, aetheryte.blockX(), aetheryte.blockY(), aetheryte.blockZ(), minDistance).isPresent()) {
+            return RegistrationOutcome.TOO_CLOSE;
+        }
+        if (maxGlobal >= 0 && countByOwner(aetheryte.ownerId()) >= maxGlobal) {
+            return RegistrationOutcome.GLOBAL_LIMIT_REACHED;
+        }
+        if (maxVariation >= 0 && countByOwnerAndVariation(aetheryte.ownerId(), aetheryte.variation()) >= maxVariation) {
+            return RegistrationOutcome.VARIATION_LIMIT_REACHED;
+        }
+        final UUID targetNetworkId = aetheryte.networkId();
+        if (targetNetworkId == null) {
+            return RegistrationOutcome.NETWORK_NOT_FOUND;
+        }
+        if (newNetwork != null) {
+            if (!newNetwork.id().equals(targetNetworkId) || !newNetwork.worldId().equals(worldId)) {
+                return RegistrationOutcome.NETWORK_NOT_FOUND;
+            }
+            if (maxGlobalNetworks >= 0 && countNetworksByOwner(newNetwork.ownerId()) >= maxGlobalNetworks) {
+                return RegistrationOutcome.GLOBAL_NETWORK_LIMIT_REACHED;
+            }
+            if (maxVariationNetworks >= 0
+                    && countNetworksByOwnerAndVariation(newNetwork.ownerId(), aetheryte.variation()) >= maxVariationNetworks) {
+                return RegistrationOutcome.VARIATION_NETWORK_LIMIT_REACHED;
+            }
+            if (maxNetworkAetherytes == 0) {
+                return RegistrationOutcome.NETWORK_AETHERYTE_LIMIT_REACHED;
+            }
+            final AetheryteNetwork previousNet = indexNetworkEntry(newNetwork);
+            if (previousNet != null && !previousNet.worldId().equals(worldId)) {
+                rebuildNetworkWorldCache(previousNet.worldId());
+            }
+            rebuildNetworkWorldCache(worldId);
+            rebuildAllNetworksCache();
+        } else {
+            final AetheryteNetwork existingNet = networksById.get(targetNetworkId);
+            if (existingNet == null || !existingNet.worldId().equals(worldId)) {
+                return RegistrationOutcome.NETWORK_NOT_FOUND;
+            }
+            if (maxNetworkAetherytes >= 0 && countAetherytesInNetwork(targetNetworkId) >= maxNetworkAetherytes) {
+                return RegistrationOutcome.NETWORK_AETHERYTE_LIMIT_REACHED;
+            }
+            if (maxNetworkDistance > 0.0 && !isWithinNetworkDistance(
+                    targetNetworkId, worldId, aetheryte.blockX(), aetheryte.blockY(), aetheryte.blockZ(), maxNetworkDistance)) {
+                return RegistrationOutcome.NETWORK_TOO_FAR;
+            }
+        }
+        final Aetheryte existing = indexEntry(aetheryte);
+        if (existing != null && !existing.worldId().equals(worldId)) {
+            rebuildWorldCache(existing.worldId());
+        }
+        rebuildWorldCache(worldId);
+        rebuildAllCache();
+        saveWorld(world);
+        return RegistrationOutcome.REGISTERED;
+    }
+
+    /**
      * Atomically verifies position uniqueness and per-player placement limits before registering and persisting
      * a new Aetheryte (#43).
      *
@@ -266,6 +401,18 @@ public final class AetheryteRegistry {
             return Optional.empty();
         }
         removeFromIndexes(removed);
+        final UUID networkId = removed.networkId();
+        if (networkId != null && countAetherytesInNetwork(networkId) == 0) {
+            final AetheryteNetwork removedNet = networksById.remove(networkId);
+            if (removedNet != null) {
+                removeNetworkFromIndexes(removedNet);
+                rebuildNetworkWorldCache(world.getUID());
+                if (!removedNet.worldId().equals(world.getUID())) {
+                    rebuildNetworkWorldCache(removedNet.worldId());
+                }
+                rebuildAllNetworksCache();
+            }
+        }
         rebuildWorldCache(world.getUID());
         if (!removed.worldId().equals(world.getUID())) {
             rebuildWorldCache(removed.worldId());
@@ -276,7 +423,7 @@ public final class AetheryteRegistry {
     }
 
     /**
-     * Persists all in-memory Aetherytes for the given world into its {@link PersistentDataContainer}.
+     * Persists all in-memory Aetherytes and networks for the given world into its {@link PersistentDataContainer}.
      */
     public synchronized void saveWorld(final World world) {
         final List<Aetheryte> worldEntries = getByWorld(world.getUID());
@@ -286,6 +433,136 @@ public final class AetheryteRegistry {
         } else {
             pdc.set(WORLD_AETHERYTES_KEY, LIST_TYPE, worldEntries);
         }
+        final List<AetheryteNetwork> worldNetworks = getNetworksByWorld(world.getUID());
+        if (worldNetworks.isEmpty()) {
+            pdc.remove(WORLD_NETWORKS_KEY);
+        } else {
+            pdc.set(WORLD_NETWORKS_KEY, NETWORK_LIST_TYPE, worldNetworks);
+        }
+    }
+
+    /**
+     * Registers or replaces an {@link AetheryteNetwork} in memory and persists it to the world's PDC (#27).
+     */
+    public synchronized void registerNetwork(final World world, final AetheryteNetwork network) {
+        loadedWorlds.add(world.getUID());
+        final AetheryteNetwork previous = indexNetworkEntry(network);
+        if (previous != null && !previous.worldId().equals(world.getUID())) {
+            rebuildNetworkWorldCache(previous.worldId());
+        }
+        rebuildNetworkWorldCache(world.getUID());
+        rebuildAllNetworksCache();
+        saveWorld(world);
+    }
+
+    /**
+     * Atomically updates an existing {@link AetheryteNetwork} in memory and persists to the world's PDC (#27).
+     */
+    public synchronized Optional<AetheryteNetwork> updateNetwork(
+            final World world,
+            final UUID networkId,
+            final UnaryOperator<AetheryteNetwork> updater
+    ) {
+        final AetheryteNetwork existing = networksById.get(networkId);
+        if (existing == null) {
+            return Optional.empty();
+        }
+        final AetheryteNetwork updated = updater.apply(existing);
+        indexNetworkEntry(updated);
+        if (!existing.worldId().equals(updated.worldId())) {
+            rebuildNetworkWorldCache(existing.worldId());
+        }
+        rebuildNetworkWorldCache(updated.worldId());
+        if (!world.getUID().equals(updated.worldId())) {
+            rebuildNetworkWorldCache(world.getUID());
+        }
+        rebuildAllNetworksCache();
+        saveWorld(world);
+        return Optional.of(updated);
+    }
+
+    /**
+     * Unregisters an {@link AetheryteNetwork} from memory and updates the world's PDC (#27).
+     */
+    public synchronized Optional<AetheryteNetwork> unregisterNetwork(final World world, final UUID networkId) {
+        final AetheryteNetwork removed = networksById.remove(networkId);
+        if (removed == null) {
+            return Optional.empty();
+        }
+        removeNetworkFromIndexes(removed);
+        rebuildNetworkWorldCache(world.getUID());
+        if (!removed.worldId().equals(world.getUID())) {
+            rebuildNetworkWorldCache(removed.worldId());
+        }
+        rebuildAllNetworksCache();
+        saveWorld(world);
+        return Optional.of(removed);
+    }
+
+    public Optional<AetheryteNetwork> getNetworkById(final UUID networkId) {
+        return Optional.ofNullable(networksById.get(networkId));
+    }
+
+    public List<AetheryteNetwork> getNetworksByWorld(final UUID worldId) {
+        return networksByWorldCache.getOrDefault(worldId, List.of());
+    }
+
+    public List<AetheryteNetwork> getAllNetworks() {
+        return allNetworksCache;
+    }
+
+    public int countNetworksByOwner(final UUID ownerId) {
+        return ownerNetworkCounts.getOrDefault(ownerId, 0);
+    }
+
+    public int countNetworksByOwnerAndVariation(final UUID ownerId, final String variation) {
+        final String normalized = Aetheryte.normalizeVariation(variation);
+        return (int) byId.values().stream()
+                .filter(a -> a.networkId() != null && a.variation().equals(normalized))
+                .map(Aetheryte::networkId)
+                .distinct()
+                .filter(netId -> {
+                    final AetheryteNetwork net = networksById.get(netId);
+                    return net != null && net.ownerId().equals(ownerId);
+                })
+                .count();
+    }
+
+    public int countAetherytesInNetwork(final UUID networkId) {
+        return networkMemberCounts.getOrDefault(networkId, 0);
+    }
+
+    /**
+     * Checks whether the coordinates {@code (x, y, z)} in {@code worldId} are within {@code maxDistance} blocks
+     * (inclusive) of any existing Aetheryte in {@code networkId}. Returns {@code true} if the network has no loaded members
+     * in {@code worldId}.
+     */
+    public boolean isWithinNetworkDistance(
+            final UUID networkId,
+            final UUID worldId,
+            final int x,
+            final int y,
+            final int z,
+            final double maxDistance
+    ) {
+        if (maxDistance <= 0.0) {
+            return true;
+        }
+        final double maxDistSq = maxDistance * maxDistance;
+        boolean foundAnyInNetwork = false;
+        for (final Aetheryte member : getByWorld(worldId)) {
+            if (!networkId.equals(member.networkId())) {
+                continue;
+            }
+            foundAnyInNetwork = true;
+            final double dx = member.blockX() - x;
+            final double dy = member.blockY() - y;
+            final double dz = member.blockZ() - z;
+            if ((dx * dx + dy * dy + dz * dz) <= maxDistSq) {
+                return true;
+            }
+        }
+        return !foundAnyInNetwork;
     }
 
     /**
@@ -436,7 +713,12 @@ public final class AetheryteRegistry {
         byWorldCache.clear();
         ownerCounts.clear();
         ownerVariationCounts.clear();
+        networkMemberCounts.clear();
+        networksById.clear();
+        networksByWorldCache.clear();
+        ownerNetworkCounts.clear();
         allCache = List.of();
+        allNetworksCache = List.of();
     }
 
     private @Nullable Aetheryte indexEntry(final Aetheryte aetheryte) {
@@ -449,6 +731,9 @@ public final class AetheryteRegistry {
         byChunk.computeIfAbsent(chunkKey, k -> new CopyOnWriteArrayList<>()).add(aetheryte);
         ownerCounts.merge(aetheryte.ownerId(), 1, Integer::sum);
         ownerVariationCounts.merge(new OwnerVariationKey(aetheryte.ownerId(), aetheryte.variation()), 1, Integer::sum);
+        if (aetheryte.networkId() != null) {
+            networkMemberCounts.merge(aetheryte.networkId(), 1, Integer::sum);
+        }
         return existing;
     }
 
@@ -464,6 +749,44 @@ public final class AetheryteRegistry {
                 new OwnerVariationKey(existing.ownerId(), existing.variation()),
                 (k, count) -> count > 1 ? count - 1 : null
         );
+        if (existing.networkId() != null) {
+            networkMemberCounts.computeIfPresent(existing.networkId(), (k, count) -> count > 1 ? count - 1 : null);
+        }
+    }
+
+    private @Nullable AetheryteNetwork indexNetworkEntry(final AetheryteNetwork network) {
+        final AetheryteNetwork existing = networksById.put(network.id(), network);
+        if (existing != null) {
+            removeNetworkFromIndexes(existing);
+        }
+        ownerNetworkCounts.merge(network.ownerId(), 1, Integer::sum);
+        return existing;
+    }
+
+    private void removeNetworkFromIndexes(final AetheryteNetwork existing) {
+        ownerNetworkCounts.computeIfPresent(existing.ownerId(), (k, count) -> count > 1 ? count - 1 : null);
+    }
+
+    private void rebuildNetworkWorldCache(final UUID worldId) {
+        final List<AetheryteNetwork> sorted = networksById.values().stream()
+                .filter(n -> n.worldId().equals(worldId))
+                .sorted(NETWORK_ORDER)
+                .toList();
+        if (sorted.isEmpty()) {
+            networksByWorldCache.remove(worldId);
+        } else {
+            networksByWorldCache.put(worldId, sorted);
+        }
+    }
+
+    private void rebuildAllNetworksCache() {
+        if (networksById.isEmpty()) {
+            allNetworksCache = List.of();
+            return;
+        }
+        allNetworksCache = networksById.values().stream()
+                .sorted(NETWORK_ORDER)
+                .toList();
     }
 
     private void rebuildWorldCache(final UUID worldId) {

@@ -36,6 +36,12 @@ dialog:
     bypass-notice: "<yellow>Bypassed restrictions: </yellow><white><reasons></white>"
     name-input-label: "<aqua>Aetheryte Name</aqua>"
     default-name: "<player>'s Aetheryte"
+    visibility-label: "<aqua>Initial Visibility</aqua>"
+    network-mode-label: "<aqua>Network</aqua>"
+    network-name-label: "<aqua>New Network Name (optional)</aqua>"
+    network-option-create: "<green>+ Create New Network</green>"
+    network-option-join: "<aqua>Join: </aqua><white><name></white> <dark_gray>(</dark_gray><visibility><dark_gray>)</dark_gray>"
+    network-cost: "<gray>Network fee — Create: </gray><create_cost> <dark_gray>|</dark_gray> <gray>Join: </gray><join_cost>"
   button:
     confirm-create: "<green><bold>Place</bold></green>"
     cancel: "<gray>Cancel</gray>"
@@ -55,6 +61,8 @@ dialog:
     open-rename: "<aqua>✏ Rename Aetheryte</aqua>"
     open-rename-tooltip: "<gray>Change the display name of this Aetheryte</gray>"
     confirm-rename: "<green><bold>Rename</bold></green>"
+    rename-network: "<aqua>✏ Rename Network</aqua>"
+    rename-network-tooltip: "<gray>Change the name of this Aetheryte's network</gray>"
     admin-force-remove: "<dark_red>🗑 [Admin] Force Remove (No Refund)</dark_red>"
     admin-force-remove-tooltip: "<gray>Delete this Aetheryte without returning an item</gray>"
     confirm-force-remove: "<dark_red><bold>Force Remove</bold></dark_red>"
@@ -130,6 +138,10 @@ dialog:
     title: "<aqua><bold>Rename Aetheryte</bold></aqua>"
     body: "<gray>Current name: </gray><white><name></white>"
     input-label: "<aqua>New Aetheryte Name</aqua>"
+  rename-network:
+    title: "<aqua><bold>Rename Network</bold></aqua>"
+    body: "<gray>Current network name: </gray><white><name></white>"
+    input-label: "<aqua>New Network Name</aqua>"
   force-remove:
     title: "<dark_red><bold>Confirm Force Removal: </bold></dark_red><white><name></white>"
     body: "<gray>Are you sure you want to force-remove \"</gray><white><name></white><gray>\"?</gray><newline><red>No Aetheryte item will be refunded.</red>"
@@ -144,8 +156,7 @@ dialog:
   visibility:
     title: "<aqua>👁 Visibility & Access: </aqua><white><bold><name></bold></white>"
     body: "<gray>Current visibility: </gray><visibility><newline><gray>Invited players: </gray><white><invited></white><newline><gray>Select a visibility mode or manage invited players.</gray>"
-    tooltip-charge: "<gray>Switch to </gray><mode><newline><yellow>Additional cost: </yellow><cost>"
-    tooltip-refund: "<gray>Switch to </gray><mode><newline><green>Refund: </green><cost>"
+    tooltip-charge: "<gray>Switch to </gray><mode><newline><yellow>Cost: </yellow><cost>"
     tooltip-no-change: "<gray>Switch to </gray><mode><newline><gray>No cost adjustment</gray>"
   invite-add:
     title: "<green><bold>Invite Player: </bold></green><white><name></white>"
@@ -162,11 +173,14 @@ visibility:
   invite-only: "<gold>Invite Only</gold>"
   owner-only: "<red>Owner Only</red>"
 
+network:
+  none: "<gray>None</gray>"
+
 aetheryte:
   created: "<prefix><green>Placed Aetheryte \"</green><white><bold><name></bold></white><green>\".</green>"
   visibility-changed: "<prefix><green>Updated visibility of \"</green><white><name></white><green>\" to </green><visibility><green>.</green>"
-  visibility-cost-charged: "<prefix><yellow>Charged additional visibility cost: </yellow><cost>"
-  visibility-cost-refunded: "<prefix><green>Refunded visibility cost difference: </green><cost>"
+  visibility-cost-charged: "<prefix><yellow>Charged visibility cost: </yellow><cost>"
+  network-renamed: "<prefix><green>Renamed network to \"</green><white><bold><name></bold></white><green>\".</green>"
   invitee-added: "<prefix><green>Invited </green><aqua><player></aqua><green> to \"</green><white><name></white><green>\".</green>"
   invitee-removed: "<prefix><yellow>Removed </yellow><aqua><player></aqua><yellow> from the invite list of \"</yellow><white><name></white><yellow>\".</yellow>"
   removed: "<prefix><yellow>Removed Aetheryte \"</yellow><white><bold><name></bold></white><yellow>\".</yellow>"
@@ -233,6 +247,13 @@ error:
   invite-self: "<prefix><red>The owner already has access and cannot be invited.</red>"
   already-invited: "<prefix><yellow><player> is already invited to this Aetheryte.</yellow>"
   not-invited: "<prefix><red>That player is not on the invite list.</red>"
+  network-not-found: "<prefix><red>The selected network no longer exists in this world.</red>"
+  network-not-joinable: "<prefix><red>You do not have permission to add Aetherytes to that network.</red>"
+  network-limit-global: "<prefix><red>You have reached the maximum number of networks you can own (<max>).</red>"
+  network-limit-variation: "<prefix><red>You have reached the network limit for <variation> (<max>).</red>"
+  network-aetheryte-limit: "<prefix><red>That network has reached its maximum number of Aetherytes (<max>).</red>"
+  network-too-far: "<prefix><red>Too far from existing Aetherytes in that network (max <distance> blocks).</red>"
+  cannot-manage-network: "<prefix><red>Only the network owner can manage this network's settings.</red>"
 
 command:
   given-item: "<prefix><green>Gave <amount> Aetheryte(s) to </green><white><player></white><green>.</green>"

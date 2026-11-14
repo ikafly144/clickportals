@@ -36,6 +36,12 @@ dialog:
     bypass-notice: "<yellow>バイパス中の制限: </yellow><white><reasons></white>"
     name-input-label: "<aqua>エーテライト名</aqua>"
     default-name: "<player>のエーテライト"
+    visibility-label: "<aqua>初期公開範囲</aqua>"
+    network-mode-label: "<aqua>ネットワーク</aqua>"
+    network-name-label: "<aqua>新規ネットワーク名（任意）</aqua>"
+    network-option-create: "<green>+ 新しいネットワークを作成</green>"
+    network-option-join: "<aqua>参加: </aqua><white><name></white> <dark_gray>(</dark_gray><visibility><dark_gray>)</dark_gray>"
+    network-cost: "<gray>ネットワーク費用 — 新規作成: </gray><create_cost> <dark_gray>|</dark_gray> <gray>参加: </gray><join_cost>"
   button:
     confirm-create: "<green><bold>設置する</bold></green>"
     cancel: "<gray>キャンセル</gray>"
@@ -55,6 +61,8 @@ dialog:
     open-rename: "<aqua>✏ 名前を変更</aqua>"
     open-rename-tooltip: "<gray>このエーテライトの表示名を変更します</gray>"
     confirm-rename: "<green><bold>変更する</bold></green>"
+    rename-network: "<aqua>✏ ネットワーク名を変更</aqua>"
+    rename-network-tooltip: "<gray>このエーテライトが属するネットワーク名を変更します</gray>"
     admin-force-remove: "<dark_red>🗑 [Admin] アイテム返却なしで削除</dark_red>"
     admin-force-remove-tooltip: "<gray>アイテムを返却せずにこのエーテライトを強制削除します</gray>"
     confirm-force-remove: "<dark_red><bold>強制削除する</bold></dark_red>"
@@ -130,6 +138,10 @@ dialog:
     title: "<aqua><bold>エーテライト名の変更</bold></aqua>"
     body: "<gray>現在の名前: </gray><white><name></white>"
     input-label: "<aqua>新しいエーテライト名</aqua>"
+  rename-network:
+    title: "<aqua><bold>ネットワーク名の変更</bold></aqua>"
+    body: "<gray>現在のネットワーク名: </gray><white><name></white>"
+    input-label: "<aqua>新しいネットワーク名</aqua>"
   force-remove:
     title: "<dark_red><bold>強制削除の確認: </bold></dark_red><white><name></white>"
     body: "<gray>本当に「</gray><white><name></white><gray>」を強制削除しますか？</gray><newline><red>アイテムは返却されません。</red>"
@@ -144,8 +156,7 @@ dialog:
   visibility:
     title: "<aqua>👁 公開設定・招待管理: </aqua><white><bold><name></bold></white>"
     body: "<gray>現在の公開設定: </gray><visibility><newline><gray>招待中プレイヤー数: </gray><white><invited></white><newline><gray>公開モードの変更または招待プレイヤーの編集を行ってください。</gray>"
-    tooltip-charge: "<mode><gray> に変更します</gray><newline><yellow>追加コスト: </yellow><cost>"
-    tooltip-refund: "<mode><gray> に変更します</gray><newline><green>返金: </green><cost>"
+    tooltip-charge: "<mode><gray> に変更します</gray><newline><yellow>コスト: </yellow><cost>"
     tooltip-no-change: "<mode><gray> に変更します</gray><newline><gray>コストの増減はありません</gray>"
   invite-add:
     title: "<green><bold>プレイヤーを招待: </bold></green><white><name></white>"
@@ -162,11 +173,14 @@ visibility:
   invite-only: "<gold>招待のみ</gold>"
   owner-only: "<red>所有者のみ</red>"
 
+network:
+  none: "<gray>なし</gray>"
+
 aetheryte:
   created: "<prefix><green>エーテライト「</green><white><bold><name></bold></white><green>」を設置しました。</green>"
-  visibility-changed: "<prefix><green>エーテライト「</green><white><name></white><green>」の公開設定を </green><visibility><green> に変更しました。</green>"
-  visibility-cost-charged: "<prefix><yellow>公開設定変更の追加コストを支払いました: </yellow><cost>"
-  visibility-cost-refunded: "<prefix><green>公開設定変更による差額を返金しました: </green><cost>"
+  visibility-changed: "<prefix><green>「</green><white><name></white><green>」の公開設定を </green><visibility><green> に変更しました。</green>"
+  visibility-cost-charged: "<prefix><yellow>公開設定変更のコストを支払いました: </yellow><cost>"
+  network-renamed: "<prefix><green>ネットワーク名を「</green><white><bold><name></bold></white><green>」に変更しました。</green>"
   invitee-added: "<prefix><aqua><player></aqua><green> を「</green><white><name></white><green>」へ招待しました。</green>"
   invitee-removed: "<prefix><aqua><player></aqua><yellow> を「</yellow><white><name></white><yellow>」の招待リストから削除しました。</yellow>"
   removed: "<prefix><yellow>エーテライト「</yellow><white><bold><name></bold></white><yellow>」を撤去しました。</yellow>"
@@ -231,8 +245,15 @@ error:
   network-mismatch: "<red>接続先のネットワークにはワープできません</red>"
   visibility-unchanged: "<prefix><yellow>すでにその公開設定になっています。</yellow>"
   invite-self: "<prefix><red>所有者はすでにアクセスできるため招待できません。</red>"
-  already-invited: "<prefix><yellow><player> はすでにこのエーテライトに招待されています。</yellow>"
+  already-invited: "<prefix><yellow><player> はすでに招待されています。</yellow>"
   not-invited: "<prefix><red>そのプレイヤーは招待リストに含まれていません。</red>"
+  network-not-found: "<prefix><red>選択したネットワークはこのワールドに存在しません。</red>"
+  network-not-joinable: "<prefix><red>そのネットワークにエーテライトを追加する権限がありません。</red>"
+  network-limit-global: "<prefix><red>所有できるネットワークの総数上限（<max> 件）に達しています。</red>"
+  network-limit-variation: "<prefix><red><variation> のネットワーク作成上限（<max> 件）に達しています。</red>"
+  network-aetheryte-limit: "<prefix><red>そのネットワークのエーテライト登録上限（<max> 基）に達しています。</red>"
+  network-too-far: "<prefix><red>ネットワーク内の既存エーテライトから離れすぎています（最大 <distance> ブロック）。</red>"
+  cannot-manage-network: "<prefix><red>このネットワークの設定を変更できるのはネットワーク所有者のみです。</red>"
 
 command:
   given-item: "<prefix><white><player></white><green> にエーテライトを <amount> 個付与しました。</green>"

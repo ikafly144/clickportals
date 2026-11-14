@@ -42,7 +42,8 @@ public record Aetheryte(
         String variation,
         @Nullable String ownerName,
         AetheryteVisibility visibility,
-        Set<UUID> invitedPlayers
+        Set<UUID> invitedPlayers,
+        @Nullable UUID networkId
 ) {
 
     /**
@@ -75,7 +76,7 @@ public record Aetheryte(
             final long createdAt
     ) {
         this(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt,
-                DEFAULT_VARIATION, null, AetheryteVisibility.PUBLIC, Set.of());
+                DEFAULT_VARIATION, null, AetheryteVisibility.PUBLIC, Set.of(), null);
     }
 
     /**
@@ -94,7 +95,7 @@ public record Aetheryte(
             final String variation
     ) {
         this(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt,
-                variation, null, AetheryteVisibility.PUBLIC, Set.of());
+                variation, null, AetheryteVisibility.PUBLIC, Set.of(), null);
     }
 
     /**
@@ -114,7 +115,29 @@ public record Aetheryte(
             @Nullable final String ownerName
     ) {
         this(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt,
-                variation, ownerName, AetheryteVisibility.PUBLIC, Set.of());
+                variation, ownerName, AetheryteVisibility.PUBLIC, Set.of(), null);
+    }
+
+    /**
+     * Convenience constructor defaulting {@code networkId} to {@code null} (#27).
+     */
+    public Aetheryte(
+            final UUID id,
+            final String name,
+            final UUID worldId,
+            final String worldName,
+            final int blockX,
+            final int blockY,
+            final int blockZ,
+            final UUID ownerId,
+            final long createdAt,
+            final String variation,
+            @Nullable final String ownerName,
+            final AetheryteVisibility visibility,
+            final Set<UUID> invitedPlayers
+    ) {
+        this(id, name, worldId, worldName, blockX, blockY, blockZ, ownerId, createdAt,
+                variation, ownerName, visibility, invitedPlayers, null);
     }
 
     /**
@@ -132,7 +155,7 @@ public record Aetheryte(
      */
     public Aetheryte withName(final String newName) {
         return new Aetheryte(id, newName, worldId, worldName, blockX, blockY, blockZ,
-                ownerId, createdAt, variation, ownerName, visibility, invitedPlayers);
+                ownerId, createdAt, variation, ownerName, visibility, invitedPlayers, networkId);
     }
 
     /**
@@ -140,7 +163,7 @@ public record Aetheryte(
      */
     public Aetheryte withOwner(final UUID newOwnerId, @Nullable final String newOwnerName) {
         return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ,
-                newOwnerId, createdAt, variation, newOwnerName, visibility, invitedPlayers);
+                newOwnerId, createdAt, variation, newOwnerName, visibility, invitedPlayers, networkId);
     }
 
     /**
@@ -148,7 +171,7 @@ public record Aetheryte(
      */
     public Aetheryte withOwnerName(@Nullable final String newOwnerName) {
         return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ,
-                ownerId, createdAt, variation, newOwnerName, visibility, invitedPlayers);
+                ownerId, createdAt, variation, newOwnerName, visibility, invitedPlayers, networkId);
     }
 
     /**
@@ -156,7 +179,7 @@ public record Aetheryte(
      */
     public Aetheryte withVariation(final String newVariation) {
         return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ,
-                ownerId, createdAt, newVariation, ownerName, visibility, invitedPlayers);
+                ownerId, createdAt, newVariation, ownerName, visibility, invitedPlayers, networkId);
     }
 
     /**
@@ -164,7 +187,7 @@ public record Aetheryte(
      */
     public Aetheryte withVisibility(final AetheryteVisibility newVisibility) {
         return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ,
-                ownerId, createdAt, variation, ownerName, newVisibility, invitedPlayers);
+                ownerId, createdAt, variation, ownerName, newVisibility, invitedPlayers, networkId);
     }
 
     /**
@@ -172,7 +195,15 @@ public record Aetheryte(
      */
     public Aetheryte withInvitedPlayers(final Set<UUID> newInvitees) {
         return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ,
-                ownerId, createdAt, variation, ownerName, visibility, newInvitees);
+                ownerId, createdAt, variation, ownerName, visibility, newInvitees, networkId);
+    }
+
+    /**
+     * Returns a copy of this Aetheryte with an updated network ID ({@code null} for standalone Aetherytes) (#27).
+     */
+    public Aetheryte withNetworkId(final @Nullable UUID newNetworkId) {
+        return new Aetheryte(id, name, worldId, worldName, blockX, blockY, blockZ,
+                ownerId, createdAt, variation, ownerName, visibility, invitedPlayers, newNetworkId);
     }
 
     /**

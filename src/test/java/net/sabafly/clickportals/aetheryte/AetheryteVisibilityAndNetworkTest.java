@@ -25,12 +25,16 @@ import static org.mockito.Mockito.when;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import org.jspecify.annotations.Nullable;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import net.sabafly.clickportals.aetheryte.AetheryteRegistry.RegistrationOutcome;
 import net.sabafly.clickportals.config.CastSection;
 import net.sabafly.clickportals.config.ConfigManager;
 import net.sabafly.clickportals.config.DistanceSection;
@@ -41,7 +45,6 @@ import net.sabafly.clickportals.config.PluginConfig.LimitsSection;
 import net.sabafly.clickportals.config.PluginConfig.WarpSection;
 import net.sabafly.clickportals.config.VisibilityCostSection;
 import net.sabafly.clickportals.cost.CostBundle;
-import net.sabafly.clickportals.cost.CostBundle.QuoteDelta;
 import net.sabafly.clickportals.cost.CostEntry;
 import net.sabafly.clickportals.cost.CostQuote;
 import net.sabafly.clickportals.cost.CostType;
@@ -55,13 +58,19 @@ import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation;
 import net.sabafly.clickportals.service.AetheryteService.WarpEvaluation.DenyReason;
 import net.sabafly.clickportals.service.ConfiguredWarpCostEvaluator;
 import net.sabafly.clickportals.variation.AetheryteVariation;
+import net.sabafly.clickportals.variation.AetheryteVariation.NetworkCostSection;
+import net.sabafly.clickportals.variation.AetheryteVariation.NetworkLimitSection;
+import net.sabafly.clickportals.variation.AetheryteVariation.NetworkSection;
 import net.sabafly.clickportals.variation.AetheryteVariation.PlacementSection;
+import net.sabafly.clickportals.variation.AetheryteVariation.VariationType;
 import net.sabafly.clickportals.variation.AetheryteVariation.WarpOverrideSection;
 import net.sabafly.clickportals.variation.VariationLoader;
 import net.sabafly.clickportals.variation.VariationRegistry;
 import org.bukkit.Location;
+import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
+import org.bukkit.persistence.PersistentDataContainer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
@@ -111,85 +120,115 @@ class AetheryteVisibilityAndNetworkTest {
     }
 
     @Test
-    void networkRoutingRulesAllowSameNetworkAndWildcardWhileBlockingIsolatedNetworks() {
-        final AetheryteVariation defVar = AetheryteVariation.defaultVariation();
-        final AetheryteVariation urbanVar = variationWithNetwork("urban", "urban", List.of("urban"),
-                VisibilityCostSection.inherit());
-        final AetheryteVariation hubVar = variationWithNetwork("hub", "default", List.of("*"),
-                VisibilityCostSection.inherit());
+    void strictRoutingAndNetworkAccessRulesEnforceIsolationAndPermissions() {
+        final UUID netA = UUID.randomUUID();
+        final UUID netB = UUID.randomUUID();
+        final Aetheryte normalA = aetheryte("NormalA", "default", AetheryteVisibility.PUBLIC, Set.of());
+        final Aetheryte normalB = aetheryte("NormalB", "default", AetheryteVisibility.PUBLIC, Set.of());
+        final Aetheryte netAMember1 = aetheryteWithNetwork("NetA1", "net_var", netA);
+        final Aetheryte netAMember2 = aetheryteWithNetwork("NetA2", "net_var", netA);
+        final Aetheryte netBMember = aetheryteWithNetwork("NetB1", "net_var", netB);
 
-        assertThat(WarpDestinationQuery.canRouteBetweenVariations(defVar, defVar)).isTrue();
-        assertThat(WarpDestinationQuery.canRouteBetweenVariations(defVar, urbanVar)).isFalse();
-        assertThat(WarpDestinationQuery.canRouteBetweenVariations(urbanVar, defVar)).isFalse();
-        assertThat(WarpDestinationQuery.canRouteBetweenVariations(urbanVar, urbanVar)).isTrue();
-        assertThat(WarpDestinationQuery.canRouteBetweenVariations(hubVar, urbanVar)).isTrue();
-        assertThat(WarpDestinationQuery.canRouteBetweenVariations(hubVar, defVar)).isTrue();
+        assertThat(WarpDestinationQuery.canRouteBetweenAetherytes(normalA, normalB)).isTrue();
+        assertThat(WarpDestinationQuery.canRouteBetweenAetherytes(normalA, netAMember1)).isFalse();
+        assertThat(WarpDestinationQuery.canRouteBetweenAetherytes(netAMember1, normalA)).isFalse();
+        assertThat(WarpDestinationQuery.canRouteBetweenAetherytes(netAMember1, netAMember2)).isTrue();
+        assertThat(WarpDestinationQuery.canRouteBetweenAetherytes(netAMember1, netBMember)).isFalse();
+
+        final AetheryteNetwork network = new AetheryteNetwork(
+                netA, "AlphaNet", WORLD_ID, "world", OWNER_ID, "Owner", 1L,
+                AetheryteVisibility.INVITE_ONLY, Set.of(INVITED_ID));
+        final Player owner = mockPlayer(OWNER_ID, "Owner");
+        final Player invited = mockPlayer(INVITED_ID, "Invited");
+        final Player stranger = mockPlayer(STRANGER_ID, "Stranger");
+
+        assertThat(network.canJoin(OWNER_ID, false)).isTrue();
+        assertThat(network.canJoin(INVITED_ID, false)).isTrue();
+        assertThat(network.canJoin(STRANGER_ID, false)).isFalse();
+        assertThat(network.canJoin(STRANGER_ID, true)).isTrue();
+
+        assertThat(Permissions.canAccessVisibility(owner, OWNER_ID, network)).isTrue();
+        assertThat(Permissions.canAccessVisibility(invited, INVITED_ID, network)).isTrue();
+        assertThat(Permissions.canAccessVisibility(stranger, STRANGER_ID, network)).isFalse();
+        when(stranger.hasPermission(Permissions.BYPASS_VISIBILITY)).thenReturn(true);
+        assertThat(Permissions.canAccessVisibility(stranger, STRANGER_ID, network)).isTrue();
+
+        assertThat(Permissions.canManageNetwork(owner, OWNER_ID, network)).isTrue();
+        assertThat(Permissions.canManageNetwork(invited, INVITED_ID, network)).isFalse();
+        when(stranger.hasPermission(Permissions.ADMIN)).thenReturn(true);
+        assertThat(Permissions.canManageNetwork(stranger, STRANGER_ID, network)).isTrue();
     }
 
     @Test
-    void visibilityCostMultipliersScaleQuotesAndComputeDeltaChargesAndRefunds() {
-        final VisibilityCostSection global = new VisibilityCostSection(1.0, 1.5, 2.0);
-        final VisibilityCostSection partialOverride = new VisibilityCostSection(null, null, 3.0);
-        final VisibilityCostSection resolved = partialOverride.resolve(global);
+    void visibilityCostListsSupportNullFallbackAndExplicitEmptyFree() {
+        final List<CostEntry> baseCost = List.of(CostEntry.of(CostType.VAULT, "100"));
+        final List<CostEntry> ownerCost = List.of(CostEntry.of(CostType.VAULT, "500"), CostEntry.of(CostType.EXP_LEVELS, "5"));
+        final VisibilityCostSection override = new VisibilityCostSection(null, List.of(), ownerCost);
+        final VisibilityCostSection fallback = new VisibilityCostSection(
+                List.of(CostEntry.of(CostType.VAULT, "25")),
+                List.of(CostEntry.of(CostType.VAULT, "200")),
+                null
+        );
 
-        assertThat(resolved.multiplierFor(AetheryteVisibility.PUBLIC)).isEqualTo(1.0);
-        assertThat(resolved.multiplierFor(AetheryteVisibility.INVITE_ONLY)).isEqualTo(1.5);
-        assertThat(resolved.multiplierFor(AetheryteVisibility.OWNER_ONLY)).isEqualTo(3.0);
+        final VisibilityCostSection resolved = override.resolve(fallback);
+        assertThat(resolved.costFor(AetheryteVisibility.PUBLIC)).containsExactly(CostEntry.of(CostType.VAULT, "25"));
+        // Explicit [] (empty list) is preserved and does NOT inherit fallback or base cost
+        assertThat(resolved.costFor(AetheryteVisibility.INVITE_ONLY)).isNotNull().isEmpty();
+        assertThat(resolved.costFor(AetheryteVisibility.OWNER_ONLY)).isEqualTo(ownerCost);
 
-        final CostBundle bundle = new CostBundle(List.of(
-                CostEntry.of(CostType.VAULT, "100"),
-                CostEntry.of(CostType.EXP_LEVELS, "10")
-        ));
+        // Standalone visibility cost with null PUBLIC -> falls back to caller's base cost
+        final List<CostEntry> effectivePublic = override.costFor(AetheryteVisibility.PUBLIC) != null
+                ? override.costFor(AetheryteVisibility.PUBLIC)
+                : baseCost;
+        assertThat(effectivePublic).isEqualTo(baseCost);
+
+        // Full target visibility quote always reflects target tier directly
         final EconomyProvider economy = mock(EconomyProvider.class);
         when(economy.isAvailable()).thenReturn(true);
-        when(economy.getBalance(any())).thenReturn(250.0);
-
+        when(economy.getBalance(any())).thenReturn(1000.0);
         final Player player = mockPlayer(OWNER_ID, "Owner");
-        when(player.getLevel()).thenReturn(20);
+        when(player.getLevel()).thenReturn(10);
 
-        final CostQuote publicQuote = bundle.quote(player, Map.of(), economy, resolved.multiplierFor(AetheryteVisibility.PUBLIC));
-        final CostQuote inviteQuote = bundle.quote(player, Map.of(), economy, resolved.multiplierFor(AetheryteVisibility.INVITE_ONLY));
-        final CostQuote ownerQuote = bundle.quote(player, Map.of(), economy, resolved.multiplierFor(AetheryteVisibility.OWNER_ONLY));
+        final CostQuote ownerQuote = new CostBundle(Objects.requireNonNull(resolved.costFor(AetheryteVisibility.OWNER_ONLY)))
+                .quote(player, Map.of(), economy);
+        assertThat(ownerQuote.items()).hasSize(2);
+        assertThat(ownerQuote.items().get(0).amount()).isEqualTo(500.0);
+        assertThat(ownerQuote.items().get(1).amount()).isEqualTo(5.0);
 
-        assertThat(publicQuote.items().get(0).amount()).isEqualTo(100.0);
-        assertThat(publicQuote.items().get(1).amount()).isEqualTo(10.0);
-        assertThat(inviteQuote.items().get(0).amount()).isEqualTo(150.0);
-        assertThat(inviteQuote.items().get(1).amount()).isEqualTo(15.0);
-        assertThat(ownerQuote.items().get(0).amount()).isEqualTo(300.0);
-        assertThat(ownerQuote.items().get(1).amount()).isEqualTo(30.0);
-
-        // PUBLIC -> INVITE_ONLY: extra charge of 50 Vault and 5 levels, affordable with 250 / 20
-        final QuoteDelta upgradeSmall = CostBundle.computeQuoteDelta(player, economy, publicQuote, inviteQuote);
-        assertThat(upgradeSmall.refund().isFree()).isTrue();
-        assertThat(upgradeSmall.additionalCharge().affordable()).isTrue();
-        assertThat(upgradeSmall.additionalCharge().items()).hasSize(2);
-        assertThat(upgradeSmall.additionalCharge().items().get(0).amount()).isEqualTo(50.0);
-        assertThat(upgradeSmall.additionalCharge().items().get(1).amount()).isEqualTo(5.0);
-
-        // Make player poorer and verify unaffordable upgrade check
-        when(player.getLevel()).thenReturn(5);
-        final QuoteDelta unaffordableUpgrade = CostBundle.computeQuoteDelta(player, economy, publicQuote, ownerQuote);
-        assertThat(unaffordableUpgrade.additionalCharge().affordable()).isFalse();
-
-        // OWNER_ONLY -> PUBLIC: refund of 200 Vault and 20 levels, no charge
-        final QuoteDelta downgrade = CostBundle.computeQuoteDelta(player, economy, ownerQuote, publicQuote);
-        assertThat(downgrade.additionalCharge().isFree()).isTrue();
-        assertThat(downgrade.refund().items()).hasSize(2);
-        assertThat(downgrade.refund().items().get(0).amount()).isEqualTo(200.0);
-        assertThat(downgrade.refund().items().get(1).amount()).isEqualTo(20.0);
+        final CostQuote freeInviteQuote = new CostBundle(Objects.requireNonNull(resolved.costFor(AetheryteVisibility.INVITE_ONLY)))
+                .quote(player, Map.of(), economy);
+        assertThat(freeInviteQuote.isFree()).isTrue();
     }
 
     @Test
-    void configuredWarpCostEvaluatorEnforcesVisibilityNetworkAndVisibilityMultiplier() {
+    void configuredWarpCostEvaluatorResolvesPerVisibilityCostAndNetworkVisibility() {
         final Messages messages = Messages.defaults();
-        final World world = mock(World.class);
-        when(world.getUID()).thenReturn(WORLD_ID);
-        when(world.getName()).thenReturn("world");
+        final Map<NamespacedKey, Object> worldPdcStore = new HashMap<>();
+        final World world = mockWorld(WORLD_ID, "world", worldPdcStore);
 
-        final VisibilityCostSection globalVisCost = new VisibilityCostSection(1.0, 1.5, 2.0);
+        final AetheryteRegistry aetheryteRegistry = new AetheryteRegistry();
+        final UUID privateNetId = UUID.randomUUID();
+        final UUID invitedNetId = UUID.randomUUID();
+        final UUID otherNetId = UUID.randomUUID();
+
+        aetheryteRegistry.registerNetwork(world, new AetheryteNetwork(
+                privateNetId, "PrivateNet", WORLD_ID, "world", OWNER_ID, "Owner", 1L,
+                AetheryteVisibility.OWNER_ONLY, Set.of()));
+        aetheryteRegistry.registerNetwork(world, new AetheryteNetwork(
+                invitedNetId, "InvitedNet", WORLD_ID, "world", OWNER_ID, "Owner", 2L,
+                AetheryteVisibility.INVITE_ONLY, Set.of(STRANGER_ID)));
+        aetheryteRegistry.registerNetwork(world, new AetheryteNetwork(
+                otherNetId, "OtherNet", WORLD_ID, "world", OWNER_ID, "Owner", 3L,
+                AetheryteVisibility.PUBLIC, Set.of()));
+
+        final VisibilityCostSection globalVisCost = new VisibilityCostSection(
+                List.of(CostEntry.of(CostType.VAULT, "20")),
+                List.of(CostEntry.of(CostType.VAULT, "75")),
+                null
+        );
         final WarpSection warpSection = new WarpSection(
                 DistanceSection.defaults(),
-                List.of(CostEntry.of(CostType.VAULT, "100")),
+                List.of(CostEntry.of(CostType.VAULT, "40")),
                 true,
                 CastSection.defaults(),
                 globalVisCost
@@ -202,13 +241,28 @@ class AetheryteVisibilityAndNetworkTest {
                 DimensionRoutesConfig.defaults()
         );
 
+        // Source variation overrides PUBLIC as free ([]), inherits INVITE_ONLY (null -> falls back to var base null -> global visibility-cost 75),
+        // and overrides OWNER_ONLY to 300
         final AetheryteVariation defVar = AetheryteVariation.defaultVariation();
-        final AetheryteVariation urbanVar = variationWithNetwork("urban", "urban", List.of("urban"),
-                VisibilityCostSection.inherit());
-        final VariationRegistry registry = new VariationRegistry(
+        final AetheryteVariation netVar = networkVariation(
+                "net_var",
+                new VisibilityCostSection(List.of(), null, List.of(CostEntry.of(CostType.VAULT, "300"))),
+                null,
+                new NetworkSection(NetworkLimitSection.defaults(), NetworkCostSection.defaults())
+        );
+        // Variation with explicit base warp cost [VAULT 120] and null invite-only override -> falls back to var warp.cost (120), NOT global visibility-cost
+        final AetheryteVariation baseFallbackVar = networkVariation(
+                "base_var",
+                new VisibilityCostSection(null, null, null),
+                List.of(CostEntry.of(CostType.VAULT, "120")),
+                NetworkSection.defaults()
+        );
+
+        final VariationRegistry variationRegistry = new VariationRegistry(
                 Map.of(
                         Aetheryte.DEFAULT_VARIATION, defVar,
-                        "urban", urbanVar
+                        "net_var", netVar,
+                        "base_var", baseFallbackVar
                 ),
                 LoggerFactory.getLogger(VariationRegistry.class)
         );
@@ -217,99 +271,226 @@ class AetheryteVisibilityAndNetworkTest {
         when(economy.isAvailable()).thenReturn(true);
         when(economy.getBalance(any())).thenReturn(500.0);
         when(economy.has(any(), anyDouble())).thenAnswer(inv -> (double) inv.getArgument(1) <= 500.0);
-        when(economy.format(anyDouble())).thenAnswer(inv -> {
-            final double amt = inv.getArgument(0);
-            return "$" + (long) amt;
-        });
+        when(economy.format(anyDouble())).thenAnswer(inv -> "$" + (long) (double) inv.getArgument(0));
 
         final ConfiguredWarpCostEvaluator evaluator = new ConfiguredWarpCostEvaluator(
                 () -> config,
-                registry,
+                variationRegistry,
                 () -> economy,
                 () -> new DimensionRouter(DimensionRoutesConfig.defaults()),
                 messages,
-                id -> WORLD_ID.equals(id) ? world : null
+                id -> WORLD_ID.equals(id) ? world : null,
+                aetheryteRegistry
         );
 
         final Player stranger = mockPlayer(STRANGER_ID, "Stranger");
         when(stranger.getWorld()).thenReturn(world);
         when(stranger.getLocation()).thenReturn(new Location(world, 0, 64, 0));
 
-        final Aetheryte source = aetheryte("Source", Aetheryte.DEFAULT_VARIATION, AetheryteVisibility.PUBLIC, Set.of());
-        final Aetheryte privateDest = new Aetheryte(
-                UUID.randomUUID(), "Secret", WORLD_ID, "world", 50, 64, 0, OWNER_ID, 2L,
-                Aetheryte.DEFAULT_VARIATION, "Owner", AetheryteVisibility.OWNER_ONLY, Set.of());
-        final Aetheryte invitedDest = new Aetheryte(
-                UUID.randomUUID(), "Invited", WORLD_ID, "world", 60, 64, 0, OWNER_ID, 3L,
-                Aetheryte.DEFAULT_VARIATION, "Owner", AetheryteVisibility.INVITE_ONLY, Set.of(STRANGER_ID));
-        final Aetheryte urbanDest = new Aetheryte(
-                UUID.randomUUID(), "Urban", WORLD_ID, "world", 70, 64, 0, OWNER_ID, 4L,
-                "urban", "Owner", AetheryteVisibility.PUBLIC, Set.of());
+        final Aetheryte sourceInInvitedNet = new Aetheryte(
+                UUID.randomUUID(), "SourceNet", WORLD_ID, "world", 0, 64, 0, OWNER_ID, 1L,
+                "net_var", "Owner", AetheryteVisibility.PUBLIC, Set.of(), invitedNetId);
+        // Stored PUBLIC on member, but its network is OWNER_ONLY -> network visibility wins for non-owner!
+        final Aetheryte destInInvitedNet = new Aetheryte(
+                UUID.randomUUID(), "InvitedMember", WORLD_ID, "world", 50, 64, 0, OWNER_ID, 2L,
+                "net_var", "Owner", AetheryteVisibility.PUBLIC, Set.of(), invitedNetId);
+        final Aetheryte destInOtherNet = new Aetheryte(
+                UUID.randomUUID(), "OtherNetMember", WORLD_ID, "world", 60, 64, 0, OWNER_ID, 3L,
+                "net_var", "Owner", AetheryteVisibility.PUBLIC, Set.of(), otherNetId);
+        final Aetheryte normalDest = new Aetheryte(
+                UUID.randomUUID(), "NormalDest", WORLD_ID, "world", 70, 64, 0, OWNER_ID, 4L,
+                Aetheryte.DEFAULT_VARIATION, "Owner", AetheryteVisibility.INVITE_ONLY, Set.of(STRANGER_ID), null);
 
+        // Same invitedNetId with global INVITE_ONLY cost $75 (since net_var had null for INVITE_ONLY and null base warp.cost)
         final List<WarpEvaluation> batch = evaluator.evaluateBatch(
                 stranger,
-                source,
-                List.of(privateDest, invitedDest, urbanDest)
+                sourceInInvitedNet,
+                List.of(destInInvitedNet, destInOtherNet, normalDest)
         );
         assertThat(batch).hasSize(3);
-        assertThat(batch.get(0).allowed()).isFalse();
-        assertThat(batch.get(0).denyReasonCode()).isEqualTo(DenyReason.VISIBILITY_DENIED);
-
-        // Invited player can access INVITE_ONLY and sees 1.5x visibility cost ($150 instead of $100)
-        assertThat(batch.get(1).allowed()).isTrue();
-        assertThat(PlainTextComponentSerializer.plainText().serialize(batch.get(1).costDisplay()))
-                .contains("$150");
-
-        // Cross-network from default -> urban is denied with NETWORK_MISMATCH
+        assertThat(batch.get(0).allowed()).isTrue();
+        assertThat(PlainTextComponentSerializer.plainText().serialize(batch.get(0).costDisplay()))
+                .contains("$75");
+        assertThat(batch.get(1).allowed()).isFalse();
+        assertThat(batch.get(1).denyReasonCode()).isEqualTo(DenyReason.NETWORK_MISMATCH);
         assertThat(batch.get(2).allowed()).isFalse();
         assertThat(batch.get(2).denyReasonCode()).isEqualTo(DenyReason.NETWORK_MISMATCH);
 
-        // Single evaluate matches evaluateBatch
-        assertThat(evaluator.evaluate(stranger, source, privateDest).denyReasonCode())
+        // Network visibility overrides member visibility: privateNet is OWNER_ONLY even though member says PUBLIC
+        final Aetheryte privateNetSource = new Aetheryte(
+                UUID.randomUUID(), "PrivateSource", WORLD_ID, "world", 10, 64, 0, OWNER_ID, 5L,
+                "base_var", "Owner", AetheryteVisibility.PUBLIC, Set.of(), privateNetId);
+        final Aetheryte privateNetDest = new Aetheryte(
+                UUID.randomUUID(), "PrivateDest", WORLD_ID, "world", 20, 64, 0, OWNER_ID, 6L,
+                "base_var", "Owner", AetheryteVisibility.PUBLIC, Set.of(), privateNetId);
+        assertThat(evaluator.evaluate(stranger, privateNetSource, privateNetDest).denyReasonCode())
                 .isEqualTo(DenyReason.VISIBILITY_DENIED);
-        assertThat(evaluator.evaluate(stranger, source, urbanDest).denyReasonCode())
-                .isEqualTo(DenyReason.NETWORK_MISMATCH);
+
+        // Owner warping on base_var falls back to variation warp.cost ($120), NOT global visibility-cost
+        final Player owner = mockPlayer(OWNER_ID, "Owner");
+        when(owner.getWorld()).thenReturn(world);
+        when(owner.getLocation()).thenReturn(new Location(world, 10, 64, 0));
+        final WarpEvaluation ownerEval = evaluator.evaluate(owner, privateNetSource, privateNetDest);
+        assertThat(ownerEval.allowed()).isTrue();
+        assertThat(PlainTextComponentSerializer.plainText().serialize(ownerEval.costDisplay()))
+                .contains("$120");
     }
 
     @Test
-    void yamlConfigAndVariationLoaderLoadVisibilityCostAndNetworkFields() throws Exception {
+    void registryTryRegisterInNetworkEnforcesLimitsDistanceAndDeletesEmptyNetworks() {
+        final Map<NamespacedKey, Object> worldPdcStore = new HashMap<>();
+        final World world = mockWorld(WORLD_ID, "world", worldPdcStore);
+        final AetheryteRegistry registry = new AetheryteRegistry();
+
+        final UUID net1Id = UUID.randomUUID();
+        final AetheryteNetwork net1 = new AetheryteNetwork(
+                net1Id, "Net1", WORLD_ID, "world", OWNER_ID, "Owner", 1L, AetheryteVisibility.PUBLIC, Set.of());
+        final Aetheryte node1 = new Aetheryte(
+                UUID.randomUUID(), "Node1", WORLD_ID, "world", 0, 64, 0, OWNER_ID, 1L,
+                "net_var", "Owner", AetheryteVisibility.PUBLIC, Set.of(), net1Id);
+
+        assertThat(registry.tryRegisterInNetwork(world, node1, net1, -1, -1, 0.0, 1, 1, 2, 100.0))
+                .isEqualTo(RegistrationOutcome.REGISTERED);
+        assertThat(registry.countNetworksByOwner(OWNER_ID)).isEqualTo(1);
+        assertThat(registry.countNetworksByOwnerAndVariation(OWNER_ID, "net_var")).isEqualTo(1);
+
+        // Creating a second network fails global limit when maxGlobalNetworks = 1
+        final UUID net2Id = UUID.randomUUID();
+        final AetheryteNetwork net2 = new AetheryteNetwork(
+                net2Id, "Net2", WORLD_ID, "world", OWNER_ID, "Owner", 2L, AetheryteVisibility.PUBLIC, Set.of());
+        final Aetheryte otherPlayerNode = new Aetheryte(
+                UUID.randomUUID(), "Other", WORLD_ID, "world", 200, 64, 0, OWNER_ID, 2L,
+                "net_var", "Owner", AetheryteVisibility.PUBLIC, Set.of(), net2Id);
+        assertThat(registry.tryRegisterInNetwork(world, otherPlayerNode, net2, -1, -1, 0.0, 1, -1, 2, 100.0))
+                .isEqualTo(RegistrationOutcome.GLOBAL_NETWORK_LIMIT_REACHED);
+        assertThat(registry.tryRegisterInNetwork(world, otherPlayerNode, net2, -1, -1, 0.0, -1, 1, 2, 100.0))
+                .isEqualTo(RegistrationOutcome.VARIATION_NETWORK_LIMIT_REACHED);
+
+        // Joining beyond max-distance fails with NETWORK_TOO_FAR
+        final Aetheryte farNode = new Aetheryte(
+                UUID.randomUUID(), "FarNode", WORLD_ID, "world", 500, 64, 0, OWNER_ID, 3L,
+                "net_var", "Owner", AetheryteVisibility.PUBLIC, Set.of(), net1Id);
+        assertThat(registry.tryRegisterInNetwork(world, farNode, null, -1, -1, 0.0, 5, 5, 2, 100.0))
+                .isEqualTo(RegistrationOutcome.NETWORK_TOO_FAR);
+
+        // Joining within max-distance succeeds; 3rd member hits NETWORK_AETHERYTE_LIMIT_REACHED
+        final Aetheryte node2 = new Aetheryte(
+                UUID.randomUUID(), "Node2", WORLD_ID, "world", 50, 64, 0, INVITED_ID, 4L,
+                "net_var", "Invited", AetheryteVisibility.PUBLIC, Set.of(), net1Id);
+        assertThat(registry.tryRegisterInNetwork(world, node2, null, -1, -1, 0.0, 5, 5, 2, 100.0))
+                .isEqualTo(RegistrationOutcome.REGISTERED);
+
+        final Aetheryte node3 = new Aetheryte(
+                UUID.randomUUID(), "Node3", WORLD_ID, "world", 60, 64, 0, INVITED_ID, 5L,
+                "net_var", "Invited", AetheryteVisibility.PUBLIC, Set.of(), net1Id);
+        assertThat(registry.tryRegisterInNetwork(world, node3, null, -1, -1, 0.0, 5, 5, 2, 100.0))
+                .isEqualTo(RegistrationOutcome.NETWORK_AETHERYTE_LIMIT_REACHED);
+
+        // Unregistering 1st node keeps network alive; unregistering last node auto-deletes empty network
+        registry.unregister(world, node1.id());
+        assertThat(registry.getNetworkById(net1Id)).isPresent();
+        registry.unregister(world, node2.id());
+        assertThat(registry.getNetworkById(net1Id)).isEmpty();
+        assertThat(registry.countNetworksByOwner(OWNER_ID)).isZero();
+    }
+
+    @Test
+    void yamlConfigAndVariationLoaderRoundTripVisibilityCostAndNetworkSchema() throws Exception {
         final Path configPath = tempDir.resolve("config.yml");
         Files.writeString(configPath, """
+                limits:
+                  max-networks-per-player: 5
                 warp:
                   visibility-cost:
-                    public-multiplier: 0.5
-                    invite-only-multiplier: 1.25
-                    owner-only-multiplier: 2.5
+                    public: []
+                    invite-only: null
+                    owner-only:
+                      - type: vault
+                        amount: "250"
+                        required: true
                 """);
         final ConfigManager cm = new ConfigManager(configPath, LoggerFactory.getLogger(ConfigManager.class));
-        final PluginConfig loadedConfig = cm.load(false);
-        assertThat(loadedConfig.warp().visibilityCost().publicMultiplier()).isEqualTo(0.5);
-        assertThat(loadedConfig.warp().visibilityCost().inviteOnlyMultiplier()).isEqualTo(1.25);
-        assertThat(loadedConfig.warp().visibilityCost().ownerOnlyMultiplier()).isEqualTo(2.5);
+        final PluginConfig loadedConfig = cm.load(true);
+        assertThat(loadedConfig.limits().maxNetworksPerPlayer()).isEqualTo(5);
+        assertThat(loadedConfig.warp().visibilityCost().publicCost()).isNotNull().isEmpty();
+        assertThat(loadedConfig.warp().visibilityCost().inviteOnlyCost()).isNull();
+        assertThat(loadedConfig.warp().visibilityCost().ownerOnlyCost())
+                .containsExactly(CostEntry.of(CostType.VAULT, "250"));
+
+        final String savedConfig = Files.readString(configPath);
+        assertThat(savedConfig).doesNotContain(VisibilityCostSection.NULL_SENTINEL);
+        assertThat(savedConfig).contains("invite-only: null");
+
+        // Second reload does not emit sentinel or corrupt null overrides
+        final ConfigManager reloadedCm = new ConfigManager(configPath, LoggerFactory.getLogger(ConfigManager.class));
+        final PluginConfig reloadedConfig = reloadedCm.load(true);
+        assertThat(reloadedConfig.warp().visibilityCost().publicCost()).isEmpty();
+        assertThat(reloadedConfig.warp().visibilityCost().inviteOnlyCost()).isNull();
 
         final Path varDir = tempDir.resolve("aetheryte");
         Files.createDirectories(varDir);
         Files.writeString(varDir.resolve("urban.yml"), """
                 display-name: "<gold>Urban"
+                type: network
                 placement:
                   visibility-cost:
-                    owner-only-multiplier: 3.0
+                    public: []
+                    invite-only: null
+                    owner-only:
+                      - type: vault
+                        amount: "500"
+                        required: true
                 warp:
-                  network: "urban"
-                  allowed-target-networks:
-                    - "urban"
+                  visibility-cost:
+                    public: []
+                network:
+                  limit:
+                    max-per-player: 3
+                    max-aetheryte: 8
+                    max-distance: 1500.0
+                  cost:
+                    create:
+                      - type: vault
+                        amount: "1000"
+                        required: true
+                    join:
+                      - type: exp-levels
+                        amount: "2"
+                        required: true
                 """);
         final Map<String, AetheryteVariation> loadedVars = VariationLoader.loadDirectory(
-                varDir, LoggerFactory.getLogger(VariationLoader.class));
+                varDir, LoggerFactory.getLogger(VariationLoader.class), true);
         final AetheryteVariation urban = loadedVars.get("urban");
         assertThat(urban).isNotNull();
         if (urban == null) {
             throw new AssertionError("urban variation missing");
         }
-        assertThat(urban.placement().visibilityCost().publicMultiplier()).isNull();
-        assertThat(urban.placement().visibilityCost().ownerOnlyMultiplier()).isEqualTo(3.0);
-        assertThat(urban.warp().network()).isEqualTo("urban");
-        assertThat(urban.warp().allowedTargetNetworks()).containsExactly("urban");
+        assertThat(urban.type()).isEqualTo(VariationType.NETWORK);
+        assertThat(urban.isNetwork()).isTrue();
+        assertThat(urban.placement().visibilityCost().publicCost()).isNotNull().isEmpty();
+        assertThat(urban.placement().visibilityCost().inviteOnlyCost()).isNull();
+        assertThat(urban.placement().visibilityCost().ownerOnlyCost())
+                .containsExactly(CostEntry.of(CostType.VAULT, "500"));
+        assertThat(urban.warp().visibilityCost().publicCost()).isNotNull().isEmpty();
+        assertThat(urban.warp().visibilityCost().ownerOnlyCost()).isNull();
+        assertThat(urban.network().limit().maxPerPlayerOrDefault()).isEqualTo(3);
+        assertThat(urban.network().limit().maxAetheryteOrDefault()).isEqualTo(8);
+        assertThat(urban.network().limit().maxDistanceOrDefault()).isEqualTo(1500.0);
+        assertThat(urban.network().cost().create()).containsExactly(CostEntry.of(CostType.VAULT, "1000"));
+        assertThat(urban.network().cost().join()).containsExactly(CostEntry.of(CostType.EXP_LEVELS, "2"));
+
+        final String savedUrban = Files.readString(varDir.resolve("urban.yml"));
+        assertThat(savedUrban).doesNotContain(VisibilityCostSection.NULL_SENTINEL);
+        assertThat(savedUrban).contains("type: network");
+    }
+
+    private static World mockWorld(final UUID id, final String name, final Map<NamespacedKey, Object> pdcStore) {
+        final World world = mock(World.class);
+        when(world.getUID()).thenReturn(id);
+        when(world.getName()).thenReturn(name);
+        final PersistentDataContainer pdc = AetheryteDataTypeTest.createInMemoryContainer(pdcStore);
+        when(world.getPersistentDataContainer()).thenReturn(pdc);
+        return world;
     }
 
     private static Player mockPlayer(final UUID id, final String name) {
@@ -343,15 +524,39 @@ class AetheryteVisibilityAndNetworkTest {
         );
     }
 
-    private static AetheryteVariation variationWithNetwork(
+    private static Aetheryte aetheryteWithNetwork(
+            final String name,
+            final String variation,
+            final UUID networkId
+    ) {
+        return new Aetheryte(
+                UUID.randomUUID(),
+                name,
+                WORLD_ID,
+                "world",
+                0,
+                64,
+                0,
+                OWNER_ID,
+                1L,
+                variation,
+                "Owner",
+                AetheryteVisibility.PUBLIC,
+                Set.of(),
+                networkId
+        );
+    }
+
+    private static AetheryteVariation networkVariation(
             final String id,
-            final String network,
-            final List<String> allowedTargets,
-            final VisibilityCostSection visCost
+            final VisibilityCostSection warpVisCost,
+            final @Nullable List<CostEntry> warpCost,
+            final NetworkSection networkSection
     ) {
         final AetheryteVariation def = AetheryteVariation.defaultVariation();
         return new AetheryteVariation(
                 "<white>" + id + "</white>",
+                VariationType.NETWORK,
                 def.item(),
                 def.recipe(),
                 def.model(),
@@ -361,10 +566,11 @@ class AetheryteVisibilityAndNetworkTest {
                         def.placement().clearance(),
                         def.placement().cost(),
                         def.placement().minDistance(),
-                        visCost
+                        VisibilityCostSection.inherit()
                 ),
                 def.limit(),
-                new WarpOverrideSection(null, null, null, network, allowedTargets),
+                new WarpOverrideSection(DistanceSection.inherit(), warpCost, CastSection.inherit(), warpVisCost),
+                networkSection,
                 def.bettermodel(),
                 def.sounds()
         );

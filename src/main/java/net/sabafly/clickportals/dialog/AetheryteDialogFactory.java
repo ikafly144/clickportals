@@ -41,6 +41,7 @@ import net.kyori.adventure.text.event.ClickCallback;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.aetheryte.AetheryteNetwork;
 import net.sabafly.clickportals.aetheryte.AetheryteVisibility;
 import net.sabafly.clickportals.cost.CostBundle;
 import net.sabafly.clickportals.cost.CostFormatter;
@@ -72,6 +73,11 @@ public final class AetheryteDialogFactory {
     private static final String INPUT_KEY_SEARCH = "search";
     private static final String INPUT_KEY_TARGET_PLAYER = "target_player";
     private static final String INPUT_KEY_VARIATION = "variation";
+    private static final String INPUT_KEY_VISIBILITY = "visibility";
+    private static final String INPUT_KEY_NETWORK_MODE = "network_mode";
+    private static final String INPUT_KEY_NETWORK_NAME = "network_name";
+    private static final String NETWORK_MODE_CREATE = "create";
+    private static final String NETWORK_MODE_JOIN_PREFIX = "join:";
     private static final int BUTTON_WIDTH_PRIMARY = 240;
     private static final int BUTTON_WIDTH_SECONDARY = 150;
 
@@ -127,6 +133,13 @@ public final class AetheryteDialogFactory {
         final String normalizedVar = Aetheryte.normalizeVariation(variationId);
         final AetheryteVariation variation = service.variationRegistry().getOrDefault(normalizedVar);
         final String defaultName = messages.createDialogDefaultName(player);
+        final boolean isNetworkVariation = variation.isNetwork();
+        final EconomyProvider economy = service.economyProvider();
+        final boolean bypassedCost = player.getGameMode() == GameMode.CREATIVE || Permissions.canBypassPlaceCost(player);
+        final Map<String, Double> costVars = Map.of(
+                "owned_count", (double) service.registry().countByOwner(player.getUniqueId()),
+                "variation_count", (double) service.registry().countByOwnerAndVariation(player.getUniqueId(), normalizedVar)
+        );
 
         final ActionButton confirmButton = ActionButton.builder(messages.buttonConfirmCreate(player))
                 .width(BUTTON_WIDTH_SECONDARY)
@@ -139,7 +152,32 @@ public final class AetheryteDialogFactory {
                         messages.send(clicker, MessageKey.ERROR_INVALID_NAME);
                         return;
                     }
-                    service.placeAetheryte(clicker, world, blockX, blockY, blockZ, enteredName, normalizedVar);
+                    final AetheryteVisibility selectedVisibility = AetheryteVisibility.fromString(
+                            view.getText(INPUT_KEY_VISIBILITY));
+                    if (isNetworkVariation) {
+                        final String selectedNetworkMode = view.getText(INPUT_KEY_NETWORK_MODE);
+                        if (selectedNetworkMode != null && selectedNetworkMode.startsWith(NETWORK_MODE_JOIN_PREFIX)) {
+                            final String rawNetId = selectedNetworkMode.substring(NETWORK_MODE_JOIN_PREFIX.length());
+                            final UUID joinNetworkId;
+                            try {
+                                joinNetworkId = UUID.fromString(rawNetId);
+                            } catch (final IllegalArgumentException e) {
+                                messages.send(clicker, MessageKey.ERROR_NETWORK_NOT_FOUND);
+                                return;
+                            }
+                            service.placeAetheryteInNetwork(
+                                    clicker, world, blockX, blockY, blockZ,
+                                    enteredName, normalizedVar, selectedVisibility, joinNetworkId, null);
+                        } else {
+                            final String enteredNetworkName = view.getText(INPUT_KEY_NETWORK_NAME);
+                            service.placeAetheryteInNetwork(
+                                    clicker, world, blockX, blockY, blockZ,
+                                    enteredName, normalizedVar, selectedVisibility, null, enteredNetworkName);
+                        }
+                    } else {
+                        service.placeAetheryte(
+                                clicker, world, blockX, blockY, blockZ, enteredName, normalizedVar, selectedVisibility);
+                    }
                 }, SINGLE_USE_CALLBACK))
                 .build();
 
@@ -147,23 +185,117 @@ public final class AetheryteDialogFactory {
                 .width(BUTTON_WIDTH_SECONDARY)
                 .build();
 
-        final CostBundle placementCostBundle = new CostBundle(variation.placement().cost());
+        final List<SingleOptionDialogInput.OptionEntry> visibilityOptions = new ArrayList<>(AetheryteVisibility.values().length);
+        for (final AetheryteVisibility mode : AetheryteVisibility.values()) {
+            Component optionLabel = messages.visibilityLabel(player, mode);
+            if (!bypassedCost) {
+                final CostQuote modeQuote = service.computePlacementCostQuote(
+                        player, player.getUniqueId(), normalizedVar, mode, economy);
+                if (!modeQuote.isFree()) {
+                    final Component modeCostDisplay = CostFormatter.format(player, modeQuote, economy, messages, true);
+                    optionLabel = optionLabel.append(Component.text(" (")).append(modeCostDisplay).append(Component.text(")"));
+                }
+            }
+            visibilityOptions.add(SingleOptionDialogInput.OptionEntry.create(
+                    mode.name(),
+                    optionLabel,
+                    mode == AetheryteVisibility.PUBLIC
+            ));
+        }
+
+        final CostQuote defaultPlacementQuote = service.computePlacementCostQuote(
+                player, player.getUniqueId(), normalizedVar, AetheryteVisibility.PUBLIC, economy);
         final Component costLine;
-        if (!placementCostBundle.isEmpty()) {
-            final Map<String, Double> costVars = Map.of(
-                    "owned_count", (double) service.registry().countByOwner(player.getUniqueId()),
-                    "variation_count", (double) service.registry().countByOwnerAndVariation(player.getUniqueId(), normalizedVar)
-            );
-            final CostQuote quote = placementCostBundle.quote(player, costVars, service.economyProvider());
-            final Component costDisplay = CostFormatter.format(player, quote, service.economyProvider(), messages, true);
-            final boolean bypassed = player.getGameMode() == GameMode.CREATIVE || Permissions.canBypassPlaceCost(player);
-            if (bypassed) {
+        if (!defaultPlacementQuote.isFree()) {
+            final Component costDisplay = CostFormatter.format(player, defaultPlacementQuote, economy, messages, true);
+            if (bypassedCost) {
                 costLine = Component.newline().append(messages.get(player, MessageKey.DIALOG_CREATE_COST_BYPASSED, Placeholder.component("cost", costDisplay)));
             } else {
                 costLine = Component.newline().append(messages.get(player, MessageKey.DIALOG_CREATE_COST, Placeholder.component("cost", costDisplay)));
             }
         } else {
             costLine = Component.empty();
+        }
+
+        final List<DialogInput> inputs = new ArrayList<>();
+        inputs.add(DialogInput.text(INPUT_KEY_NAME, messages.createDialogNameInputLabel(player))
+                .width(BUTTON_WIDTH_PRIMARY)
+                .maxLength(32)
+                .initial(defaultName)
+                .build());
+        inputs.add(DialogInput.singleOption(
+                        INPUT_KEY_VISIBILITY,
+                        messages.get(player, MessageKey.DIALOG_CREATE_VISIBILITY_LABEL),
+                        visibilityOptions)
+                .width(BUTTON_WIDTH_PRIMARY)
+                .build());
+
+        final Component networkCostLine;
+        if (isNetworkVariation) {
+            final CostBundle createBundle = new CostBundle(variation.network().cost().create());
+            final CostBundle joinBundle = new CostBundle(variation.network().cost().join());
+            final CostQuote createExtraQuote = createBundle.isEmpty()
+                    ? CostQuote.FREE
+                    : createBundle.quote(player, costVars, economy);
+            final CostQuote joinExtraQuote = joinBundle.isEmpty()
+                    ? CostQuote.FREE
+                    : joinBundle.quote(player, costVars, economy);
+
+            final List<AetheryteNetwork> joinableNetworks = service.listJoinableNetworks(player, world.getUID());
+            final List<SingleOptionDialogInput.OptionEntry> networkOptions = new ArrayList<>(1 + joinableNetworks.size());
+            Component createOptionLabel = messages.get(player, MessageKey.DIALOG_CREATE_NETWORK_OPTION_CREATE);
+            if (!bypassedCost && !createExtraQuote.isFree()) {
+                createOptionLabel = createOptionLabel.append(Component.text(" (+"))
+                        .append(CostFormatter.format(player, createExtraQuote, economy, messages, true))
+                        .append(Component.text(")"));
+            }
+            networkOptions.add(SingleOptionDialogInput.OptionEntry.create(NETWORK_MODE_CREATE, createOptionLabel, true));
+
+            for (final AetheryteNetwork net : joinableNetworks) {
+                Component joinLabel = messages.get(
+                        player,
+                        MessageKey.DIALOG_CREATE_NETWORK_OPTION_JOIN,
+                        Placeholder.unparsed("name", net.name()),
+                        Placeholder.component("visibility", messages.visibilityLabel(player, net.visibility()))
+                );
+                if (!bypassedCost && !joinExtraQuote.isFree()) {
+                    joinLabel = joinLabel.append(Component.text(" (+"))
+                            .append(CostFormatter.format(player, joinExtraQuote, economy, messages, true))
+                            .append(Component.text(")"));
+                }
+                networkOptions.add(SingleOptionDialogInput.OptionEntry.create(
+                        NETWORK_MODE_JOIN_PREFIX + net.id(),
+                        joinLabel,
+                        false
+                ));
+            }
+
+            inputs.add(DialogInput.singleOption(
+                            INPUT_KEY_NETWORK_MODE,
+                            messages.get(player, MessageKey.DIALOG_CREATE_NETWORK_MODE_LABEL),
+                            networkOptions)
+                    .width(BUTTON_WIDTH_PRIMARY)
+                    .build());
+            inputs.add(DialogInput.text(INPUT_KEY_NETWORK_NAME, messages.get(player, MessageKey.DIALOG_CREATE_NETWORK_NAME_LABEL))
+                    .width(BUTTON_WIDTH_PRIMARY)
+                    .maxLength(32)
+                    .initial("")
+                    .build());
+
+            if (!createExtraQuote.isFree() || !joinExtraQuote.isFree()) {
+                final Component createDisplay = CostFormatter.format(player, createExtraQuote, economy, messages, true);
+                final Component joinDisplay = CostFormatter.format(player, joinExtraQuote, economy, messages, true);
+                networkCostLine = Component.newline().append(messages.get(
+                        player,
+                        MessageKey.DIALOG_CREATE_NETWORK_COST,
+                        Placeholder.component("create_cost", createDisplay),
+                        Placeholder.component("join_cost", joinDisplay)
+                ));
+            } else {
+                networkCostLine = Component.empty();
+            }
+        } else {
+            networkCostLine = Component.empty();
         }
 
         final List<Component> bypassReasons = service.collectPlacementBypassReasons(
@@ -188,6 +320,7 @@ public final class AetheryteDialogFactory {
                 .append(Component.newline())
                 .append(messages.createDialogVariation(player, variation.displayName()))
                 .append(costLine)
+                .append(networkCostLine)
                 .append(bypassLine);
 
         final Dialog dialog = Dialog.create(factory -> factory.empty()
@@ -196,13 +329,7 @@ public final class AetheryteDialogFactory {
                         .pause(false)
                         .afterAction(DialogBase.DialogAfterAction.CLOSE)
                         .body(List.of(DialogBody.plainMessage(bodyComponent)))
-                        .inputs(List.of(
-                                DialogInput.text(INPUT_KEY_NAME, messages.createDialogNameInputLabel(player))
-                                        .width(BUTTON_WIDTH_PRIMARY)
-                                        .maxLength(32)
-                                        .initial(defaultName)
-                                        .build()
-                        ))
+                        .inputs(inputs)
                         .build())
                 .type(DialogType.confirmation(confirmButton, cancelButton))
         );
@@ -734,7 +861,12 @@ public final class AetheryteDialogFactory {
                     .build());
         }
 
-        if (AetheryteService.canManageVisibility(player, current)) {
+        final @Nullable AetheryteNetwork network = service.networkFor(current);
+        final Aetheryte effectiveCurrent = network != null
+                ? current.withVisibility(network.visibility()).withInvitedPlayers(network.invitedPlayers())
+                : current;
+
+        if (service.canManageVisibilityOrNetwork(player, current)) {
             buttons.add(ActionButton.builder(messages.get(player, MessageKey.DIALOG_BUTTON_VISIBILITY))
                     .tooltip(messages.get(player, MessageKey.DIALOG_BUTTON_VISIBILITY_TOOLTIP))
                     .width(BUTTON_WIDTH_PRIMARY)
@@ -744,6 +876,17 @@ public final class AetheryteDialogFactory {
                         }
                     }, SINGLE_USE_CALLBACK))
                     .build());
+            if (network != null) {
+                buttons.add(ActionButton.builder(messages.get(player, MessageKey.DIALOG_BUTTON_RENAME_NETWORK))
+                        .tooltip(messages.get(player, MessageKey.DIALOG_BUTTON_RENAME_NETWORK_TOOLTIP))
+                        .width(BUTTON_WIDTH_PRIMARY)
+                        .action(DialogAction.customClick((view, audience) -> {
+                            if (audience instanceof Player clicker) {
+                                openRenameNetworkDialog(clicker, current, network, state);
+                            }
+                        }, SINGLE_USE_CALLBACK))
+                        .build());
+            }
         }
 
         if (AetheryteService.canRemove(player, current)) {
@@ -772,11 +915,11 @@ public final class AetheryteDialogFactory {
                         .body(List.of(DialogBody.plainMessage(
                                 messages.operationsDialogBody(
                                         player,
-                                        current,
+                                        effectiveCurrent,
                                         ownerName,
                                         service.resolveDimensionDisplayComponent(current.worldId(), current.worldName()),
                                         variation.displayName(),
-                                        variation.warp().network()
+                                        network != null ? network.name() : null
                                 )
                         )))
                         .build())
@@ -1063,26 +1206,65 @@ public final class AetheryteDialogFactory {
                 .build();
     }
 
+    private void openRenameNetworkDialog(
+            final Player player,
+            final Aetheryte target,
+            final AetheryteNetwork network,
+            final WarpDialogState returnState
+    ) {
+        final ActionButton confirmRename = ActionButton.builder(messages.get(player, MessageKey.DIALOG_BUTTON_CONFIRM_RENAME))
+                .width(BUTTON_WIDTH_SECONDARY)
+                .action(DialogAction.customClick((view, audience) -> {
+                    if (!(audience instanceof Player clicker)) {
+                        return;
+                    }
+                    clicker.closeDialog();
+                    final String enteredName = view.getText(INPUT_KEY_NETWORK_NAME);
+                    if (enteredName == null) {
+                        messages.send(clicker, MessageKey.ERROR_INVALID_NAME);
+                        return;
+                    }
+                    service.renameNetwork(clicker, target.id(), enteredName);
+                }, SINGLE_USE_CALLBACK))
+                .build();
+
+        showConfirmationDialog(
+                player,
+                messages.get(player, MessageKey.DIALOG_RENAME_NETWORK_TITLE),
+                messages.get(player, MessageKey.DIALOG_RENAME_NETWORK_BODY, Placeholder.unparsed("name", network.name())),
+                List.of(
+                        DialogInput.text(INPUT_KEY_NETWORK_NAME, messages.get(player, MessageKey.DIALOG_RENAME_NETWORK_INPUT_LABEL))
+                                .width(BUTTON_WIDTH_PRIMARY)
+                                .maxLength(32)
+                                .initial(network.name())
+                                .build()
+                ),
+                confirmRename,
+                target,
+                returnState
+        );
+    }
+
     private void openVisibilityDialog(
             final Player player,
             final Aetheryte rawTarget,
             final WarpDialogState returnState
     ) {
         final Aetheryte target = service.registry().getById(rawTarget.id()).orElse(rawTarget);
+        final @Nullable AetheryteNetwork network = service.networkFor(target);
+        final AetheryteVisibility effectiveVisibility = network != null ? network.visibility() : target.visibility();
+        final Set<UUID> effectiveInvitees = network != null ? network.invitedPlayers() : target.invitedPlayers();
+        final String titleName = network != null ? network.name() : target.name();
         final EconomyProvider economy = service.economyProvider();
         final boolean creative = player.getGameMode() == GameMode.CREATIVE;
         final boolean bypassCost = Permissions.canBypassPlaceCost(player);
-        final boolean hasPlacementCost = !service.variationFor(target).placement().cost().isEmpty();
-        final CostQuote currentQuote = (!creative && !bypassCost && hasPlacementCost)
-                ? service.computePlacementCostQuote(player, target.ownerId(), target.variation(), target.visibility(), economy)
-                : CostQuote.FREE;
 
         final List<ActionButton> buttons = new ArrayList<>();
         for (final AetheryteVisibility mode : AetheryteVisibility.values()) {
-            final boolean isCurrent = target.visibility() == mode;
+            final boolean isCurrent = effectiveVisibility == mode;
             final Component label = messages.visibilityOptionButtonLabel(player, mode, isCurrent);
             final Component tooltip = buildVisibilityModeTooltip(
-                    player, target, mode, isCurrent, creative, bypassCost, hasPlacementCost, currentQuote, economy);
+                    player, target, mode, isCurrent, creative, bypassCost, economy);
             buttons.add(ActionButton.builder(label)
                     .tooltip(tooltip)
                     .width(BUTTON_WIDTH_PRIMARY)
@@ -1112,7 +1294,7 @@ public final class AetheryteDialogFactory {
         buttons.add(ActionButton.builder(messages.get(
                         player,
                         MessageKey.DIALOG_BUTTON_INVITE_REMOVE,
-                        Placeholder.unparsed("count", Integer.toString(target.invitedPlayers().size()))
+                        Placeholder.unparsed("count", Integer.toString(effectiveInvitees.size()))
                 ))
                 .width(BUTTON_WIDTH_PRIMARY)
                 .action(DialogAction.customClick((view, audience) -> {
@@ -1135,7 +1317,7 @@ public final class AetheryteDialogFactory {
                 .base(DialogBase.builder(messages.get(
                                 player,
                                 MessageKey.DIALOG_VISIBILITY_TITLE,
-                                Placeholder.unparsed("name", target.name())
+                                Placeholder.unparsed("name", titleName)
                         ))
                         .canCloseWithEscape(true)
                         .pause(false)
@@ -1143,8 +1325,8 @@ public final class AetheryteDialogFactory {
                         .body(List.of(DialogBody.plainMessage(messages.get(
                                 player,
                                 MessageKey.DIALOG_VISIBILITY_BODY,
-                                Placeholder.component("visibility", messages.visibilityLabel(player, target.visibility())),
-                                Placeholder.unparsed("invited", Integer.toString(target.invitedPlayers().size()))
+                                Placeholder.component("visibility", messages.visibilityLabel(player, effectiveVisibility)),
+                                Placeholder.unparsed("invited", Integer.toString(effectiveInvitees.size()))
                         ))))
                         .build())
                 .type(DialogType.multiAction(buttons)
@@ -1162,31 +1344,18 @@ public final class AetheryteDialogFactory {
             final boolean isCurrent,
             final boolean creative,
             final boolean bypassCost,
-            final boolean hasPlacementCost,
-            final CostQuote currentQuote,
             final EconomyProvider economy
     ) {
         final Component modeLabel = messages.visibilityLabel(player, mode);
-        if (!isCurrent && !creative && !bypassCost && hasPlacementCost) {
-            final CostQuote newQuote = service.computePlacementCostQuote(
+        if (!isCurrent && !creative && !bypassCost) {
+            final CostQuote targetQuote = service.computePlacementCostQuote(
                     player, target.ownerId(), target.variation(), mode, economy);
-            final CostBundle.QuoteDelta delta = CostBundle.computeQuoteDelta(player, economy, currentQuote, newQuote);
-            if (!delta.additionalCharge().isFree()) {
+            if (!targetQuote.isFree()) {
                 final Component costText = CostFormatter.format(
-                        messages.locale(player), delta.additionalCharge(), economy, messages, false);
+                        messages.locale(player), targetQuote, economy, messages, false);
                 return messages.get(
                         player,
                         MessageKey.DIALOG_VISIBILITY_TOOLTIP_CHARGE,
-                        Placeholder.component("mode", modeLabel),
-                        Placeholder.component("cost", costText)
-                );
-            }
-            if (!delta.refund().isFree()) {
-                final Component costText = CostFormatter.format(
-                        messages.locale(player), delta.refund(), economy, messages, false);
-                return messages.get(
-                        player,
-                        MessageKey.DIALOG_VISIBILITY_TOOLTIP_REFUND,
                         Placeholder.component("mode", modeLabel),
                         Placeholder.component("cost", costText)
                 );
@@ -1220,10 +1389,12 @@ public final class AetheryteDialogFactory {
                 }, SINGLE_USE_CALLBACK))
                 .build();
 
+        final @Nullable AetheryteNetwork network = service.networkFor(target);
+        final String displayName = network != null ? network.name() : target.name();
         showConfirmationDialog(
                 player,
-                messages.get(player, MessageKey.DIALOG_INVITE_ADD_TITLE, Placeholder.unparsed("name", target.name())),
-                messages.get(player, MessageKey.DIALOG_INVITE_ADD_BODY, Placeholder.unparsed("name", target.name())),
+                messages.get(player, MessageKey.DIALOG_INVITE_ADD_TITLE, Placeholder.unparsed("name", displayName)),
+                messages.get(player, MessageKey.DIALOG_INVITE_ADD_BODY, Placeholder.unparsed("name", displayName)),
                 List.of(
                         DialogInput.text(INPUT_KEY_TARGET_PLAYER, messages.get(player, MessageKey.DIALOG_INVITE_ADD_INPUT_LABEL))
                                 .width(BUTTON_WIDTH_PRIMARY)
@@ -1243,10 +1414,13 @@ public final class AetheryteDialogFactory {
             final WarpDialogState returnState
     ) {
         final Aetheryte target = service.registry().getById(rawTarget.id()).orElse(rawTarget);
+        final @Nullable AetheryteNetwork network = service.networkFor(target);
+        final String displayName = network != null ? network.name() : target.name();
+        final Set<UUID> effectiveInvitees = network != null ? network.invitedPlayers() : target.invitedPlayers();
         final record InviteeOption(UUID id, String name) {
         }
-        final List<InviteeOption> invitees = new ArrayList<>(target.invitedPlayers().size());
-        for (final UUID inviteeId : target.invitedPlayers()) {
+        final List<InviteeOption> invitees = new ArrayList<>(effectiveInvitees.size());
+        for (final UUID inviteeId : effectiveInvitees) {
             invitees.add(new InviteeOption(inviteeId, service.resolvePlayerName(inviteeId, player)));
         }
         invitees.sort(Comparator.comparing(InviteeOption::name, String.CASE_INSENSITIVE_ORDER));
@@ -1276,13 +1450,13 @@ public final class AetheryteDialogFactory {
 
         final Component body = invitees.isEmpty()
                 ? messages.get(player, MessageKey.DIALOG_INVITE_EMPTY)
-                : messages.get(player, MessageKey.DIALOG_INVITE_REMOVE_BODY, Placeholder.unparsed("name", target.name()));
+                : messages.get(player, MessageKey.DIALOG_INVITE_REMOVE_BODY, Placeholder.unparsed("name", displayName));
 
         final Dialog dialog = Dialog.create(factory -> factory.empty()
                 .base(DialogBase.builder(messages.get(
                                 player,
                                 MessageKey.DIALOG_INVITE_REMOVE_TITLE,
-                                Placeholder.unparsed("name", target.name())
+                                Placeholder.unparsed("name", displayName)
                         ))
                         .canCloseWithEscape(true)
                         .pause(false)
@@ -1342,7 +1516,7 @@ public final class AetheryteDialogFactory {
             final Aetheryte destination,
             final Map<UUID, Boolean> worldRouteCache
     ) {
-        return AetheryteService.canAccessAetheryte(player, destination)
+        return service.canAccessDestination(player, destination)
                 && service.isNetworkRoutable(current, destination)
                 && isWorldReachable(player, current, destination, worldRouteCache);
     }

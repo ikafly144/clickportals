@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.config.VisibilityCostSection;
 import net.sabafly.clickportals.config.YamlSchemaSync;
 import net.sabafly.clickportals.variation.AetheryteVariation.HitboxSection;
 import net.sabafly.clickportals.variation.AetheryteVariation.ItemSection;
@@ -292,6 +293,15 @@ public final class VariationLoader {
             warpCostNode.set(NULL_SENTINEL);
             warpCostNode.comment("Optional cost overrides for warps originating from this variation (null to inherit global, [] for free) (#14)");
         }
+        final CommentedConfigurationNode placementVisCostNode = dumpRoot.node("placement", "visibility-cost");
+        if (placementVisCostNode.comment() == null || placementVisCostNode.comment().isBlank()) {
+            placementVisCostNode.comment("Per-visibility placement cost override lists (null = fall back to placement.cost, [] = free) (#25)");
+        }
+        VisibilityCostSection.applyNullSentinels(placementVisCostNode, variation.placement().visibilityCost());
+
+        final CommentedConfigurationNode warpVisCostNode = dumpRoot.node("warp", "visibility-cost");
+        warpVisCostNode.comment("Cost overrides per destination visibility mode (null = use warp.cost/global, [] = free) (#25)");
+        VisibilityCostSection.applyNullSentinels(warpVisCostNode, variation.warp().visibilityCost());
 
         final StringWriter stringWriter = new StringWriter();
         final YamlConfigurationLoader stringLoader = YamlConfigurationLoader.builder()
@@ -344,10 +354,11 @@ public final class VariationLoader {
             final ConfigurationOptions opts,
             final @Nullable String header
     ) {
-        final ConfigurationOptions withSerializers = opts.serializers(s -> s.register(
-                AetheryteVariation.WarpOverrideSection.class,
-                AetheryteVariation.WarpOverrideSectionSerializer.INSTANCE
-        ));
+        final ConfigurationOptions withSerializers = opts.serializers(s -> s
+                .register(AetheryteVariation.VariationType.class, AetheryteVariation.VariationTypeSerializer.INSTANCE)
+                .register(VisibilityCostSection.class, VisibilityCostSection.Serializer.INSTANCE)
+                .register(AetheryteVariation.WarpOverrideSection.class, AetheryteVariation.WarpOverrideSectionSerializer.INSTANCE)
+        );
         return header != null ? withSerializers.header(header) : withSerializers;
     }
 

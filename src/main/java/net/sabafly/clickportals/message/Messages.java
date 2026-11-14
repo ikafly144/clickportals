@@ -34,9 +34,9 @@ import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.aetheryte.AetheryteNetwork;
 import net.sabafly.clickportals.aetheryte.AetheryteVisibility;
 import net.sabafly.clickportals.dialog.WarpSortOrder;
-import net.sabafly.clickportals.variation.AetheryteVariation.WarpOverrideSection;
 import net.sabafly.clickportals.message.LanguageLoader.TranslationBundle;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
@@ -1144,7 +1144,7 @@ public final class Messages {
                 ownerName,
                 worldDisplay,
                 variationDisplayNameMiniMessage,
-                WarpOverrideSection.DEFAULT_NETWORK
+                null
         );
     }
 
@@ -1154,8 +1154,11 @@ public final class Messages {
             final String ownerName,
             final Component worldDisplay,
             final String variationDisplayNameMiniMessage,
-            final String network
+            final @Nullable String networkName
     ) {
+        final Component networkDisplay = (networkName != null && !networkName.isBlank())
+                ? Component.text(networkName)
+                : get(viewer, MessageKey.NETWORK_NONE);
         return get(
                 viewer,
                 MessageKey.DIALOG_OPERATIONS_BODY,
@@ -1167,7 +1170,7 @@ public final class Messages {
                 Placeholder.unparsed("z", Integer.toString(current.blockZ())),
                 Placeholder.component("variation", MINI_MESSAGE.deserialize(variationDisplayNameMiniMessage)),
                 Placeholder.component("visibility", visibilityLabel(viewer, current.visibility())),
-                Placeholder.unparsed("network", WarpOverrideSection.normalizeNetwork(network)),
+                Placeholder.component("network", networkDisplay),
                 Placeholder.unparsed("invited", Integer.toString(current.invitedPlayers().size()))
         );
     }
@@ -1477,52 +1480,122 @@ public final class Messages {
     }
 
     /**
-     * Returns the notification sent when Aetheryte visibility is changed (#24).
+     * Returns the notification sent when Aetheryte or network visibility is changed (#24, #27).
      */
     public Component aetheryteVisibilityChanged(final CommandSender viewer, final Aetheryte updated) {
+        return aetheryteVisibilityChanged(viewer, updated.name(), updated.visibility());
+    }
+
+    /**
+     * Returns the notification sent when Aetheryte or network visibility is changed (#24, #27).
+     */
+    public Component aetheryteVisibilityChanged(
+            final CommandSender viewer,
+            final String targetName,
+            final AetheryteVisibility visibility
+    ) {
         return get(
                 viewer,
                 MessageKey.AETHERYTE_VISIBILITY_CHANGED,
-                Placeholder.unparsed("name", updated.name()),
-                Placeholder.component("visibility", visibilityLabel(viewer, updated.visibility()))
+                Placeholder.unparsed("name", targetName),
+                Placeholder.component("visibility", visibilityLabel(viewer, visibility))
         );
     }
 
     /**
-     * Returns the notification sent when extra placement cost is charged for a visibility change (#25).
+     * Returns the notification sent when visibility placement cost is charged for a visibility change (#25).
      */
     public Component aetheryteVisibilityCostCharged(final CommandSender viewer, final Component costDisplay) {
         return get(viewer, MessageKey.AETHERYTE_VISIBILITY_COST_CHARGED, Placeholder.component("cost", costDisplay));
     }
 
     /**
-     * Returns the notification sent when placement cost difference is refunded for a visibility change (#25).
+     * Returns the notification sent when a network is renamed (#27).
      */
-    public Component aetheryteVisibilityCostRefunded(final CommandSender viewer, final Component costDisplay) {
-        return get(viewer, MessageKey.AETHERYTE_VISIBILITY_COST_REFUNDED, Placeholder.component("cost", costDisplay));
+    public Component aetheryteNetworkRenamed(final CommandSender viewer, final AetheryteNetwork updated) {
+        return get(
+                viewer,
+                MessageKey.AETHERYTE_NETWORK_RENAMED,
+                Placeholder.unparsed("name", updated.name())
+        );
     }
 
     /**
-     * Returns the notification sent when a player is invited to an Aetheryte (#24).
+     * Returns the notification sent when a player is invited to an Aetheryte or network (#24, #27).
      */
     public Component aetheryteInviteeAdded(final CommandSender viewer, final Aetheryte updated, final String playerName) {
+        return aetheryteInviteeAdded(viewer, updated.name(), playerName);
+    }
+
+    /**
+     * Returns the notification sent when a player is invited to an Aetheryte or network (#24, #27).
+     */
+    public Component aetheryteInviteeAdded(final CommandSender viewer, final String targetName, final String playerName) {
         return get(
                 viewer,
                 MessageKey.AETHERYTE_INVITEE_ADDED,
-                Placeholder.unparsed("name", updated.name()),
+                Placeholder.unparsed("name", targetName),
                 Placeholder.unparsed("player", playerName)
         );
     }
 
     /**
-     * Returns the notification sent when a player is removed from an Aetheryte invite list (#24).
+     * Returns the notification sent when a player is removed from an invite list (#24, #27).
      */
     public Component aetheryteInviteeRemoved(final CommandSender viewer, final Aetheryte updated, final String playerName) {
+        return aetheryteInviteeRemoved(viewer, updated.name(), playerName);
+    }
+
+    /**
+     * Returns the notification sent when a player is removed from an invite list (#24, #27).
+     */
+    public Component aetheryteInviteeRemoved(final CommandSender viewer, final String targetName, final String playerName) {
         return get(
                 viewer,
                 MessageKey.AETHERYTE_INVITEE_REMOVED,
-                Placeholder.unparsed("name", updated.name()),
+                Placeholder.unparsed("name", targetName),
                 Placeholder.unparsed("player", playerName)
+        );
+    }
+
+    /**
+     * Returns the error message when the global per-player network limit is reached (#27).
+     */
+    public Component errorNetworkLimitGlobal(final CommandSender viewer, final int max) {
+        return get(viewer, MessageKey.ERROR_NETWORK_LIMIT_GLOBAL, Placeholder.unparsed("max", Integer.toString(max)));
+    }
+
+    /**
+     * Returns the error message when the variation per-player network limit is reached (#27).
+     */
+    public Component errorNetworkLimitVariation(
+            final CommandSender viewer,
+            final String variationDisplayNameMiniMessage,
+            final int max
+    ) {
+        return get(
+                viewer,
+                MessageKey.ERROR_NETWORK_LIMIT_VARIATION,
+                Placeholder.component("variation", MINI_MESSAGE.deserialize(variationDisplayNameMiniMessage)),
+                Placeholder.unparsed("max", Integer.toString(max))
+        );
+    }
+
+    /**
+     * Returns the error message when a network's maximum Aetheryte count is reached (#27).
+     */
+    public Component errorNetworkAetheryteLimit(final CommandSender viewer, final int max) {
+        return get(viewer, MessageKey.ERROR_NETWORK_AETHERYTE_LIMIT, Placeholder.unparsed("max", Integer.toString(max)));
+    }
+
+    /**
+     * Returns the error message when a new network Aetheryte exceeds {@code network.limit.max-distance} (#27).
+     */
+    public Component errorNetworkTooFar(final CommandSender viewer, final double maxDistance) {
+        return get(
+                viewer,
+                MessageKey.ERROR_NETWORK_TOO_FAR,
+                Placeholder.unparsed("distance", String.format(Locale.ROOT, "%.1f", maxDistance))
         );
     }
 

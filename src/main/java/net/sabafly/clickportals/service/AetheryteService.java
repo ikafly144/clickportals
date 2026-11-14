@@ -48,12 +48,13 @@ import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.aetheryte.AetheryteNetwork;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry.RegistrationOutcome;
 import net.sabafly.clickportals.aetheryte.AetheryteVisibility;
 import net.sabafly.clickportals.config.CastSection;
-import net.sabafly.clickportals.config.VisibilityCostSection;
 import net.sabafly.clickportals.cost.CostBundle;
+import net.sabafly.clickportals.cost.CostEntry;
 import net.sabafly.clickportals.cost.CostFormatter;
 import net.sabafly.clickportals.cost.CostItemQuote;
 import net.sabafly.clickportals.cost.CostQuote;
@@ -294,7 +295,7 @@ public final class AetheryteService {
     private final Set<UUID> inFlightWarps = ConcurrentHashMap.newKeySet();
     private final Map<UUID, ActiveCastSession> activeCasts = new ConcurrentHashMap<>();
     private volatile Supplier<CastSection> globalCastSupplier = CastSection::defaults;
-    private volatile Supplier<VisibilityCostSection> globalVisibilityCostSupplier = VisibilityCostSection::defaults;
+    private volatile IntSupplier maxNetworksPerPlayerSupplier = () -> -1;
     private volatile CastImmobilizeService castImmobilizeService = NoopCastImmobilizeService.INSTANCE;
     private volatile BooleanSupplier delayedVisualRefreshSupplier = () -> false;
     private volatile SoundService soundService = SoundService.noop();
@@ -631,12 +632,19 @@ public final class AetheryteService {
     }
 
     /**
-     * Updates the global visibility cost multiplier configuration supplier (#25).
+     * Updates the global per-player network limit supplier (#27).
      */
-    public void setGlobalVisibilityCostSupplier(final Supplier<VisibilityCostSection> globalVisibilityCostSupplier) {
-        this.globalVisibilityCostSupplier = globalVisibilityCostSupplier != null
-                ? globalVisibilityCostSupplier
-                : VisibilityCostSection::defaults;
+    public void setMaxNetworksPerPlayerSupplier(final IntSupplier maxNetworksPerPlayerSupplier) {
+        this.maxNetworksPerPlayerSupplier = maxNetworksPerPlayerSupplier != null
+                ? maxNetworksPerPlayerSupplier
+                : () -> -1;
+    }
+
+    /**
+     * Returns the configured global maximum number of Aetheryte networks per player ({@code <= 0} means unlimited).
+     */
+    public int getMaxNetworksPerPlayer() {
+        return maxNetworksPerPlayerSupplier.getAsInt();
     }
 
     /**
@@ -1639,6 +1647,41 @@ public final class AetheryteService {
     }
 
     /**
+     * Checks whether the given player may warp to {@code aetheryte}, enforcing network visibility and invitees
+     * when {@code aetheryte} belongs to a network (#24, #27).
+     */
+    public boolean canAccessDestination(final Player player, final Aetheryte aetheryte) {
+        final AetheryteNetwork network = networkFor(aetheryte);
+        if (network != null) {
+            return Permissions.canAccessVisibility(player, player.getUniqueId(), network);
+        }
+        return Permissions.canAccessVisibility(player, player.getUniqueId(), aetheryte);
+    }
+
+    /**
+     * Returns the {@link AetheryteNetwork} owning {@code aetheryte}, or {@code null} for standalone normal Aetherytes (#27).
+     */
+    public @Nullable AetheryteNetwork networkFor(final Aetheryte aetheryte) {
+        return aetheryte.networkId() != null ? registry.getNetworkById(aetheryte.networkId()).orElse(null) : null;
+    }
+
+    /**
+     * Returns the effective visibility for {@code aetheryte} (network visibility if inside a network) (#24, #27).
+     */
+    public AetheryteVisibility effectiveVisibility(final Aetheryte aetheryte) {
+        final AetheryteNetwork network = networkFor(aetheryte);
+        return network != null ? network.visibility() : aetheryte.visibility();
+    }
+
+    /**
+     * Returns the effective invitee set for {@code aetheryte} (network invitees if inside a network) (#24, #27).
+     */
+    public Set<UUID> effectiveInvitees(final Aetheryte aetheryte) {
+        final AetheryteNetwork network = networkFor(aetheryte);
+        return network != null ? network.invitedPlayers() : aetheryte.invitedPlayers();
+    }
+
+    /**
      * Checks whether the given player may manage visibility and invitees for {@code aetheryte} (#24).
      */
     public static boolean canManageVisibility(final Player player, final Aetheryte aetheryte) {
@@ -1646,15 +1689,25 @@ public final class AetheryteService {
     }
 
     /**
-     * Checks whether warping from {@code source} to {@code destination} is allowed by their network configuration (#27).
+     * Checks whether {@code player} may manage visibility, invitees, and network settings for {@code aetheryte}
+     * (requiring network ownership or admin for network Aetherytes) (#24, #27).
+     */
+    public boolean canManageVisibilityOrNetwork(final Player player, final Aetheryte aetheryte) {
+        final AetheryteNetwork network = networkFor(aetheryte);
+        if (network != null) {
+            return Permissions.canManageNetwork(player, player.getUniqueId(), network);
+        }
+        return Permissions.canManageVisibility(player, player.getUniqueId(), aetheryte);
+    }
+
+    /**
+     * Checks whether warping from {@code source} to {@code destination} is allowed by their network/type routing (#27).
      */
     public boolean isNetworkRoutable(final @Nullable Aetheryte source, final Aetheryte destination) {
         if (source == null) {
             return true;
         }
-        final AetheryteVariation sourceVar = variationRegistry.getOrDefault(source.variation());
-        final AetheryteVariation destVar = variationRegistry.getOrDefault(destination.variation());
-        return WarpDestinationQuery.canRouteBetweenVariations(sourceVar, destVar);
+        return WarpDestinationQuery.canRouteBetweenAetherytes(source, destination);
     }
 
     /**
@@ -1665,15 +1718,30 @@ public final class AetheryteService {
     }
 
     /**
-     * Computes the effective cost multiplier for a variation and visibility tier (#25).
+     * Resolves the effective placement cost entry list for {@code variation} at {@code visibility} (#25).
+     *
+     * <p>Non-null visibility overrides (including {@code []}) replace the base placement cost list; {@code null}
+     * falls back to the base placement cost list.
      */
-    public double effectiveVisibilityMultiplier(
-            final String variationId,
+    public List<CostEntry> resolvePlacementCostEntries(
+            final AetheryteVariation variation,
             final AetheryteVisibility visibility
     ) {
-        final AetheryteVariation variation = variationRegistry.getOrDefault(Aetheryte.normalizeVariation(variationId));
-        final VisibilityCostSection global = globalVisibilityCostSupplier.get();
-        return variation.placement().visibilityCost().resolve(global).multiplierFor(visibility);
+        final List<CostEntry> override = variation.placement().visibilityCost().costFor(visibility);
+        return override != null ? override : variation.placement().cost();
+    }
+
+    /**
+     * Returns the additional network create/join cost entries for {@code variation} (#27).
+     */
+    public List<CostEntry> resolveNetworkExtraCostEntries(
+            final AetheryteVariation variation,
+            final boolean createNewNetwork
+    ) {
+        if (!variation.isNetwork()) {
+            return List.of();
+        }
+        return createNewNetwork ? variation.network().cost().create() : variation.network().cost().join();
     }
 
     /**
@@ -1688,7 +1756,7 @@ public final class AetheryteService {
     ) {
         final String normalizedVar = Aetheryte.normalizeVariation(variationId);
         final AetheryteVariation variation = variationRegistry.getOrDefault(normalizedVar);
-        final CostBundle bundle = new CostBundle(variation.placement().cost());
+        final CostBundle bundle = new CostBundle(resolvePlacementCostEntries(variation, visibility));
         if (bundle.isEmpty()) {
             return CostQuote.FREE;
         }
@@ -1696,8 +1764,41 @@ public final class AetheryteService {
                 "owned_count", (double) registry.countByOwner(ownerId),
                 "variation_count", (double) registry.countByOwnerAndVariation(ownerId, normalizedVar)
         );
-        final double multiplier = effectiveVisibilityMultiplier(normalizedVar, visibility);
-        return bundle.quote(player, costVars, economy, multiplier);
+        return bundle.quote(player, costVars, economy);
+    }
+
+    /**
+     * Computes the combined placement + network create/join {@link CostQuote} for placing an Aetheryte (#25, #27).
+     *
+     * @param createNewNetwork {@code true} if creating a new network, {@code false} if joining an existing network,
+     *                         or {@code null} if not a network variation
+     */
+    public CostQuote computeTotalPlacementCostQuote(
+            final Player player,
+            final UUID ownerId,
+            final String variationId,
+            final AetheryteVisibility visibility,
+            final @Nullable Boolean createNewNetwork,
+            final EconomyProvider economy
+    ) {
+        final String normalizedVar = Aetheryte.normalizeVariation(variationId);
+        final AetheryteVariation variation = variationRegistry.getOrDefault(normalizedVar);
+        final List<CostEntry> placementEntries = resolvePlacementCostEntries(variation, visibility);
+        final List<CostEntry> extraEntries = (variation.isNetwork() && createNewNetwork != null)
+                ? resolveNetworkExtraCostEntries(variation, createNewNetwork)
+                : List.of();
+        final List<CostEntry> combined = new ArrayList<>(placementEntries.size() + extraEntries.size());
+        combined.addAll(placementEntries);
+        combined.addAll(extraEntries);
+        final CostBundle bundle = new CostBundle(combined);
+        if (bundle.isEmpty()) {
+            return CostQuote.FREE;
+        }
+        final Map<String, Double> costVars = Map.of(
+                "owned_count", (double) registry.countByOwner(ownerId),
+                "variation_count", (double) registry.countByOwnerAndVariation(ownerId, normalizedVar)
+        );
+        return bundle.quote(player, costVars, economy);
     }
 
     /**
@@ -1993,7 +2094,7 @@ public final class AetheryteService {
                 || existing == WarpEvaluation.DenyReason.NETWORK_MISMATCH) {
             return evaluation;
         }
-        if (!canAccessAetheryte(player, destination)) {
+        if (!canAccessDestination(player, destination)) {
             return WarpEvaluation.denied(
                     evaluation.costDisplay(),
                     messages.get(player, MessageKey.ERROR_VISIBILITY_DENIED),
@@ -2096,7 +2197,21 @@ public final class AetheryteService {
     }
 
     /**
-     * Places a new Aetheryte of the {@code default} variation (#6, #11, #12).
+     * Lists existing Aetheryte networks in {@code worldId} that {@code player} is allowed to join (#27).
+     */
+    public List<AetheryteNetwork> listJoinableNetworks(final Player player, final UUID worldId) {
+        final UUID playerId = player.getUniqueId();
+        final boolean admin = Permissions.canAdmin(player);
+        return registry.getNetworksByWorld(worldId).stream()
+                .filter(net -> net.canJoin(playerId, admin))
+                .sorted(java.util.Comparator
+                        .comparing((AetheryteNetwork net) -> !net.ownerId().equals(playerId))
+                        .thenComparing(AetheryteNetwork::name, String.CASE_INSENSITIVE_ORDER))
+                .toList();
+    }
+
+    /**
+     * Places a new Aetheryte of the {@code default} variation with {@link AetheryteVisibility#PUBLIC} (#6, #11, #12).
      */
     public void placeAetheryte(
             final Player player,
@@ -2110,8 +2225,7 @@ public final class AetheryteService {
     }
 
     /**
-     * Places a new Aetheryte of the specified variation backed by a non-ticking {@link Marker} entity
-     * at the target block coordinates using Folia's EntityScheduler and RegionScheduler (#6, #11, #12, #37, #42, #43).
+     * Places a new Aetheryte of the specified variation with {@link AetheryteVisibility#PUBLIC} (#6, #11, #12).
      */
     public void placeAetheryte(
             final Player player,
@@ -2121,6 +2235,42 @@ public final class AetheryteService {
             final int blockZ,
             final String rawName,
             final String variationId
+    ) {
+        placeAetheryte(player, world, blockX, blockY, blockZ, rawName, variationId, AetheryteVisibility.PUBLIC);
+    }
+
+    /**
+     * Places a new Aetheryte of the specified variation and initial visibility (#24, #25).
+     */
+    public void placeAetheryte(
+            final Player player,
+            final World world,
+            final int blockX,
+            final int blockY,
+            final int blockZ,
+            final String rawName,
+            final String variationId,
+            final AetheryteVisibility initialVisibility
+    ) {
+        placeAetheryteInNetwork(player, world, blockX, blockY, blockZ, rawName, variationId, initialVisibility, null, null);
+    }
+
+    /**
+     * Places a new Aetheryte of the specified variation, initial visibility, and optional network creation/join target
+     * backed by a non-ticking {@link Marker} entity using Folia's EntityScheduler and RegionScheduler (#6, #11, #12,
+     * #24, #25, #27, #37, #42, #43).
+     */
+    public void placeAetheryteInNetwork(
+            final Player player,
+            final World world,
+            final int blockX,
+            final int blockY,
+            final int blockZ,
+            final String rawName,
+            final String variationId,
+            final AetheryteVisibility initialVisibility,
+            final @Nullable UUID joinNetworkId,
+            final @Nullable String newNetworkName
     ) {
         if (!canPlace(player)) {
             messages.send(player, MessageKey.ERROR_NO_PERMISSION);
@@ -2153,6 +2303,78 @@ public final class AetheryteService {
 
         final UUID ownerId = player.getUniqueId();
         final boolean bypassLimit = Permissions.canBypassLimit(player);
+        final boolean canBypassDistance = Permissions.canBypassPlacementDistance(player);
+        final boolean networkVariation = variation.isNetwork();
+        final boolean creatingNewNetwork = networkVariation && joinNetworkId == null;
+
+        final AetheryteVisibility requestedVisibility =
+                initialVisibility != null ? initialVisibility : AetheryteVisibility.PUBLIC;
+        final AetheryteVisibility effectiveVisibility;
+        final @Nullable String resolvedNewNetworkName;
+
+        final int effectiveMaxGlobalNetworks = bypassLimit ? -1 : maxNetworksPerPlayerSupplier.getAsInt();
+        final int effectiveMaxVariationNetworks = bypassLimit ? -1 : variation.network().limit().maxPerPlayerOrDefault();
+        final int effectiveMaxNetworkAetherytes = bypassLimit ? -1 : variation.network().limit().maxAetheryteOrDefault();
+        final double effectiveMaxNetworkDistance = canBypassDistance ? -1.0 : variation.network().limit().maxDistanceOrDefault();
+
+        if (networkVariation && joinNetworkId != null) {
+            final AetheryteNetwork existingNet = registry.getNetworkById(joinNetworkId).orElse(null);
+            if (existingNet == null || !existingNet.worldId().equals(world.getUID())) {
+                messages.send(player, MessageKey.ERROR_NETWORK_NOT_FOUND);
+                soundService.playError(player, normalizedVar);
+                return;
+            }
+            if (!existingNet.canJoin(ownerId, Permissions.canAdmin(player))) {
+                messages.send(player, MessageKey.ERROR_NETWORK_NOT_JOINABLE);
+                soundService.playError(player, normalizedVar);
+                return;
+            }
+            if (effectiveMaxNetworkAetherytes >= 0 && registry.countAetherytesInNetwork(joinNetworkId) >= effectiveMaxNetworkAetherytes) {
+                player.sendMessage(messages.errorNetworkAetheryteLimit(player, effectiveMaxNetworkAetherytes));
+                soundService.playError(player, normalizedVar);
+                return;
+            }
+            if (effectiveMaxNetworkDistance > 0.0
+                    && !registry.isWithinNetworkDistance(joinNetworkId, world.getUID(), blockX, blockY, blockZ, effectiveMaxNetworkDistance)) {
+                player.sendMessage(messages.errorNetworkTooFar(player, effectiveMaxNetworkDistance));
+                soundService.playError(player, normalizedVar);
+                return;
+            }
+            effectiveVisibility = existingNet.visibility();
+            resolvedNewNetworkName = null;
+        } else if (creatingNewNetwork) {
+            if (newNetworkName != null && !newNetworkName.isBlank()) {
+                final Optional<String> validNetName = sanitizeName(newNetworkName);
+                if (validNetName.isEmpty()) {
+                    messages.send(player, MessageKey.ERROR_INVALID_NAME);
+                    return;
+                }
+                resolvedNewNetworkName = validNetName.get();
+            } else {
+                resolvedNewNetworkName = name;
+            }
+            if (effectiveMaxGlobalNetworks >= 0 && registry.countNetworksByOwner(ownerId) >= effectiveMaxGlobalNetworks) {
+                player.sendMessage(messages.errorNetworkLimitGlobal(player, effectiveMaxGlobalNetworks));
+                soundService.playError(player, normalizedVar);
+                return;
+            }
+            if (effectiveMaxVariationNetworks >= 0
+                    && registry.countNetworksByOwnerAndVariation(ownerId, normalizedVar) >= effectiveMaxVariationNetworks) {
+                player.sendMessage(messages.errorNetworkLimitVariation(player, variation.displayName(), effectiveMaxVariationNetworks));
+                soundService.playError(player, normalizedVar);
+                return;
+            }
+            if (effectiveMaxNetworkAetherytes == 0) {
+                player.sendMessage(messages.errorNetworkAetheryteLimit(player, 0));
+                soundService.playError(player, normalizedVar);
+                return;
+            }
+            effectiveVisibility = requestedVisibility;
+        } else {
+            effectiveVisibility = requestedVisibility;
+            resolvedNewNetworkName = null;
+        }
+
         final Location targetLocation = new Location(world, blockX, blockY, blockZ);
         final List<Component> initialBypassReasons = new ArrayList<>();
         appendDimensionPlaceBypassReason(player, world, initialBypassReasons);
@@ -2183,8 +2405,14 @@ public final class AetheryteService {
 
             final boolean creative = player.getGameMode() == GameMode.CREATIVE;
             final boolean bypassCost = Permissions.canBypassPlaceCost(player);
-            final boolean canBypassDistance = Permissions.canBypassPlacementDistance(player);
-            final CostBundle placementCostBundle = new CostBundle(variation.placement().cost());
+            final List<CostEntry> basePlacementEntries = resolvePlacementCostEntries(variation, effectiveVisibility);
+            final List<CostEntry> networkExtraEntries = networkVariation
+                    ? resolveNetworkExtraCostEntries(variation, creatingNewNetwork)
+                    : List.of();
+            final List<CostEntry> combinedPlacementEntries = new ArrayList<>(basePlacementEntries.size() + networkExtraEntries.size());
+            combinedPlacementEntries.addAll(basePlacementEntries);
+            combinedPlacementEntries.addAll(networkExtraEntries);
+            final CostBundle placementCostBundle = new CostBundle(combinedPlacementEntries);
             final CostQuote placementQuote;
             final EconomyProvider activeEconomy = this.economyProvider;
             if (!creative && !placementCostBundle.isEmpty()) {
@@ -2192,8 +2420,7 @@ public final class AetheryteService {
                         "owned_count", (double) registry.countByOwner(ownerId),
                         "variation_count", (double) registry.countByOwnerAndVariation(ownerId, normalizedVar)
                 );
-                final double visibilityMultiplier = effectiveVisibilityMultiplier(normalizedVar, AetheryteVisibility.PUBLIC);
-                final CostQuote quoted = placementCostBundle.quote(player, costVars, activeEconomy, visibilityMultiplier);
+                final CostQuote quoted = placementCostBundle.quote(player, costVars, activeEconomy);
                 if (bypassCost) {
                     if (!quoted.isFree()) {
                         final Component costDisplay = CostFormatter.format(player, quoted, activeEconomy, messages, true);
@@ -2259,6 +2486,48 @@ public final class AetheryteService {
                         return;
                     }
 
+                    final AetheryteNetwork createdNetwork;
+                    final UUID assignedNetworkId;
+                    final AetheryteVisibility storedVisibility;
+                    if (creatingNewNetwork) {
+                        assignedNetworkId = UUID.randomUUID();
+                        storedVisibility = effectiveVisibility;
+                        createdNetwork = new AetheryteNetwork(
+                                assignedNetworkId,
+                                resolvedNewNetworkName != null ? resolvedNewNetworkName : name,
+                                world.getUID(),
+                                world.getName(),
+                                ownerId,
+                                player.getName(),
+                                System.currentTimeMillis(),
+                                storedVisibility,
+                                Set.of()
+                        );
+                    } else if (networkVariation && joinNetworkId != null) {
+                        final AetheryteNetwork latestJoinNet = registry.getNetworkById(joinNetworkId).orElse(null);
+                        if (latestJoinNet == null || !latestJoinNet.worldId().equals(world.getUID())) {
+                            refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
+                            pendingPlacements.remove(ownerId);
+                            messages.send(player, MessageKey.ERROR_NETWORK_NOT_FOUND);
+                            soundService.playError(player, normalizedVar);
+                            return;
+                        }
+                        if (!latestJoinNet.canJoin(ownerId, Permissions.canAdmin(player))) {
+                            refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
+                            pendingPlacements.remove(ownerId);
+                            messages.send(player, MessageKey.ERROR_NETWORK_NOT_JOINABLE);
+                            soundService.playError(player, normalizedVar);
+                            return;
+                        }
+                        assignedNetworkId = latestJoinNet.id();
+                        storedVisibility = latestJoinNet.visibility();
+                        createdNetwork = null;
+                    } else {
+                        assignedNetworkId = null;
+                        storedVisibility = effectiveVisibility;
+                        createdNetwork = null;
+                    }
+
                     final Aetheryte aetheryte = new Aetheryte(
                             UUID.randomUUID(),
                             name,
@@ -2270,7 +2539,10 @@ public final class AetheryteService {
                             ownerId,
                             System.currentTimeMillis(),
                             normalizedVar,
-                            player.getName()
+                            player.getName(),
+                            storedVisibility,
+                            Set.of(),
+                            assignedNetworkId
                     );
 
                     final List<Component> regionBypassReasons = new ArrayList<>(initialBypassReasons);
@@ -2290,13 +2562,26 @@ public final class AetheryteService {
                     final int effectiveMaxGlobal = bypassLimit ? -1 : globalMaxPerPlayerSupplier.getAsInt();
                     final int effectiveMaxVariation = bypassLimit ? -1 : variation.limit().maxPerPlayer();
                     final double effectiveMinDist = canBypassDistance ? 0.0 : effectiveMinDistance(normalizedVar);
-                    final RegistrationOutcome outcome = registry.tryRegister(
-                            world,
-                            aetheryte,
-                            effectiveMaxGlobal,
-                            effectiveMaxVariation,
-                            effectiveMinDist
-                    );
+                    final RegistrationOutcome outcome = networkVariation
+                            ? registry.tryRegisterInNetwork(
+                                    world,
+                                    aetheryte,
+                                    createdNetwork,
+                                    effectiveMaxGlobal,
+                                    effectiveMaxVariation,
+                                    effectiveMinDist,
+                                    effectiveMaxGlobalNetworks,
+                                    effectiveMaxVariationNetworks,
+                                    effectiveMaxNetworkAetherytes,
+                                    effectiveMaxNetworkDistance
+                            )
+                            : registry.tryRegister(
+                                    world,
+                                    aetheryte,
+                                    effectiveMaxGlobal,
+                                    effectiveMaxVariation,
+                                    effectiveMinDist
+                            );
 
                     if (outcome != RegistrationOutcome.REGISTERED) {
                         refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
@@ -2312,6 +2597,16 @@ public final class AetheryteService {
                             case VARIATION_LIMIT_REACHED -> player.sendMessage(
                                     messages.errorLimitReachedVariation(player, variation.displayName(), effectiveMaxVariation)
                             );
+                            case NETWORK_NOT_FOUND -> messages.send(player, MessageKey.ERROR_NETWORK_NOT_FOUND);
+                            case GLOBAL_NETWORK_LIMIT_REACHED ->
+                                    player.sendMessage(messages.errorNetworkLimitGlobal(player, effectiveMaxGlobalNetworks));
+                            case VARIATION_NETWORK_LIMIT_REACHED -> player.sendMessage(
+                                    messages.errorNetworkLimitVariation(player, variation.displayName(), effectiveMaxVariationNetworks)
+                            );
+                            case NETWORK_AETHERYTE_LIMIT_REACHED ->
+                                    player.sendMessage(messages.errorNetworkAetheryteLimit(player, effectiveMaxNetworkAetherytes));
+                            case NETWORK_TOO_FAR ->
+                                    player.sendMessage(messages.errorNetworkTooFar(player, effectiveMaxNetworkDistance));
                             default -> {
                             }
                         }
@@ -2697,7 +2992,8 @@ public final class AetheryteService {
     }
 
     /**
-     * Changes the {@link AetheryteVisibility} of an existing Aetheryte (#24), applying placement cost delta (#25).
+     * Changes the {@link AetheryteVisibility} of an existing Aetheryte (or its owning {@link AetheryteNetwork})
+     * (#24, #27), charging the target visibility's full placement cost (#25).
      */
     public void changeVisibility(
             final Player actor,
@@ -2710,40 +3006,37 @@ public final class AetheryteService {
             return;
         }
         final Aetheryte initial = targetOpt.get();
-        if (!canManageVisibility(actor, initial)) {
+        final @Nullable AetheryteNetwork network = networkFor(initial);
+        if (network != null) {
+            if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), network)) {
+                messages.send(actor, MessageKey.ERROR_CANNOT_MANAGE_NETWORK);
+                return;
+            }
+        } else if (!canManageVisibility(actor, initial)) {
             messages.send(actor, MessageKey.ERROR_NOT_OWNER);
             return;
         }
-        if (initial.visibility() == targetVisibility) {
+        final AetheryteVisibility currentVisibility = network != null ? network.visibility() : initial.visibility();
+        if (currentVisibility == targetVisibility) {
             messages.send(actor, MessageKey.ERROR_VISIBILITY_UNCHANGED);
             return;
         }
 
         final String normalizedVar = Aetheryte.normalizeVariation(initial.variation());
         final AetheryteVariation variation = variationRegistry.getOrDefault(normalizedVar);
-        final CostBundle placementCostBundle = new CostBundle(variation.placement().cost());
+        final CostBundle placementCostBundle = new CostBundle(resolvePlacementCostEntries(variation, targetVisibility));
         final EconomyProvider activeEconomy = this.economyProvider;
         final boolean creative = actor.getGameMode() == GameMode.CREATIVE;
         final boolean bypassCost = Permissions.canBypassPlaceCost(actor);
 
-        CostQuote chargedExtra = CostQuote.FREE;
-        CostQuote pendingRefund = CostQuote.FREE;
+        CostQuote chargedCost = CostQuote.FREE;
         if (!creative && !bypassCost && !placementCostBundle.isEmpty()) {
-            final CostQuote oldQuote = computePlacementCostQuote(
-                    actor, initial.ownerId(), normalizedVar, initial.visibility(), activeEconomy);
-            final CostQuote newQuote = computePlacementCostQuote(
+            final CostQuote targetQuote = computePlacementCostQuote(
                     actor, initial.ownerId(), normalizedVar, targetVisibility, activeEconomy);
-            final CostBundle.QuoteDelta delta = CostBundle.computeQuoteDelta(
-                    actor, activeEconomy, oldQuote, newQuote);
-            if (!delta.additionalCharge().isFree()) {
-                if (!delta.additionalCharge().affordable()) {
-                    final Component reason = CostFormatter.format(
-                            messages.locale(actor),
-                            delta.additionalCharge(),
-                            activeEconomy,
-                            messages,
-                            false
-                    );
+            if (!targetQuote.isFree()) {
+                if (!targetQuote.affordable()) {
+                    final Component reason = CostFormatter.formatMissingRequirements(
+                            actor, targetQuote, activeEconomy, messages);
                     actor.sendMessage(messages.get(
                             actor,
                             MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT,
@@ -2753,18 +3046,13 @@ public final class AetheryteService {
                     return;
                 }
                 final CostBundle.ChargeResult chargeResult = placementCostBundle.chargeWithResult(
-                        actor, delta.additionalCharge(), activeEconomy);
+                        actor, targetQuote, activeEconomy);
                 if (!chargeResult.success()) {
                     if (!chargeResult.unrefundedItems().isEmpty()) {
                         recordPendingRefund(actor.getUniqueId(), chargeResult.unrefundedItems());
                     }
-                    final Component reason = CostFormatter.format(
-                            messages.locale(actor),
-                            delta.additionalCharge(),
-                            activeEconomy,
-                            messages,
-                            false
-                    );
+                    final Component reason = CostFormatter.formatMissingRequirements(
+                            actor, targetQuote, activeEconomy, messages);
                     actor.sendMessage(messages.get(
                             actor,
                             MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT,
@@ -2773,19 +3061,54 @@ public final class AetheryteService {
                     soundService.playError(actor, normalizedVar);
                     return;
                 }
-                chargedExtra = chargeResult.chargedQuote();
+                chargedCost = chargeResult.chargedQuote();
             }
-            pendingRefund = delta.refund();
         }
 
-        final AetheryteVisibility expectedVisibility = initial.visibility();
-        final CostQuote finalChargedExtra = chargedExtra;
-        final CostQuote finalPendingRefund = pendingRefund;
-        final Runnable rollbackExtraCharge = () -> {
-            if (!finalChargedExtra.isFree()) {
-                refundCostQuoteToPlayer(actor, placementCostBundle, finalChargedExtra, activeEconomy);
+        final CostQuote finalChargedCost = chargedCost;
+        final Runnable rollbackCharge = () -> {
+            if (!finalChargedCost.isFree()) {
+                refundCostQuoteToPlayer(actor, placementCostBundle, finalChargedCost, activeEconomy);
             }
         };
+
+        if (network != null) {
+            final World world = Bukkit.getWorld(network.worldId());
+            if (world == null) {
+                rollbackCharge.run();
+                messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+                return;
+            }
+            executeNetworkUpdate(
+                    actor,
+                    network.id(),
+                    world,
+                    initial.blockLocation(world),
+                    currentNet -> {
+                        if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), currentNet)) {
+                            return MessageKey.ERROR_CANNOT_MANAGE_NETWORK;
+                        }
+                        if (currentNet.visibility() != currentVisibility) {
+                            return MessageKey.ERROR_VISIBILITY_UNCHANGED;
+                        }
+                        return null;
+                    },
+                    currentNet -> currentNet.withVisibility(targetVisibility),
+                    (w, updatedNet) -> {
+                        refreshNetworkMemberHolograms(w, updatedNet.id());
+                        actor.sendMessage(messages.aetheryteVisibilityChanged(
+                                actor, updatedNet.name(), updatedNet.visibility()));
+                        if (!finalChargedCost.isFree()) {
+                            actor.sendMessage(messages.aetheryteVisibilityCostCharged(
+                                    actor,
+                                    CostFormatter.format(messages.locale(actor), finalChargedCost, activeEconomy, messages, false)
+                            ));
+                        }
+                    },
+                    rollbackCharge
+            );
+            return;
+        }
 
         executeAetheryteUpdate(
                 actor,
@@ -2794,7 +3117,7 @@ public final class AetheryteService {
                     if (!canManageVisibility(actor, current)) {
                         return MessageKey.ERROR_NOT_OWNER;
                     }
-                    if (current.visibility() != expectedVisibility) {
+                    if (current.visibility() != currentVisibility) {
                         return MessageKey.ERROR_NOT_FOUND;
                     }
                     return null;
@@ -2802,28 +3125,67 @@ public final class AetheryteService {
                 current -> current.withVisibility(targetVisibility),
                 (world, previous, updated) -> {
                     hologramService.showAetheryte(updated);
-                    if (!finalPendingRefund.isFree()) {
-                        refundCostQuoteToPlayer(actor, placementCostBundle, finalPendingRefund, activeEconomy);
-                    }
                     actor.sendMessage(messages.aetheryteVisibilityChanged(actor, updated));
-                    if (!finalChargedExtra.isFree()) {
+                    if (!finalChargedCost.isFree()) {
                         actor.sendMessage(messages.aetheryteVisibilityCostCharged(
                                 actor,
-                                CostFormatter.format(messages.locale(actor), finalChargedExtra, activeEconomy, messages, false)
-                        ));
-                    } else if (!finalPendingRefund.isFree()) {
-                        actor.sendMessage(messages.aetheryteVisibilityCostRefunded(
-                                actor,
-                                CostFormatter.format(messages.locale(actor), finalPendingRefund, activeEconomy, messages, false)
+                                CostFormatter.format(messages.locale(actor), finalChargedCost, activeEconomy, messages, false)
                         ));
                     }
                 },
-                rollbackExtraCharge
+                rollbackCharge
         );
     }
 
     /**
-     * Adds an invited player to an Aetheryte (#24).
+     * Renames the {@link AetheryteNetwork} containing {@code aetheryteId} (#27).
+     */
+    public void renameNetwork(final Player actor, final UUID aetheryteId, final String rawNetworkName) {
+        final Optional<Aetheryte> targetOpt = registry.getById(aetheryteId);
+        if (targetOpt.isEmpty()) {
+            messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+            return;
+        }
+        final Aetheryte target = targetOpt.get();
+        final @Nullable AetheryteNetwork network = networkFor(target);
+        if (network == null) {
+            messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+            return;
+        }
+        if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), network)) {
+            messages.send(actor, MessageKey.ERROR_CANNOT_MANAGE_NETWORK);
+            return;
+        }
+        final Optional<String> validName = sanitizeName(rawNetworkName);
+        if (validName.isEmpty()) {
+            messages.send(actor, MessageKey.ERROR_INVALID_NAME);
+            return;
+        }
+        final String newName = validName.get();
+        final World world = Bukkit.getWorld(network.worldId());
+        if (world == null) {
+            messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+            return;
+        }
+        executeNetworkUpdate(
+                actor,
+                network.id(),
+                world,
+                target.blockLocation(world),
+                currentNet -> Permissions.canManageNetwork(actor, actor.getUniqueId(), currentNet)
+                        ? null
+                        : MessageKey.ERROR_CANNOT_MANAGE_NETWORK,
+                currentNet -> currentNet.withName(newName),
+                (w, updatedNet) -> {
+                    refreshNetworkMemberHolograms(w, updatedNet.id());
+                    actor.sendMessage(messages.aetheryteNetworkRenamed(actor, updatedNet));
+                },
+                () -> {}
+        );
+    }
+
+    /**
+     * Adds an invited player to an Aetheryte or its owning network (#24, #27).
      */
     public void addInvitee(final Player actor, final UUID aetheryteId, final String targetPlayerName) {
         final Optional<Aetheryte> targetOpt = registry.getById(aetheryteId);
@@ -2832,7 +3194,13 @@ public final class AetheryteService {
             return;
         }
         final Aetheryte target = targetOpt.get();
-        if (!canManageVisibility(actor, target)) {
+        final @Nullable AetheryteNetwork network = networkFor(target);
+        if (network != null) {
+            if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), network)) {
+                messages.send(actor, MessageKey.ERROR_CANNOT_MANAGE_NETWORK);
+                return;
+            }
+        } else if (!canManageVisibility(actor, target)) {
             messages.send(actor, MessageKey.ERROR_NOT_OWNER);
             return;
         }
@@ -2841,12 +3209,47 @@ public final class AetheryteService {
             messages.send(actor, MessageKey.ERROR_PLAYER_NOT_FOUND, Placeholder.unparsed("player", targetPlayerName.strip()));
             return;
         }
-        if (target.ownerId().equals(resolved.id())) {
+        final UUID ownerToCheck = network != null ? network.ownerId() : target.ownerId();
+        final Set<UUID> currentInvitees = network != null ? network.invitedPlayers() : target.invitedPlayers();
+        if (ownerToCheck.equals(resolved.id())) {
             messages.send(actor, MessageKey.ERROR_INVITE_SELF);
             return;
         }
-        if (target.invitedPlayers().contains(resolved.id())) {
+        if (currentInvitees.contains(resolved.id())) {
             messages.send(actor, MessageKey.ERROR_ALREADY_INVITED, Placeholder.unparsed("player", resolved.name()));
+            return;
+        }
+
+        if (network != null) {
+            final World world = Bukkit.getWorld(network.worldId());
+            if (world == null) {
+                messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+                return;
+            }
+            executeNetworkUpdate(
+                    actor,
+                    network.id(),
+                    world,
+                    target.blockLocation(world),
+                    currentNet -> {
+                        if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), currentNet)) {
+                            return MessageKey.ERROR_CANNOT_MANAGE_NETWORK;
+                        }
+                        if (currentNet.ownerId().equals(resolved.id())) {
+                            return MessageKey.ERROR_INVITE_SELF;
+                        }
+                        if (currentNet.invitedPlayers().contains(resolved.id())) {
+                            return MessageKey.ERROR_ALREADY_INVITED;
+                        }
+                        return null;
+                    },
+                    currentNet -> currentNet.addInvitee(resolved.id()),
+                    (w, updatedNet) -> {
+                        refreshNetworkMemberHolograms(w, updatedNet.id());
+                        actor.sendMessage(messages.aetheryteInviteeAdded(actor, updatedNet.name(), resolved.name()));
+                    },
+                    () -> {}
+            );
             return;
         }
 
@@ -2874,7 +3277,7 @@ public final class AetheryteService {
     }
 
     /**
-     * Removes an invited player from an Aetheryte (#24).
+     * Removes an invited player from an Aetheryte or its owning network (#24, #27).
      */
     public void removeInvitee(final Player actor, final UUID aetheryteId, final UUID inviteeId) {
         final Optional<Aetheryte> targetOpt = registry.getById(aetheryteId);
@@ -2883,15 +3286,52 @@ public final class AetheryteService {
             return;
         }
         final Aetheryte target = targetOpt.get();
-        if (!canManageVisibility(actor, target)) {
+        final @Nullable AetheryteNetwork network = networkFor(target);
+        if (network != null) {
+            if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), network)) {
+                messages.send(actor, MessageKey.ERROR_CANNOT_MANAGE_NETWORK);
+                return;
+            }
+        } else if (!canManageVisibility(actor, target)) {
             messages.send(actor, MessageKey.ERROR_NOT_OWNER);
             return;
         }
-        if (!target.invitedPlayers().contains(inviteeId)) {
+        final Set<UUID> currentInvitees = network != null ? network.invitedPlayers() : target.invitedPlayers();
+        if (!currentInvitees.contains(inviteeId)) {
             messages.send(actor, MessageKey.ERROR_NOT_INVITED);
             return;
         }
         final String inviteeName = resolvePlayerName(inviteeId, actor);
+
+        if (network != null) {
+            final World world = Bukkit.getWorld(network.worldId());
+            if (world == null) {
+                messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+                return;
+            }
+            executeNetworkUpdate(
+                    actor,
+                    network.id(),
+                    world,
+                    target.blockLocation(world),
+                    currentNet -> {
+                        if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), currentNet)) {
+                            return MessageKey.ERROR_CANNOT_MANAGE_NETWORK;
+                        }
+                        if (!currentNet.invitedPlayers().contains(inviteeId)) {
+                            return MessageKey.ERROR_NOT_INVITED;
+                        }
+                        return null;
+                    },
+                    currentNet -> currentNet.removeInvitee(inviteeId),
+                    (w, updatedNet) -> {
+                        refreshNetworkMemberHolograms(w, updatedNet.id());
+                        actor.sendMessage(messages.aetheryteInviteeRemoved(actor, updatedNet.name(), inviteeName));
+                    },
+                    () -> {}
+            );
+            return;
+        }
 
         executeAetheryteUpdate(
                 actor,
@@ -2944,6 +3384,53 @@ public final class AetheryteService {
     @FunctionalInterface
     private interface AetheryteUpdateCallback {
         void onUpdated(World world, Aetheryte previous, Aetheryte updated);
+    }
+
+    @FunctionalInterface
+    private interface NetworkUpdateCallback {
+        void onUpdated(World world, AetheryteNetwork updated);
+    }
+
+    private void executeNetworkUpdate(
+            final Player actor,
+            final UUID networkId,
+            final World world,
+            final Location regionLocation,
+            final Function<AetheryteNetwork, @Nullable MessageKey> regionValidator,
+            final UnaryOperator<AetheryteNetwork> updater,
+            final NetworkUpdateCallback onUpdated,
+            final Runnable onRejected
+    ) {
+        Bukkit.getRegionScheduler().execute(plugin, regionLocation, () -> {
+            final Optional<AetheryteNetwork> latestOpt = registry.getNetworkById(networkId);
+            if (latestOpt.isEmpty()) {
+                onRejected.run();
+                messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+                return;
+            }
+            final MessageKey validationError = regionValidator.apply(latestOpt.get());
+            if (validationError != null) {
+                onRejected.run();
+                messages.send(actor, validationError);
+                return;
+            }
+            final Optional<AetheryteNetwork> updatedOpt = registry.updateNetwork(world, networkId, updater);
+            if (updatedOpt.isEmpty()) {
+                onRejected.run();
+                messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+                return;
+            }
+            onUpdated.onUpdated(world, updatedOpt.get());
+        });
+    }
+
+    private void refreshNetworkMemberHolograms(final World world, final UUID networkId) {
+        final UUID worldId = world.getUID();
+        for (final Aetheryte member : registry.getByWorld(worldId)) {
+            if (networkId.equals(member.networkId())) {
+                Bukkit.getRegionScheduler().execute(plugin, member.blockLocation(world), () -> hologramService.showAetheryte(member));
+            }
+        }
     }
 
     private void executeAetheryteUpdate(
@@ -3764,6 +4251,14 @@ public final class AetheryteService {
             final Aetheryte destination,
             final List<Component> reasons
     ) {
+        final AetheryteNetwork network = networkFor(destination);
+        if (network != null) {
+            if (!network.isAccessibleTo(player.getUniqueId(), false)
+                    && Permissions.canAccessVisibility(player, player.getUniqueId(), network)) {
+                reasons.add(messages.bypassReasonVisibility(player, network.visibility()));
+            }
+            return;
+        }
         if (!destination.isAccessibleTo(player.getUniqueId())
                 && Permissions.canAccessVisibility(player, player.getUniqueId(), destination)) {
             reasons.add(messages.bypassReasonVisibility(player, destination.visibility()));

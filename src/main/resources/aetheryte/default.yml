@@ -3,6 +3,8 @@
 
 # Display name of this Aetheryte variation in MiniMessage format
 display-name: "<aqua>Aetheryte</aqua>"
+# Variation type: 'normal' (standard) or 'network' (player-owned world network) (#27)
+type: "normal"
 
 # Creation item settings for this variation
 item:
@@ -79,11 +81,11 @@ placement:
   cost: []
   # Minimum block distance to another Aetheryte in the same world (-1 to inherit global, 0 to disable)
   min-distance: -1.0
-  # Optional visibility cost multiplier overrides (null inherits global config.yml) (#25)
+  # Cost overrides per visibility mode (null = use base placement cost, [] = free) (#25)
   visibility-cost:
-    public-multiplier: null
-    invite-only-multiplier: null
-    owner-only-multiplier: null
+    public: null
+    invite-only: null
+    owner-only: null
 
 # Optional warp overrides applied when warping from this variation (#14, #26)
 warp:
@@ -113,10 +115,11 @@ warp:
       on-move: null
       on-damage: null
       on-interact: null
-  # Warp network identifier for this variation (empty/"default" for standard network) (#27)
-  network: "default"
-  # Destination network IDs reachable from this variation (empty = same network only, "*" = any) (#27)
-  allowed-target-networks: []
+  # Cost overrides per destination visibility mode (null = use warp.cost/global, [] = free) (#25)
+  visibility-cost:
+    public: null
+    invite-only: null
+    owner-only: null
 
 # Per-player placement limit and cooldown for this variation
 limit:
@@ -124,6 +127,21 @@ limit:
   max-per-player: -1
   # Cooldown in ticks after placing this variation (-1 to use global limits.placement-cooldown-ticks, 0 to disable)
   cooldown-ticks: -1
+
+# Network-type Aetheryte limits and costs (#27)
+network:
+  limit:
+    # Maximum networks of this variation a single player may own (-1 for unlimited)
+    max-per-player: -1
+    # Maximum Aetherytes allowed in a single network (-1 for unlimited)
+    max-aetheryte: -1
+    # Maximum Euclidean block distance from existing network Aetherytes when adding a new one (-1.0 to disable)
+    max-distance: -1.0
+  cost:
+    # Additional cost charged when creating a new network (empty = free)
+    create: []
+    # Additional cost charged when joining an existing network (empty = free)
+    join: []
 
 # BetterModel animated 3D model engine settings (#46)
 bettermodel:

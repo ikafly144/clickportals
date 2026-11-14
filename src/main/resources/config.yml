@@ -26,6 +26,8 @@ limits:
   min-distance-between-aetherytes: 0.0
   # Maximum number of favorite Aetherytes a player can save (-1 for unlimited, 0 to disable)
   max-favorites-per-player: -1
+  # Maximum total Aetheryte networks a single player may own (-1 for unlimited) (#27)
+  max-networks-per-player: -1
 
 # Global warping settings: distance boundaries, costs, and display (#14, #26)
 warp:
@@ -61,11 +63,11 @@ warp:
       on-damage: true
       # Cancel casting when breaking/placing blocks, attacking entities, or interacting with other blocks/entities
       on-interact: true
-  # Cost multipliers applied according to Aetheryte visibility (#25)
+  # Cost overrides per destination visibility mode (null = use base cost, [] = free) (#25)
   visibility-cost:
-    public-multiplier: 1.0
-    invite-only-multiplier: 1.0
-    owner-only-multiplier: 1.0
+    public: null
+    invite-only: null
+    owner-only: null
 
 # Cross-dimension warping routes, distance origins, and dimension pricing (#9)
 dimensions:

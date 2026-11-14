@@ -17,111 +17,193 @@
  */
 package net.sabafly.clickportals.config;
 
+import java.lang.reflect.Type;
+import java.util.List;
+import java.util.Objects;
 import net.sabafly.clickportals.aetheryte.AetheryteVisibility;
+import net.sabafly.clickportals.cost.CostEntry;
+import net.sabafly.clickportals.cost.expr.ExpressionException;
+import net.sabafly.clickportals.cost.expr.ExpressionParser;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
-import org.spongepowered.configurate.objectmapping.ConfigSerializable;
-import org.spongepowered.configurate.objectmapping.meta.Comment;
-import org.spongepowered.configurate.objectmapping.meta.Setting;
+import org.spongepowered.configurate.ConfigurationNode;
+import org.spongepowered.configurate.serialize.SerializationException;
+import org.spongepowered.configurate.serialize.TypeSerializer;
 
 /**
- * Cost multipliers keyed by {@link AetheryteVisibility} (#25).
- * In variation placement overrides, {@code null} fields inherit from global {@code config.yml}.
+ * Per-visibility cost override lists for placement and warping (#25).
+ *
+ * <p>Each field may be:
+ * <ul>
+ *     <li>{@code null}: fall back to / inherit from the base cost (or global override),</li>
+ *     <li>{@code []}: explicitly free for that visibility tier, or</li>
+ *     <li>a non-empty list of {@link CostEntry}: explicit cost entries used instead of the base cost.</li>
+ * </ul>
  */
-@ConfigSerializable
 public record VisibilityCostSection(
-        @Setting("public-multiplier")
-        @Comment("Cost multiplier applied to PUBLIC Aetherytes (>= 0.0; null in variation to inherit)")
-        @Nullable Double publicMultiplier,
-
-        @Setting("invite-only-multiplier")
-        @Comment("Cost multiplier applied to INVITE_ONLY Aetherytes (>= 0.0; null in variation to inherit)")
-        @Nullable Double inviteOnlyMultiplier,
-
-        @Setting("owner-only-multiplier")
-        @Comment("Cost multiplier applied to OWNER_ONLY Aetherytes (>= 0.0; null in variation to inherit)")
-        @Nullable Double ownerOnlyMultiplier
+        @Nullable List<CostEntry> publicCost,
+        @Nullable List<CostEntry> inviteOnlyCost,
+        @Nullable List<CostEntry> ownerOnlyCost
 ) {
 
-    public static final double DEFAULT_MULTIPLIER = 1.0;
+    /**
+     * Sentinel string emitted before YAML saving so explicit {@code null} entries are written as {@code null}
+     * instead of being omitted by Configurate.
+     */
+    public static final String NULL_SENTINEL = "__CLICKPORTALS_NULL__";
 
-    public static VisibilityCostSection defaults() {
-        return new VisibilityCostSection(DEFAULT_MULTIPLIER, DEFAULT_MULTIPLIER, DEFAULT_MULTIPLIER);
+    public VisibilityCostSection {
+        publicCost = publicCost == null ? null : List.copyOf(publicCost);
+        inviteOnlyCost = inviteOnlyCost == null ? null : List.copyOf(inviteOnlyCost);
+        ownerOnlyCost = ownerOnlyCost == null ? null : List.copyOf(ownerOnlyCost);
     }
 
+    /**
+     * Global defaults (all tiers {@code null} -> fall back to base cost).
+     */
+    public static VisibilityCostSection defaults() {
+        return new VisibilityCostSection(null, null, null);
+    }
+
+    /**
+     * Variation override defaults (all tiers {@code null} -> inherit base / global).
+     */
     public static VisibilityCostSection inherit() {
         return new VisibilityCostSection(null, null, null);
     }
 
-    public VisibilityCostSection validatedGlobal(final Logger logger) {
-        return new VisibilityCostSection(
-                validateMultiplier("warp.visibility-cost.public-multiplier", publicMultiplier, DEFAULT_MULTIPLIER, logger),
-                validateMultiplier("warp.visibility-cost.invite-only-multiplier", inviteOnlyMultiplier, DEFAULT_MULTIPLIER, logger),
-                validateMultiplier("warp.visibility-cost.owner-only-multiplier", ownerOnlyMultiplier, DEFAULT_MULTIPLIER, logger)
-        );
+    /**
+     * Returns the configured override list for {@code visibility}, or {@code null} if inheriting/falling back.
+     */
+    public @Nullable List<CostEntry> costFor(final AetheryteVisibility visibility) {
+        Objects.requireNonNull(visibility, "visibility");
+        return switch (visibility) {
+            case PUBLIC -> publicCost;
+            case INVITE_ONLY -> inviteOnlyCost;
+            case OWNER_ONLY -> ownerOnlyCost;
+        };
     }
 
-    public VisibilityCostSection validatedOverride(final String prefix, final Logger logger) {
-        return new VisibilityCostSection(
-                validateNullableMultiplier(prefix + ".public-multiplier", publicMultiplier, logger),
-                validateNullableMultiplier(prefix + ".invite-only-multiplier", inviteOnlyMultiplier, logger),
-                validateNullableMultiplier(prefix + ".owner-only-multiplier", ownerOnlyMultiplier, logger)
-        );
-    }
-
-    public VisibilityCostSection resolve(final VisibilityCostSection global) {
-        final double pub = publicMultiplier != null
-                ? publicMultiplier
-                : (global.publicMultiplier() != null ? global.publicMultiplier() : DEFAULT_MULTIPLIER);
-        final double inv = inviteOnlyMultiplier != null
-                ? inviteOnlyMultiplier
-                : (global.inviteOnlyMultiplier() != null ? global.inviteOnlyMultiplier() : DEFAULT_MULTIPLIER);
-        final double own = ownerOnlyMultiplier != null
-                ? ownerOnlyMultiplier
-                : (global.ownerOnlyMultiplier() != null ? global.ownerOnlyMultiplier() : DEFAULT_MULTIPLIER);
+    /**
+     * Resolves per-visibility overrides against {@code fallback}, keeping non-null overrides in this instance.
+     */
+    public VisibilityCostSection resolve(final VisibilityCostSection fallback) {
+        final List<CostEntry> pub = publicCost != null ? publicCost : fallback.publicCost();
+        final List<CostEntry> inv = inviteOnlyCost != null ? inviteOnlyCost : fallback.inviteOnlyCost();
+        final List<CostEntry> own = ownerOnlyCost != null ? ownerOnlyCost : fallback.ownerOnlyCost();
         return new VisibilityCostSection(pub, inv, own);
     }
 
-    public double multiplierFor(final AetheryteVisibility visibility) {
-        final @Nullable Double val = switch (visibility) {
-            case PUBLIC -> publicMultiplier;
-            case INVITE_ONLY -> inviteOnlyMultiplier;
-            case OWNER_ONLY -> ownerOnlyMultiplier;
-        };
-        if (val == null || !Double.isFinite(val) || val < 0.0) {
-            return DEFAULT_MULTIPLIER;
-        }
-        return val;
+    /**
+     * Returns {@code true} if any visibility tier specifies an explicit cost list (including {@code []}).
+     */
+    public boolean hasCustomOverrides() {
+        return publicCost != null || inviteOnlyCost != null || ownerOnlyCost != null;
     }
 
-    private static double validateMultiplier(
-            final String path,
-            final @Nullable Double raw,
-            final double fallback,
-            final Logger logger
-    ) {
-        if (raw == null) {
-            return fallback;
-        }
-        if (!Double.isFinite(raw) || raw < 0.0) {
-            logger.warn("Invalid {} {} (must be >= 0.0); falling back to {}", path, raw, fallback);
-            return fallback;
-        }
-        return raw;
+    /**
+     * Validates all non-null cost entry lists, logging warnings for unknown types or invalid expressions.
+     */
+    public VisibilityCostSection validated(final String prefix, final Logger logger) {
+        validateEntries(publicCost, prefix + ".public", logger);
+        validateEntries(inviteOnlyCost, prefix + ".invite-only", logger);
+        validateEntries(ownerOnlyCost, prefix + ".owner-only", logger);
+        return this;
     }
 
-    private static @Nullable Double validateNullableMultiplier(
+    private static void validateEntries(
+            final @Nullable List<CostEntry> entries,
             final String path,
-            final @Nullable Double raw,
             final Logger logger
     ) {
-        if (raw == null) {
-            return null;
+        if (entries == null) {
+            return;
         }
-        if (!Double.isFinite(raw) || raw < 0.0) {
-            logger.warn("Invalid {} {} (must be >= 0.0); falling back to inherit global", path, raw);
-            return null;
+        for (final CostEntry entry : entries) {
+            if (entry.type() == null) {
+                logger.warn("Unknown cost type '{}' in {}; this cost will fail affordability checks.", entry.rawType(), path);
+                continue;
+            }
+            try {
+                ExpressionParser.parse(entry.amount(), entry.type().resourceVariable());
+            } catch (final ExpressionException e) {
+                logger.warn("Invalid cost expression '{}' in {}: {}", entry.amount(), path, e.getMessage());
+            }
         }
-        return raw;
+    }
+
+    /**
+     * Configurate serializer preserving {@code null} vs {@code []} vs populated {@link CostEntry} lists.
+     */
+    public static final class Serializer implements TypeSerializer<VisibilityCostSection> {
+
+        public static final Serializer INSTANCE = new Serializer();
+
+        private Serializer() {
+        }
+
+        @Override
+        public VisibilityCostSection deserialize(final Type type, final ConfigurationNode node)
+                throws SerializationException {
+            if (node == null || node.virtual() || node.raw() == null) {
+                return inherit();
+            }
+            return new VisibilityCostSection(
+                    readCostList(node.node("public")),
+                    readCostList(node.node("invite-only")),
+                    readCostList(node.node("owner-only"))
+            );
+        }
+
+        private static @Nullable List<CostEntry> readCostList(final ConfigurationNode child)
+                throws SerializationException {
+            if (child == null || child.virtual() || child.raw() == null || NULL_SENTINEL.equals(child.raw())) {
+                return null;
+            }
+            final List<CostEntry> list = child.getList(CostEntry.class, List.of());
+            return List.copyOf(list);
+        }
+
+        @Override
+        public void serialize(
+                final Type type,
+                final @Nullable VisibilityCostSection obj,
+                final ConfigurationNode node
+        ) throws SerializationException {
+            final VisibilityCostSection target = obj != null ? obj : defaults();
+            node.raw(java.util.Collections.emptyMap());
+            writeCostList(node.node("public"), target.publicCost());
+            writeCostList(node.node("invite-only"), target.inviteOnlyCost());
+            writeCostList(node.node("owner-only"), target.ownerOnlyCost());
+        }
+
+        private static void writeCostList(final ConfigurationNode child, final @Nullable List<CostEntry> list)
+                throws SerializationException {
+            if (list == null) {
+                child.raw(null);
+            } else {
+                child.setList(CostEntry.class, list);
+            }
+        }
+    }
+
+    /**
+     * Populates {@link #NULL_SENTINEL} markers for {@code null} visibility tiers right before dumping to YAML
+     * so explicit {@code null} overrides remain visible on disk without skewing schema diff comparisons.
+     */
+    public static void applyNullSentinels(
+            final ConfigurationNode node,
+            final @Nullable VisibilityCostSection section
+    ) throws SerializationException {
+        final VisibilityCostSection target = section != null ? section : defaults();
+        if (target.publicCost() == null) {
+            node.node("public").set(NULL_SENTINEL);
+        }
+        if (target.inviteOnlyCost() == null) {
+            node.node("invite-only").set(NULL_SENTINEL);
+        }
+        if (target.ownerOnlyCost() == null) {
+            node.node("owner-only").set(NULL_SENTINEL);
+        }
     }
 }

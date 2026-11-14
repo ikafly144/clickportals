@@ -47,6 +47,7 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
     private static final NamespacedKey KEY_OWNER_NAME = new NamespacedKey(NAMESPACE, "owner_name");
     private static final NamespacedKey KEY_VISIBILITY = new NamespacedKey(NAMESPACE, "visibility");
     private static final NamespacedKey KEY_INVITEES = new NamespacedKey(NAMESPACE, "invitees");
+    private static final NamespacedKey KEY_NETWORK_ID = new NamespacedKey(NAMESPACE, "network_id");
 
     public static final AetheryteDataType INSTANCE = new AetheryteDataType();
 
@@ -87,6 +88,9 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
             }
             container.set(KEY_INVITEES, PersistentDataType.LIST.strings(), inviteeStrings);
         }
+        if (complex.networkId() != null) {
+            container.set(KEY_NETWORK_ID, PersistentDataType.STRING, complex.networkId().toString());
+        }
         return container;
     }
 
@@ -118,6 +122,16 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
             }
         }
 
+        final String rawNetworkId = primitive.get(KEY_NETWORK_ID, PersistentDataType.STRING);
+        UUID networkId = null;
+        if (rawNetworkId != null && !rawNetworkId.isBlank()) {
+            try {
+                networkId = UUID.fromString(rawNetworkId);
+            } catch (final IllegalArgumentException ignored) {
+                // Ignore malformed network UUID entries
+            }
+        }
+
         return new Aetheryte(
                 UUID.fromString(idStr),
                 name,
@@ -131,7 +145,8 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
                 Aetheryte.normalizeVariation(variation),
                 ownerName,
                 visibility,
-                invitees
+                invitees,
+                networkId
         );
     }
 }

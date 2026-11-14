@@ -52,6 +52,12 @@ public enum MessageKey {
     DIALOG_CREATE_BYPASS_NOTICE("dialog.create.bypass-notice"),
     DIALOG_CREATE_NAME_INPUT_LABEL("dialog.create.name-input-label"),
     DIALOG_CREATE_DEFAULT_NAME("dialog.create.default-name"),
+    DIALOG_CREATE_VISIBILITY_LABEL("dialog.create.visibility-label"),
+    DIALOG_CREATE_NETWORK_MODE_LABEL("dialog.create.network-mode-label"),
+    DIALOG_CREATE_NETWORK_NAME_LABEL("dialog.create.network-name-label"),
+    DIALOG_CREATE_NETWORK_OPTION_CREATE("dialog.create.network-option-create"),
+    DIALOG_CREATE_NETWORK_OPTION_JOIN("dialog.create.network-option-join"),
+    DIALOG_CREATE_NETWORK_COST("dialog.create.network-cost"),
 
     DIALOG_BUTTON_CONFIRM_CREATE("dialog.button.confirm-create"),
     DIALOG_BUTTON_CANCEL("dialog.button.cancel"),
@@ -155,8 +161,12 @@ public enum MessageKey {
     DIALOG_VISIBILITY_TITLE("dialog.visibility.title"),
     DIALOG_VISIBILITY_BODY("dialog.visibility.body"),
     DIALOG_VISIBILITY_TOOLTIP_CHARGE("dialog.visibility.tooltip-charge"),
-    DIALOG_VISIBILITY_TOOLTIP_REFUND("dialog.visibility.tooltip-refund"),
     DIALOG_VISIBILITY_TOOLTIP_NO_CHANGE("dialog.visibility.tooltip-no-change"),
+    DIALOG_BUTTON_RENAME_NETWORK("dialog.button.rename-network"),
+    DIALOG_BUTTON_RENAME_NETWORK_TOOLTIP("dialog.button.rename-network-tooltip"),
+    DIALOG_RENAME_NETWORK_TITLE("dialog.rename-network.title"),
+    DIALOG_RENAME_NETWORK_BODY("dialog.rename-network.body"),
+    DIALOG_RENAME_NETWORK_INPUT_LABEL("dialog.rename-network.input-label"),
     DIALOG_INVITE_ADD_TITLE("dialog.invite-add.title"),
     DIALOG_INVITE_ADD_BODY("dialog.invite-add.body"),
     DIALOG_INVITE_ADD_INPUT_LABEL("dialog.invite-add.input-label"),
@@ -167,6 +177,7 @@ public enum MessageKey {
     VISIBILITY_PUBLIC("visibility.public"),
     VISIBILITY_INVITE_ONLY("visibility.invite-only"),
     VISIBILITY_OWNER_ONLY("visibility.owner-only"),
+    NETWORK_NONE("network.none"),
 
     AETHERYTE_CREATED("aetheryte.created"),
     AETHERYTE_REMOVED("aetheryte.removed"),
@@ -235,7 +246,7 @@ public enum MessageKey {
     BYPASS_REASON_VISIBILITY("bypass.reason.visibility"),
     AETHERYTE_VISIBILITY_CHANGED("aetheryte.visibility-changed"),
     AETHERYTE_VISIBILITY_COST_CHARGED("aetheryte.visibility-cost-charged"),
-    AETHERYTE_VISIBILITY_COST_REFUNDED("aetheryte.visibility-cost-refunded"),
+    AETHERYTE_NETWORK_RENAMED("aetheryte.network-renamed"),
     AETHERYTE_INVITEE_ADDED("aetheryte.invitee-added"),
     AETHERYTE_INVITEE_REMOVED("aetheryte.invitee-removed"),
     ERROR_VISIBILITY_DENIED("error.visibility-denied"),
@@ -243,7 +254,14 @@ public enum MessageKey {
     ERROR_VISIBILITY_UNCHANGED("error.visibility-unchanged"),
     ERROR_INVITE_SELF("error.invite-self"),
     ERROR_ALREADY_INVITED("error.already-invited"),
-    ERROR_NOT_INVITED("error.not-invited");
+    ERROR_NOT_INVITED("error.not-invited"),
+    ERROR_NETWORK_NOT_FOUND("error.network-not-found"),
+    ERROR_NETWORK_NOT_JOINABLE("error.network-not-joinable"),
+    ERROR_NETWORK_LIMIT_GLOBAL("error.network-limit-global"),
+    ERROR_NETWORK_LIMIT_VARIATION("error.network-limit-variation"),
+    ERROR_NETWORK_AETHERYTE_LIMIT("error.network-aetheryte-limit"),
+    ERROR_NETWORK_TOO_FAR("error.network-too-far"),
+    ERROR_CANNOT_MANAGE_NETWORK("error.cannot-manage-network");
 
     private final String path;
     private final boolean listValue;

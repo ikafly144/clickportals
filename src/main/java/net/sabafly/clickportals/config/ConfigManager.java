@@ -53,7 +53,11 @@ public final class ConfigManager {
                 .path(configFile)
                 .indent(INDENT_SPACES)
                 .nodeStyle(NodeStyle.BLOCK)
-                .defaultOptions(opts -> opts.header(HEADER).shouldCopyDefaults(true))
+                .defaultOptions(opts -> opts.header(HEADER)
+                        .shouldCopyDefaults(true)
+                        .serializers(builder -> builder.register(
+                                VisibilityCostSection.class,
+                                VisibilityCostSection.Serializer.INSTANCE)))
                 .build();
         this.currentConfig = PluginConfig.defaultConfig();
     }
@@ -186,16 +190,29 @@ public final class ConfigManager {
             final CommentedConfigurationNode root,
             final PluginConfig validated
     ) throws ConfigurateException {
+        final CommentedConfigurationNode warpVisCostNode = root.node("warp", "visibility-cost");
+        if (warpVisCostNode.comment() == null || warpVisCostNode.comment().isBlank()) {
+            warpVisCostNode.comment("Per-visibility warp cost override lists (null = fall back to warp.cost, [] = free) (#25)");
+        }
+        VisibilityCostSection.applyNullSentinels(warpVisCostNode, validated.warp().visibilityCost());
+
         final StringWriter stringWriter = new StringWriter();
         final YamlConfigurationLoader stringLoader = YamlConfigurationLoader.builder()
                 .sink(() -> new java.io.BufferedWriter(stringWriter))
                 .indent(INDENT_SPACES)
                 .nodeStyle(NodeStyle.BLOCK)
-                .defaultOptions(opts -> opts.header(HEADER).shouldCopyDefaults(true))
+                .defaultOptions(opts -> opts.header(HEADER)
+                        .shouldCopyDefaults(true)
+                        .serializers(builder -> builder.register(
+                                VisibilityCostSection.class,
+                                VisibilityCostSection.Serializer.INSTANCE)))
                 .build();
         stringLoader.save(root);
 
-        final String commentedYaml = YamlSchemaSync.renderInlineComments(stringWriter.toString(), root, INDENT_SPACES);
+        final String commentedYaml = YamlSchemaSync.renderInlineComments(stringWriter.toString(), root, INDENT_SPACES)
+                .replace(": '" + VisibilityCostSection.NULL_SENTINEL + "'", ": null")
+                .replace(": \"" + VisibilityCostSection.NULL_SENTINEL + "\"", ": null")
+                .replace(": " + VisibilityCostSection.NULL_SENTINEL, ": null");
         try {
             final Path parent = configFile.getParent();
             if (parent != null && !Files.exists(parent)) {
