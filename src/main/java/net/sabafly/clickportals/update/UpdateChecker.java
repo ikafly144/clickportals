@@ -54,6 +54,7 @@ import org.jspecify.annotations.Nullable;
  */
 public final class UpdateChecker {
 
+    public static final String MODRINTH_PROJECT_ID = "clickportals";
     private static final String MODRINTH_API_BASE = "https://api.modrinth.com/v2";
     private static final String MODRINTH_WEB_BASE = "https://modrinth.com/plugin";
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
@@ -196,7 +197,7 @@ public final class UpdateChecker {
             return;
         }
         final SemanticVersion currentVersion = currentOpt.get();
-        final String projectId = sanitizeProjectId(config.projectIdOrDefault());
+        final String projectId = MODRINTH_PROJECT_ID;
         final String encodedProject = URLEncoder.encode(projectId, StandardCharsets.UTF_8);
         final String endpoint = MODRINTH_API_BASE
                 + "/project/"
@@ -229,7 +230,6 @@ public final class UpdateChecker {
                     response.body(),
                     currentVersion,
                     config.shouldIncludePrerelease(),
-                    projectId,
                     mcVersion
             );
             if (found.isEmpty()) {
@@ -263,7 +263,6 @@ public final class UpdateChecker {
             final String responseJson,
             final SemanticVersion currentVersion,
             final boolean includePrerelease,
-            final String projectId,
             final @Nullable String minecraftVersion
     ) {
         if (responseJson == null || responseJson.isBlank()) {
@@ -279,7 +278,6 @@ public final class UpdateChecker {
             return Optional.empty();
         }
 
-        final String cleanProjectId = sanitizeProjectId(projectId);
         final JsonArray array = parsedRoot.getAsJsonArray();
         SemanticVersion bestSemVer = currentVersion;
         @Nullable UpdateInfo bestInfo = null;
@@ -330,7 +328,7 @@ public final class UpdateChecker {
                 final String versionPath = versionId != null ? versionId : versionNumber;
                 final String url = MODRINTH_WEB_BASE
                         + "/"
-                        + URLEncoder.encode(cleanProjectId, StandardCharsets.UTF_8)
+                        + URLEncoder.encode(MODRINTH_PROJECT_ID, StandardCharsets.UTF_8)
                         + "/version/"
                         + URLEncoder.encode(versionPath, StandardCharsets.UTF_8);
                 bestInfo = new UpdateInfo(versionNumber, versionType, url);
@@ -365,9 +363,5 @@ public final class UpdateChecker {
             }
         }
         return result;
-    }
-
-    private static String sanitizeProjectId(final @Nullable String raw) {
-        return (raw == null || raw.isBlank()) ? "clickportals" : raw.strip();
     }
 }

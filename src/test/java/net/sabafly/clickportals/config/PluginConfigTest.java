@@ -672,7 +672,6 @@ class PluginConfigTest {
                   enabled: true
                   include-prerelease: true
                   check-interval-minutes: -10
-                  project-id: "  "
                 """, StandardCharsets.UTF_8);
 
         final Logger logger = mock(Logger.class);
@@ -683,6 +682,6 @@ class PluginConfigTest {
         assertThat(loaded.updateChecker().shouldIncludePrerelease()).isTrue();
         assertThat(loaded.updateChecker().shouldNotifyOnJoin()).isTrue();
         assertThat(loaded.updateChecker().checkIntervalMinutesOrDefault()).isZero();
-        assertThat(loaded.updateChecker().projectIdOrDefault()).isEqualTo("clickportals");
+        assertThat(Files.readString(configFile, StandardCharsets.UTF_8)).doesNotContain("project-id");
     }
 }

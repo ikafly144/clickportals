@@ -87,14 +87,9 @@ public record PluginConfig(
 
             @Setting("check-interval-minutes")
             @Comment("How often in minutes to re-check Modrinth for updates (0 to check on startup/reload only)")
-            @Nullable Integer checkIntervalMinutes,
-
-            @Setting("project-id")
-            @Comment("Modrinth project slug or ID to check for updates")
-            @Nullable String projectId
+            @Nullable Integer checkIntervalMinutes
     ) {
         public static final int DEFAULT_CHECK_INTERVAL_MINUTES = 360;
-        public static final String DEFAULT_PROJECT_ID = "clickportals";
 
         public UpdateCheckerSection {
             if (enabled == null) {
@@ -109,24 +104,19 @@ public record PluginConfig(
             if (checkIntervalMinutes == null) {
                 checkIntervalMinutes = DEFAULT_CHECK_INTERVAL_MINUTES;
             }
-            if (projectId == null) {
-                projectId = DEFAULT_PROJECT_ID;
-            }
         }
 
         public UpdateCheckerSection(
                 final boolean enabled,
                 final boolean includePrerelease,
                 final boolean notifyOnJoin,
-                final int checkIntervalMinutes,
-                final String projectId
+                final int checkIntervalMinutes
         ) {
             this(
                     Boolean.valueOf(enabled),
                     Boolean.valueOf(includePrerelease),
                     Boolean.valueOf(notifyOnJoin),
-                    Integer.valueOf(checkIntervalMinutes),
-                    projectId
+                    Integer.valueOf(checkIntervalMinutes)
             );
         }
 
@@ -146,15 +136,11 @@ public record PluginConfig(
             return checkIntervalMinutes != null ? checkIntervalMinutes : DEFAULT_CHECK_INTERVAL_MINUTES;
         }
 
-        public String projectIdOrDefault() {
-            return (projectId == null || projectId.isBlank()) ? DEFAULT_PROJECT_ID : projectId.strip();
-        }
-
         /**
          * Returns the default update checker section.
          */
         public static UpdateCheckerSection defaults() {
-            return new UpdateCheckerSection(true, false, true, DEFAULT_CHECK_INTERVAL_MINUTES, DEFAULT_PROJECT_ID);
+            return new UpdateCheckerSection(true, false, true, DEFAULT_CHECK_INTERVAL_MINUTES);
         }
     }
 
@@ -523,20 +509,11 @@ public record PluginConfig(
         } else {
             validCheckInterval = rawCheckInterval;
         }
-        final String rawProjectId = rawUpdateChecker.projectId();
-        final String validProjectId;
-        if (rawProjectId == null || rawProjectId.isBlank()) {
-            logger.warn("update-checker.project-id is blank; falling back to {}", UpdateCheckerSection.DEFAULT_PROJECT_ID);
-            validProjectId = UpdateCheckerSection.DEFAULT_PROJECT_ID;
-        } else {
-            validProjectId = rawProjectId.strip();
-        }
         final UpdateCheckerSection validUpdateChecker = new UpdateCheckerSection(
                 rawUpdateChecker.isEnabled(),
                 rawUpdateChecker.shouldIncludePrerelease(),
                 rawUpdateChecker.shouldNotifyOnJoin(),
-                validCheckInterval,
-                validProjectId
+                validCheckInterval
         );
 
         return new PluginConfig(

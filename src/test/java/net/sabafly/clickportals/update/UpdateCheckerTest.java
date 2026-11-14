@@ -83,7 +83,7 @@ class UpdateCheckerTest {
                 """;
 
         final Optional<UpdateChecker.UpdateInfo> stable = UpdateChecker.findLatestUpdate(
-                json, SemanticVersion.parse("0.4.0"), false, "clickportals", "26.3"
+                json, SemanticVersion.parse("0.4.0"), false, "26.3"
         );
         assertThat(stable).isPresent();
         assertThat(stable.get().versionNumber()).isEqualTo("0.5.0");
@@ -91,7 +91,7 @@ class UpdateCheckerTest {
         assertThat(stable.get().pageUrl()).isEqualTo("https://modrinth.com/plugin/clickportals/version/verStable");
 
         final Optional<UpdateChecker.UpdateInfo> withPre = UpdateChecker.findLatestUpdate(
-                json, SemanticVersion.parse("0.4.0"), true, "clickportals", "26.3"
+                json, SemanticVersion.parse("0.4.0"), true, "26.3"
         );
         assertThat(withPre).isPresent();
         assertThat(withPre.get().versionNumber()).isEqualTo("0.6.0-alpha.1");
@@ -111,11 +111,11 @@ class UpdateCheckerTest {
                   }
                 ]
                 """;
-        assertThat(UpdateChecker.findLatestUpdate(json, SemanticVersion.parse("0.4.0"), true, "clickportals", "26.3"))
+        assertThat(UpdateChecker.findLatestUpdate(json, SemanticVersion.parse("0.4.0"), true, "26.3"))
                 .isEmpty();
-        assertThat(UpdateChecker.findLatestUpdate("{not valid json", SemanticVersion.parse("0.4.0"), true, "clickportals", "26.3"))
+        assertThat(UpdateChecker.findLatestUpdate("{not valid json", SemanticVersion.parse("0.4.0"), true, "26.3"))
                 .isEmpty();
-        assertThat(UpdateChecker.findLatestUpdate("", SemanticVersion.parse("0.4.0"), true, "clickportals", "26.3"))
+        assertThat(UpdateChecker.findLatestUpdate("", SemanticVersion.parse("0.4.0"), true, "26.3"))
                 .isEmpty();
     }
 
@@ -137,7 +137,7 @@ class UpdateCheckerTest {
         when(failingClient.send(any(), any())).thenThrow(new IOException("offline"));
 
         final PluginConfig.UpdateCheckerSection cfg = new PluginConfig.UpdateCheckerSection(
-                true, false, true, 0, "clickportals"
+                true, false, true, 0
         );
         final UpdateChecker failingChecker = new UpdateChecker(plugin, () -> cfg, Messages.defaults(), failingClient);
         failingChecker.checkNow();

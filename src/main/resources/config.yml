@@ -115,5 +115,3 @@ update-checker:
   notify-on-join: true
   # How often in minutes to re-check Modrinth for updates (0 to check on startup/reload only)
   check-interval-minutes: 360
-  # Modrinth project slug or ID to check for updates
-  project-id: "clickportals"
