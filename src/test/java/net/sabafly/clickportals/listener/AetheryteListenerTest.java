@@ -786,6 +786,14 @@ class AetheryteListenerTest {
                 mock(Entity.class),
                 EquipmentSlot.HAND
         ));
+        listener.onPlayerArmorStandManipulateDuringCast(new org.bukkit.event.player.PlayerArmorStandManipulateEvent(
+                player,
+                mock(org.bukkit.entity.ArmorStand.class),
+                mock(ItemStack.class),
+                mock(ItemStack.class),
+                EquipmentSlot.HAND,
+                EquipmentSlot.CHEST
+        ));
 
         // RIGHT_CLICK_BLOCK on other block (DEFAULT) -> triggers
         final org.bukkit.event.player.PlayerInteractEvent rightClickOther = new org.bukkit.event.player.PlayerInteractEvent(
@@ -810,8 +818,32 @@ class AetheryteListenerTest {
         deniedRightClick.setCancelled(true);
         listener.onPlayerInteractCastCancel(deniedRightClick);
 
-        // RIGHT_CLICK_AIR with non-denied item use (useInteractedBlock == DENY, useItemInHand == DEFAULT) -> triggers
+        // Empty-hand RIGHT_CLICK_BLOCK with block denied (e.g. Spawn Protection) -> skipped
+        final org.bukkit.event.player.PlayerInteractEvent deniedBlockEmptyHand = new org.bukkit.event.player.PlayerInteractEvent(
+                player,
+                org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK,
+                null,
+                normalBlock,
+                BlockFace.UP,
+                EquipmentSlot.HAND
+        );
+        deniedBlockEmptyHand.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY);
+        listener.onPlayerInteractCastCancel(deniedBlockEmptyHand);
+
+        // Held-item RIGHT_CLICK_BLOCK with only block denied -> item use still triggers
         final ItemStack pearl = mock(ItemStack.class);
+        final org.bukkit.event.player.PlayerInteractEvent deniedBlockWithItem = new org.bukkit.event.player.PlayerInteractEvent(
+                player,
+                org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK,
+                pearl,
+                normalBlock,
+                BlockFace.UP,
+                EquipmentSlot.HAND
+        );
+        deniedBlockWithItem.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY);
+        listener.onPlayerInteractCastCancel(deniedBlockWithItem);
+
+        // RIGHT_CLICK_AIR with non-denied item use (useInteractedBlock == DENY, useItemInHand == DEFAULT) -> triggers
         final org.bukkit.event.player.PlayerInteractEvent rightClickAir = new org.bukkit.event.player.PlayerInteractEvent(
                 player,
                 org.bukkit.event.block.Action.RIGHT_CLICK_AIR,
@@ -834,7 +866,7 @@ class AetheryteListenerTest {
         deniedAir.setUseItemInHand(org.bukkit.event.Event.Result.DENY);
         listener.onPlayerInteractCastCancel(deniedAir);
 
-        verify(mockService, times(7)).onPlayerInteractDuringCast(player);
+        verify(mockService, times(9)).onPlayerInteractDuringCast(player);
     }
 
     @Test

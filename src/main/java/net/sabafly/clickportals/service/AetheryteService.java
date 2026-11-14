@@ -37,6 +37,7 @@ import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
 import java.util.function.Function;
 import java.util.function.IntSupplier;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.function.ToLongFunction;
 import java.util.function.UnaryOperator;
@@ -781,41 +782,35 @@ public final class AetheryteService {
      * Cancels the player's active cast if movement cancellation is enabled (#65).
      */
     public void onPlayerMoveDuringCast(final Player player) {
-        final UUID playerId = player.getUniqueId();
-        if (playerId == null) {
-            return;
-        }
-        final ActiveCastSession session = activeCasts.get(playerId);
-        if (session != null && session.castSettings.cancelOnMove()) {
-            cancelCast(player, CastCancelReason.MOVED);
-        }
+        cancelCastIfConfigured(player, CastSection.Resolved::cancelOnMove, CastCancelReason.MOVED);
     }
 
     /**
      * Cancels the player's active cast if damage cancellation is enabled (#65).
      */
     public void onPlayerDamageDuringCast(final Player player) {
-        final UUID playerId = player.getUniqueId();
-        if (playerId == null) {
-            return;
-        }
-        final ActiveCastSession session = activeCasts.get(playerId);
-        if (session != null && session.castSettings.cancelOnDamage()) {
-            cancelCast(player, CastCancelReason.DAMAGED);
-        }
+        cancelCastIfConfigured(player, CastSection.Resolved::cancelOnDamage, CastCancelReason.DAMAGED);
     }
 
     /**
      * Cancels the player's active cast if non-Aetheryte interaction cancellation is enabled.
      */
     public void onPlayerInteractDuringCast(final Player player) {
+        cancelCastIfConfigured(player, CastSection.Resolved::cancelOnInteract, CastCancelReason.INTERACT);
+    }
+
+    private void cancelCastIfConfigured(
+            final Player player,
+            final Predicate<CastSection.Resolved> condition,
+            final CastCancelReason reason
+    ) {
         final UUID playerId = player.getUniqueId();
         if (playerId == null) {
             return;
         }
         final ActiveCastSession session = activeCasts.get(playerId);
-        if (session != null && session.castSettings.cancelOnInteract()) {
-            cancelCast(player, CastCancelReason.INTERACT);
+        if (session != null && condition.test(session.castSettings)) {
+            cancelCast(player, reason);
         }
     }
 

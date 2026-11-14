@@ -57,6 +57,7 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
+import org.bukkit.event.player.PlayerArmorStandManipulateEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
@@ -499,7 +500,7 @@ public final class AetheryteListener implements Listener {
         final Action action = event.getAction();
         final boolean validInteract = switch (action) {
             case RIGHT_CLICK_BLOCK -> event.useInteractedBlock() != Event.Result.DENY
-                    || event.useItemInHand() != Event.Result.DENY;
+                    || (event.getItem() != null && event.useItemInHand() != Event.Result.DENY);
             case RIGHT_CLICK_AIR -> event.useItemInHand() != Event.Result.DENY;
             default -> false;
         };
@@ -547,6 +548,14 @@ public final class AetheryteListener implements Listener {
      */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerInteractEntityDuringCast(final PlayerInteractEntityEvent event) {
+        handleInteractDuringCast(event.getPlayer());
+    }
+
+    /**
+     * Cancels an in-progress warp cast if the player manipulates an armor stand and {@code cancel.on-interact} is enabled.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPlayerArmorStandManipulateDuringCast(final PlayerArmorStandManipulateEvent event) {
         handleInteractDuringCast(event.getPlayer());
     }
 
