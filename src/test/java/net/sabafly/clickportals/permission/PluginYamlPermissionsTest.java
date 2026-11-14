@@ -54,6 +54,7 @@ class PluginYamlPermissionsTest {
             assertThat(perms.node(Permissions.RENAME_ANY, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.COMMAND_GIVE, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.COMMAND_RELOAD, "default").getString()).isEqualTo("op");
+            assertThat(perms.node(Permissions.COMMAND_AETHERYTE, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.BYPASS_LIMIT, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.BYPASS_COST_WARP, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.BYPASS_COST_PLACE, "default").getString()).isEqualTo("op");
@@ -69,6 +70,7 @@ class PluginYamlPermissionsTest {
             assertThat(children.node(Permissions.RENAME_ANY).getBoolean()).isTrue();
             assertThat(children.node(Permissions.COMMAND_GIVE).getBoolean()).isTrue();
             assertThat(children.node(Permissions.COMMAND_RELOAD).getBoolean()).isTrue();
+            assertThat(children.node(Permissions.COMMAND_AETHERYTE).getBoolean()).isTrue();
             assertThat(children.node(Permissions.BYPASS_LIMIT).getBoolean()).isTrue();
             assertThat(children.node(Permissions.BYPASS_COST_WARP).getBoolean()).isTrue();
             assertThat(children.node(Permissions.BYPASS_COST_PLACE).getBoolean()).isTrue();

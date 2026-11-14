@@ -1735,4 +1735,222 @@ public final class Messages {
                 Placeholder.component("current", badge)
         );
     }
+
+    /**
+     * Formats the header for {@code /clickportals aetheryte list} (#74).
+     */
+    public Component commandAetheryteListHeader(
+            final CommandSender viewer,
+            final int total,
+            final int page,
+            final int totalPages
+    ) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_LIST_HEADER,
+                Placeholder.unparsed("total", Integer.toString(total)),
+                Placeholder.unparsed("page", Integer.toString(page)),
+                Placeholder.unparsed("total_pages", Integer.toString(totalPages))
+        );
+    }
+
+    /**
+     * Formats a single entry line for {@code /clickportals aetheryte list} (#74).
+     */
+    public Component commandAetheryteListEntry(
+            final CommandSender viewer,
+            final Aetheryte aetheryte,
+            final String ownerName
+    ) {
+        final String fullId = aetheryte.id().toString();
+        final String shortId = fullId.substring(0, 8);
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_LIST_ENTRY,
+                Placeholder.unparsed("id", fullId),
+                Placeholder.unparsed("short_id", shortId),
+                Placeholder.unparsed("name", aetheryte.name()),
+                Placeholder.unparsed("variation", aetheryte.variation()),
+                Placeholder.unparsed("world", aetheryte.worldName()),
+                Placeholder.unparsed("x", Integer.toString(aetheryte.blockX())),
+                Placeholder.unparsed("y", Integer.toString(aetheryte.blockY())),
+                Placeholder.unparsed("z", Integer.toString(aetheryte.blockZ())),
+                Placeholder.unparsed("owner", ownerName)
+        );
+    }
+
+    /**
+     * Formats detailed info for {@code /clickportals aetheryte get} (#74).
+     */
+    public Component commandAetheryteGetInfo(
+            final CommandSender viewer,
+            final Aetheryte aetheryte,
+            final String ownerName,
+            final AetheryteVisibility effectiveVisibility,
+            final String networkDisplay
+    ) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_GET_INFO,
+                Placeholder.unparsed("id", aetheryte.id().toString()),
+                Placeholder.unparsed("name", aetheryte.name()),
+                Placeholder.unparsed("variation", aetheryte.variation()),
+                Placeholder.unparsed("world", aetheryte.worldName()),
+                Placeholder.unparsed("x", Integer.toString(aetheryte.blockX())),
+                Placeholder.unparsed("y", Integer.toString(aetheryte.blockY())),
+                Placeholder.unparsed("z", Integer.toString(aetheryte.blockZ())),
+                Placeholder.unparsed("owner", ownerName),
+                Placeholder.component("visibility", visibilityLabel(viewer, effectiveVisibility)),
+                Placeholder.unparsed("network", networkDisplay)
+        );
+    }
+
+    /**
+     * Formats the confirmation message for {@code /clickportals aetheryte place} (#74).
+     */
+    public Component commandAetherytePlaced(final CommandSender viewer, final Aetheryte placed) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_PLACED,
+                Placeholder.unparsed("id", placed.id().toString()),
+                Placeholder.unparsed("name", placed.name()),
+                Placeholder.unparsed("world", placed.worldName()),
+                Placeholder.unparsed("x", Integer.toString(placed.blockX())),
+                Placeholder.unparsed("y", Integer.toString(placed.blockY())),
+                Placeholder.unparsed("z", Integer.toString(placed.blockZ()))
+        );
+    }
+
+    /**
+     * Formats the confirmation message for {@code /clickportals aetheryte remove} (#74).
+     */
+    public Component commandAetheryteRemoved(final CommandSender viewer, final Aetheryte removed) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_REMOVED,
+                Placeholder.unparsed("id", removed.id().toString()),
+                Placeholder.unparsed("name", removed.name())
+        );
+    }
+
+    /**
+     * Formats the confirmation message for {@code /clickportals aetheryte set ... name} (#74).
+     */
+    public Component commandAetheryteSetName(
+            final CommandSender viewer,
+            final Aetheryte updated,
+            final String oldName
+    ) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_SET_NAME,
+                Placeholder.unparsed("id", updated.id().toString()),
+                Placeholder.unparsed("old_name", oldName),
+                Placeholder.unparsed("name", updated.name())
+        );
+    }
+
+    /**
+     * Formats the confirmation message for {@code /clickportals aetheryte set ... owner} (#74).
+     */
+    public Component commandAetheryteSetOwner(
+            final CommandSender viewer,
+            final Aetheryte updated,
+            final String ownerName
+    ) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_SET_OWNER,
+                Placeholder.unparsed("name", updated.name()),
+                Placeholder.unparsed("owner", ownerName)
+        );
+    }
+
+    /**
+     * Formats the confirmation message for {@code /clickportals aetheryte set ... variation} (#74).
+     */
+    public Component commandAetheryteSetVariation(
+            final CommandSender viewer,
+            final Aetheryte updated,
+            final String variationId
+    ) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_SET_VARIATION,
+                Placeholder.unparsed("name", updated.name()),
+                Placeholder.unparsed("variation", variationId)
+        );
+    }
+
+    /**
+     * Formats the confirmation message for {@code /clickportals aetheryte set ... location} (#74).
+     */
+    public Component commandAetheryteSetLocation(final CommandSender viewer, final Aetheryte updated) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_SET_LOCATION,
+                Placeholder.unparsed("name", updated.name()),
+                Placeholder.unparsed("world", updated.worldName()),
+                Placeholder.unparsed("x", Integer.toString(updated.blockX())),
+                Placeholder.unparsed("y", Integer.toString(updated.blockY())),
+                Placeholder.unparsed("z", Integer.toString(updated.blockZ()))
+        );
+    }
+
+    /**
+     * Formats the confirmation message for {@code /clickportals aetheryte set ... visibility} (#74).
+     */
+    public Component commandAetheryteSetVisibility(
+            final CommandSender viewer,
+            final String targetName,
+            final AetheryteVisibility visibility
+    ) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_SET_VISIBILITY,
+                Placeholder.unparsed("name", targetName),
+                Placeholder.component("visibility", visibilityLabel(viewer, visibility))
+        );
+    }
+
+    /**
+     * Formats the confirmation message for {@code /clickportals aetheryte set ... network} (#74).
+     */
+    public Component commandAetheryteSetNetwork(
+            final CommandSender viewer,
+            final Aetheryte updated,
+            final String networkDisplay
+    ) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_SET_NETWORK,
+                Placeholder.unparsed("name", updated.name()),
+                Placeholder.unparsed("network", networkDisplay)
+        );
+    }
+
+    /**
+     * Formats the error message when an unknown world name is passed to a command (#74).
+     */
+    public Component commandAetheryteUnknownWorld(final CommandSender viewer, final String worldName) {
+        return get(viewer, MessageKey.COMMAND_AETHERYTE_UNKNOWN_WORLD, Placeholder.unparsed("world", worldName));
+    }
+
+    /**
+     * Formats the error message when an invalid visibility mode is passed to a command (#74).
+     */
+    public Component commandAetheryteInvalidVisibility(final CommandSender viewer, final String visibility) {
+        return get(viewer, MessageKey.COMMAND_AETHERYTE_INVALID_VISIBILITY, Placeholder.unparsed("visibility", visibility));
+    }
+
+    /**
+     * Formats the error message when {@code set ... network} is used on a non-network variation (#74).
+     */
+    public Component commandAetheryteNetworkVariationRequired(final CommandSender viewer, final String variationId) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_NETWORK_VARIATION_REQUIRED,
+                Placeholder.unparsed("variation", variationId)
+        );
+    }
 }

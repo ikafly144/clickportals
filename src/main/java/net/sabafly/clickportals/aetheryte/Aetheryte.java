@@ -207,6 +207,20 @@ public record Aetheryte(
     }
 
     /**
+     * Returns a copy of this Aetheryte moved to a new world and block location (#74).
+     */
+    public Aetheryte withLocation(
+            final UUID newWorldId,
+            final String newWorldName,
+            final int newBlockX,
+            final int newBlockY,
+            final int newBlockZ
+    ) {
+        return new Aetheryte(id, name, newWorldId, newWorldName, newBlockX, newBlockY, newBlockZ,
+                ownerId, createdAt, variation, ownerName, visibility, invitedPlayers, networkId);
+    }
+
+    /**
      * Returns a copy of this Aetheryte with {@code inviteeId} added (#24).
      */
     public Aetheryte addInvitee(final UUID inviteeId) {

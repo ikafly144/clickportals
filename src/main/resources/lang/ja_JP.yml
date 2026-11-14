@@ -298,6 +298,22 @@ command:
   unknown-variation: "<prefix><red>不明なエーテライト種類です: <variation></red>"
   reloaded: "<prefix><green>ClickPortals の設定と翻訳ファイルを再読み込みしました。</green>"
   reload-failed: "<prefix><red>エラーのため設定の再読み込みに失敗しました。コンソールログを確認してください。</red>"
+  aetheryte:
+    list-header: "<prefix><aqua>エーテライト一覧（全 <total> 件、ページ <page>/<total_pages>）:</aqua>"
+    list-empty: "<prefix><yellow>条件に一致するエーテライトが見つかりませんでした。</yellow>"
+    list-entry: "<gray>- <click:copy_to_clipboard:'<id>'><hover:show_text:'<gray>クリックしてIDをコピー: <white><id></white></gray>'><aqua>[<short_id>]</aqua></hover></click> <white><bold><name></bold></white> (<variation>) @ <world> (<x>, <y>, <z>) 所有者: <yellow><owner></yellow></gray>"
+    get-info: "<prefix><aqua>エーテライト詳細:</aqua>\n<gray>ID: <white><id></white>\n名前: <white><name></white>\n種類: <white><variation></white>\n座標: <white><world> (<x>, <y>, <z>)</white>\n所有者: <yellow><owner></yellow>\n公開設定: <visibility>\nネットワーク: <white><network></white></gray>"
+    placed: "<prefix><green>エーテライト「<white><name></white>」(<id>) を <world> (<x>, <y>, <z>) に設置しました。</green>"
+    removed: "<prefix><yellow>エーテライト「<white><name></white>」(<id>) を削除しました（アイテム返却なし）。</yellow>"
+    set-name: "<prefix><green>エーテライト「<old_name>」の名前を「<white><name></white>」に変更しました。</green>"
+    set-owner: "<prefix><green>エーテライト「<white><name></white>」の所有者を <yellow><owner></yellow> に変更しました。</green>"
+    set-variation: "<prefix><green>エーテライト「<white><name></white>」の種類を <aqua><variation></aqua> に変更しました。</green>"
+    set-location: "<prefix><green>エーテライト「<white><name></white>」を <world> (<x>, <y>, <z>) に移動しました。</green>"
+    set-visibility: "<prefix><green>エーテライト「<white><name></white>」の公開設定を <visibility> に変更しました。</green>"
+    set-network: "<prefix><green>エーテライト「<white><name></white>」のネットワークを <aqua><network></aqua> に変更しました。</green>"
+    unknown-world: "<prefix><red>不明なワールドです: <world></red>"
+    invalid-visibility: "<prefix><red>無効な公開設定です: <visibility>（PUBLIC、INVITE_ONLY、OWNER_ONLY のいずれかを指定してください）。</red>"
+    network-variation-required: "<prefix><red>バリエーション「<variation>」はネットワークに対応していません（type: network が必要です）。</red>"
 
 update:
   available-console: "<prefix><yellow>新しいバージョンが公開されています！ 現在: v<current> / 最新: v<latest> (<url>)</yellow>"

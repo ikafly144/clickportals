@@ -179,6 +179,10 @@ paperPluginYaml {
             description = "Reload ClickPortals configuration and translations"
             default = Permission.Default.OP
         }
+        register("clickportals.command.aetheryte") {
+            description = "Manage Aetherytes via /clickportals aetheryte subcommands"
+            default = Permission.Default.OP
+        }
         register("clickportals.bypass.limit") {
             description = "Bypass per-player Aetheryte placement limits and placement cooldowns"
             default = Permission.Default.OP
@@ -217,6 +221,7 @@ paperPluginYaml {
                 "clickportals.rename.any",
                 "clickportals.command.give",
                 "clickportals.command.reload",
+                "clickportals.command.aetheryte",
                 "clickportals.bypass.limit",
                 "clickportals.bypass.distance",
                 "clickportals.bypass.cost.warp",
