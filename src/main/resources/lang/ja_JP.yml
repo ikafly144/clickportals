@@ -261,6 +261,7 @@ error:
   insufficient-cost: "<red>コストが不足しています</red>"
   too-close: "<red>近すぎるためテレポできません</red>"
   too-far: "<red>遠すぎるためテレポできません</red>"
+  too-many-pets: "<red>リードで連れているエンティティが多すぎます（最大 <max>）</red>"
   no-route: "<red>このディメンションへの移動経路がありません</red>"
   dimension-place-disabled: "<prefix><red>ディメンション </red><world><red> ではエーテライトの設置が許可されていません。</red>"
   dimension-use-disabled: "<red>ディメンション </red><world><red> ではエーテライトの使用が無効化されています。</red>"

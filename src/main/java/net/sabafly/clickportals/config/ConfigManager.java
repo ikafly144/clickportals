@@ -55,9 +55,9 @@ public final class ConfigManager {
                 .nodeStyle(NodeStyle.BLOCK)
                 .defaultOptions(opts -> opts.header(HEADER)
                         .shouldCopyDefaults(true)
-                        .serializers(builder -> builder.register(
-                                VisibilityCostSection.class,
-                                VisibilityCostSection.Serializer.INSTANCE)))
+                        .serializers(builder -> builder
+                                .register(VisibilityCostSection.class, VisibilityCostSection.Serializer.INSTANCE)
+                                .register(PetsWarpSection.class, PetsWarpSection.Serializer.INSTANCE)))
                 .build();
         this.currentConfig = PluginConfig.defaultConfig();
     }
@@ -203,9 +203,9 @@ public final class ConfigManager {
                 .nodeStyle(NodeStyle.BLOCK)
                 .defaultOptions(opts -> opts.header(HEADER)
                         .shouldCopyDefaults(true)
-                        .serializers(builder -> builder.register(
-                                VisibilityCostSection.class,
-                                VisibilityCostSection.Serializer.INSTANCE)))
+                        .serializers(builder -> builder
+                                .register(VisibilityCostSection.class, VisibilityCostSection.Serializer.INSTANCE)
+                                .register(PetsWarpSection.class, PetsWarpSection.Serializer.INSTANCE)))
                 .build();
         stringLoader.save(root);
 

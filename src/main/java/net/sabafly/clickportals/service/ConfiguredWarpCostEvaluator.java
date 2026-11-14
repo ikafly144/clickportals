@@ -37,6 +37,7 @@ import net.sabafly.clickportals.aetheryte.AetheryteNetwork;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.aetheryte.AetheryteVisibility;
 import net.sabafly.clickportals.config.DistanceSection;
+import net.sabafly.clickportals.config.PetsWarpSection;
 import net.sabafly.clickportals.config.PluginConfig;
 import net.sabafly.clickportals.cost.CostBundle;
 import net.sabafly.clickportals.cost.CostEntry;
@@ -134,6 +135,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             double crossDimension,
             double hops,
             double dimensionCostAmount,
+            double petCount,
             List<CostEntry> effectiveEntries,
             @Nullable Component blockReason,
             @Nullable DenyReason blockReasonCode
@@ -190,12 +192,32 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         final boolean showOptionalCosts = config.showOptionalCosts();
         final Locale playerLocale = messages.locale(player);
 
+        final PetsWarpSection.Resolved effectivePets = resolveEffectivePets(source, config);
+        final double petCount = effectivePets.enabled() ? PetWarpHelper.findLeashedEntities(player).size() : 0.0;
+        final @Nullable Component tooManyPetsError = (effectivePets.enabled()
+                && petCount > 0.0
+                && effectivePets.maxEntities() >= 0
+                && petCount > effectivePets.maxEntities())
+                ? messages.errorTooManyPets(playerLocale, effectivePets.maxEntities())
+                : null;
+        final List<CostEntry> petEntries = (effectivePets.enabled() && petCount > 0.0)
+                ? effectivePets.cost()
+                : List.of();
+
         final EnumMap<AetheryteVisibility, List<CostEntry>> entriesByVisibility =
                 new EnumMap<>(AetheryteVisibility.class);
         final EnumMap<AetheryteVisibility, CostBundle> bundlesByVisibility =
                 new EnumMap<>(AetheryteVisibility.class);
         for (final AetheryteVisibility vis : AetheryteVisibility.values()) {
-            final List<CostEntry> visEntries = resolveBaseCostEntries(source, vis, config);
+            final List<CostEntry> baseVisEntries = resolveBaseCostEntries(source, vis, config);
+            final List<CostEntry> visEntries;
+            if (petEntries.isEmpty()) {
+                visEntries = baseVisEntries;
+            } else {
+                visEntries = new ArrayList<>(baseVisEntries.size() + petEntries.size());
+                visEntries.addAll(baseVisEntries);
+                visEntries.addAll(petEntries);
+            }
             entriesByVisibility.put(vis, visEntries);
             bundlesByVisibility.put(vis, new CostBundle(visEntries));
         }
@@ -300,7 +322,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
                             snapshot = CostBundle.PlayerResourceSnapshot.capture(player, economy);
                             snapshot.populateVariables(vars);
                         }
-                        populateContextVariables(vars, 0, 0, 0, 0, 0, 0, 0);
+                        populateContextVariables(vars, 0, 0, 0, 0, 0, 0, 0, petCount);
                         quote = baseBundle.quoteWithPopulatedVariables(snapshot, vars);
                     } else {
                         quote = CostQuote.FREE;
@@ -450,6 +472,8 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
 
                 if (sourceReachError != null) {
                     blockReasonCode = sourceReachError;
+                } else if (tooManyPetsError != null) {
+                    blockReasonCode = DenyReason.TOO_MANY_PETS;
                 } else if (crossDim <= 0.0 || applyCrossDimLimits) {
                     if (minDist > 0.0 && blockDist < minDist) {
                         blockReasonCode = DenyReason.TOO_CLOSE;
@@ -465,7 +489,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
                     snapshot = CostBundle.PlayerResourceSnapshot.capture(player, economy);
                     snapshot.populateVariables(vars);
                 }
-                populateContextVariables(vars, blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt);
+                populateContextVariables(vars, blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, petCount);
                 quote = bundle.quoteWithPopulatedVariables(snapshot, vars);
             } else {
                 quote = CostQuote.FREE;
@@ -484,6 +508,8 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             final @Nullable Component blockReason;
             if (blockReasonCode == DenyReason.DIMENSION_DISABLED && dimBlockError != null) {
                 blockReason = dimBlockError;
+            } else if (blockReasonCode == DenyReason.TOO_MANY_PETS && tooManyPetsError != null) {
+                blockReason = tooManyPetsError;
             } else if (blockReasonCode != null) {
                 blockReason = resolveErrorComponent(errorCache, playerLocale, blockReasonCode);
             } else {
@@ -584,6 +610,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             case TOO_FAR -> messages.get(playerLocale, MessageKey.ERROR_TOO_FAR);
             case VISIBILITY_DENIED -> messages.get(playerLocale, MessageKey.ERROR_VISIBILITY_DENIED);
             case NETWORK_MISMATCH -> messages.get(playerLocale, MessageKey.ERROR_NETWORK_MISMATCH);
+            case TOO_MANY_PETS -> messages.errorTooManyPets(playerLocale, 0);
             case INSUFFICIENT_COST, NO_PERMISSION, DIMENSION_DISABLED, OTHER ->
                     messages.get(playerLocale, MessageKey.ERROR_NOT_FOUND);
         });
@@ -717,15 +744,21 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         final World targetWorld = worldResolver.apply(destination.worldId());
         final World sourceWorld = source != null ? worldResolver.apply(source.worldId()) : player.getWorld();
 
+        final PetsWarpSection.Resolved effectivePets = resolveEffectivePets(source, config);
+        final double petCount = effectivePets.enabled() ? PetWarpHelper.findLeashedEntities(player).size() : 0.0;
+
         final AetheryteVisibility effectiveVisibility = resolveEffectiveVisibility(destination);
         final List<CostEntry> baseEntries = resolveBaseCostEntries(source, effectiveVisibility, config);
         final List<CostEntry> extraEntries = new ArrayList<>();
+        if (effectivePets.enabled() && petCount > 0.0 && !effectivePets.cost().isEmpty()) {
+            extraEntries.addAll(effectivePets.cost());
+        }
 
         final DimensionRoutesConfig dimensions = config.dimensions();
         final boolean bypassDimension = Permissions.canBypassDimension(player);
         final @Nullable String sourceWorldName = resolveSourceWorldName(player, source, sourceWorld);
         if (!bypassDimension && sourceWorldName != null && !dimensions.isUseAllowed(sourceWorldName)) {
-            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,
+            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, petCount, baseEntries,
                     messages.errorDimensionUseDisabled(
                             player,
                             AetheryteService.resolveDimensionDisplayComponent(dimensions, sourceWorldName)
@@ -734,7 +767,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         }
         final String destWorldName = targetWorld != null ? targetWorld.getName() : destination.worldName();
         if (!bypassDimension && !dimensions.isUseAllowed(destWorldName)) {
-            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,
+            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, petCount, baseEntries,
                     messages.errorDimensionUseDisabled(
                             player,
                             AetheryteService.resolveDimensionDisplayComponent(dimensions, destWorldName)
@@ -743,7 +776,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         }
 
         if (targetWorld == null) {
-            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,
+            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, petCount, baseEntries,
                     messages.get(player, MessageKey.ERROR_NOT_FOUND), WarpEvaluation.DenyReason.NOT_FOUND);
         }
 
@@ -753,11 +786,11 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
                 destination
         );
         if (visibilityOrNetworkDeny == DenyReason.VISIBILITY_DENIED) {
-            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,
+            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, petCount, baseEntries,
                     messages.get(player, MessageKey.ERROR_VISIBILITY_DENIED), DenyReason.VISIBILITY_DENIED);
         }
         if (visibilityOrNetworkDeny == DenyReason.NETWORK_MISMATCH) {
-            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,
+            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, petCount, baseEntries,
                     messages.get(player, MessageKey.ERROR_NETWORK_MISMATCH), DenyReason.NETWORK_MISMATCH);
         }
 
@@ -791,7 +824,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             dimCostAmt = 0.0;
         } else {
             if (sourceWorld == null) {
-                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,
+                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, petCount, baseEntries,
                         messages.get(player, MessageKey.ERROR_NO_ROUTE), WarpEvaluation.DenyReason.NO_ROUTE);
             }
             final Location srcLoc = source != null
@@ -800,7 +833,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             final DimensionRouter router = routerSupplier.get();
             final Optional<RoutePlan> plan = router.findRoute(sourceWorld, targetWorld, srcLoc);
             if (plan.isEmpty()) {
-                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,
+                return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, petCount, baseEntries,
                         messages.get(player, MessageKey.ERROR_NO_ROUTE), WarpEvaluation.DenyReason.NO_ROUTE);
             }
 
@@ -825,13 +858,13 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         // Validate source reach and world match if source Aetheryte was provided (#40)
         if (source != null) {
             if (sourceWorld == null || !player.getWorld().getUID().equals(source.worldId())) {
-                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt,
+                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, petCount,
                         allEntries,
                         messages.get(player, MessageKey.ERROR_NOT_FOUND), WarpEvaluation.DenyReason.NOT_FOUND);
             }
             final Location pLoc = player.getLocation();
             if (pLoc == null) {
-                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt,
+                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, petCount,
                         allEntries,
                         messages.get(player, MessageKey.ERROR_NOT_FOUND), WarpEvaluation.DenyReason.NOT_FOUND);
             }
@@ -839,10 +872,19 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             final double hitboxAllowance = Math.max(sourceVar.hitbox().width(), sourceVar.hitbox().height());
             final double maxReach = BASE_INTERACT_REACH + hitboxAllowance;
             if (pLoc.distanceSquared(source.markerLocation(sourceWorld)) > maxReach * maxReach) {
-                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt,
+                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, petCount,
                         allEntries,
                         messages.get(player, MessageKey.ERROR_TOO_FAR), WarpEvaluation.DenyReason.TOO_FAR);
             }
+        }
+
+        if (effectivePets.enabled()
+                && petCount > 0.0
+                && effectivePets.maxEntities() >= 0
+                && petCount > effectivePets.maxEntities()) {
+            return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, petCount,
+                    allEntries,
+                    messages.errorTooManyPets(player, effectivePets.maxEntities()), DenyReason.TOO_MANY_PETS);
         }
 
         // Distance limits (#26)
@@ -854,18 +896,18 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             final double maxDist = effectiveDistanceLimits.maxOrDefault(-1.0);
 
             if (minDist > 0.0 && blockDist < minDist) {
-                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt,
+                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, petCount,
                         allEntries,
                         messages.get(player, MessageKey.ERROR_TOO_CLOSE), WarpEvaluation.DenyReason.TOO_CLOSE);
             }
             if (maxDist >= 0.0 && blockDist > maxDist) {
-                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt,
+                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, petCount,
                         allEntries,
                         messages.get(player, MessageKey.ERROR_TOO_FAR), WarpEvaluation.DenyReason.TOO_FAR);
             }
         }
 
-        return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt,
+        return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, petCount,
                 allEntries, null, null);
     }
 
@@ -944,6 +986,18 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         return config.warpCost();
     }
 
+    private PetsWarpSection.Resolved resolveEffectivePets(
+            final @Nullable Aetheryte source,
+            final PluginConfig config
+    ) {
+        final PetsWarpSection global = config.warp().pets();
+        if (source != null) {
+            final AetheryteVariation var = variationRegistry.getOrDefault(source.variation());
+            return var.warp().pets().resolve(global);
+        }
+        return global.resolveGlobal();
+    }
+
     private static Map<String, Double> buildVariables(final EvaluationContext ctx) {
         final Map<String, Double> map = new HashMap<>(16);
         populateContextVariables(
@@ -954,7 +1008,8 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
                 ctx.dy(),
                 ctx.crossDimension(),
                 ctx.hops(),
-                ctx.dimensionCostAmount()
+                ctx.dimensionCostAmount(),
+                ctx.petCount()
         );
         return map;
     }
@@ -967,7 +1022,8 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             final double dy,
             final double crossDimension,
             final double hops,
-            final double dimensionCostAmount
+            final double dimensionCostAmount,
+            final double petCount
     ) {
         map.put("block_distance", blockDistance);
         map.put("horizontal_distance", horizontalDistance);
@@ -977,5 +1033,6 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         map.put("hops", hops);
         map.put("dimension_cost", dimensionCostAmount);
         map.put("amount", dimensionCostAmount);
+        map.put("pet_count", petCount);
     }
 }

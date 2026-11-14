@@ -25,6 +25,7 @@ import java.util.Map;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.config.CastSection;
 import net.sabafly.clickportals.config.DistanceSection;
+import net.sabafly.clickportals.config.PetsWarpSection;
 import net.sabafly.clickportals.config.VisibilityCostSection;
 import net.sabafly.clickportals.cost.CostEntry;
 import net.sabafly.clickportals.cost.expr.ExpressionException;
@@ -587,13 +588,17 @@ public record AetheryteVariation(
 
             @Setting("visibility-cost")
             @Comment("Cost overrides per destination visibility mode (null = use warp.cost/global, [] = free) (#25)")
-            VisibilityCostSection visibilityCost
+            VisibilityCostSection visibilityCost,
+
+            @Setting("pets")
+            @Comment("Optional leashed entity warping overrides for warps originating from this variation (#22)")
+            PetsWarpSection pets
     ) {
         public WarpOverrideSection(
                 @Nullable final DistanceSection distance,
                 @Nullable final List<CostEntry> cost
         ) {
-            this(distance, cost, CastSection.inherit(), VisibilityCostSection.inherit());
+            this(distance, cost, CastSection.inherit(), VisibilityCostSection.inherit(), PetsWarpSection.inherit());
         }
 
         public WarpOverrideSection(
@@ -601,7 +606,7 @@ public record AetheryteVariation(
                 @Nullable final List<CostEntry> cost,
                 @Nullable final CastSection cast
         ) {
-            this(distance, cost, cast, VisibilityCostSection.inherit());
+            this(distance, cost, cast, VisibilityCostSection.inherit(), PetsWarpSection.inherit());
         }
 
         public WarpOverrideSection(
@@ -610,14 +615,31 @@ public record AetheryteVariation(
                 @Nullable final CastSection cast,
                 @Nullable final VisibilityCostSection visibilityCost
         ) {
+            this(distance, cost, cast, visibilityCost, PetsWarpSection.inherit());
+        }
+
+        public WarpOverrideSection(
+                @Nullable final DistanceSection distance,
+                @Nullable final List<CostEntry> cost,
+                @Nullable final CastSection cast,
+                @Nullable final VisibilityCostSection visibilityCost,
+                @Nullable final PetsWarpSection pets
+        ) {
             this.distance = distance == null ? DistanceSection.inherit() : distance;
             this.cost = cost == null ? null : List.copyOf(cost);
             this.cast = cast == null ? CastSection.inherit() : cast;
             this.visibilityCost = visibilityCost == null ? VisibilityCostSection.inherit() : visibilityCost;
+            this.pets = pets == null ? PetsWarpSection.inherit() : pets;
         }
 
         public static WarpOverrideSection defaults() {
-            return new WarpOverrideSection(DistanceSection.inherit(), null, CastSection.inherit(), VisibilityCostSection.inherit());
+            return new WarpOverrideSection(
+                    DistanceSection.inherit(),
+                    null,
+                    CastSection.inherit(),
+                    VisibilityCostSection.inherit(),
+                    PetsWarpSection.inherit()
+            );
         }
     }
 
@@ -649,7 +671,11 @@ public record AetheryteVariation(
             final VisibilityCostSection visibilityCost = (visCostNode.virtual() || visCostNode.isNull() || visCostNode.raw() == null)
                     ? VisibilityCostSection.inherit()
                     : VisibilityCostSection.Serializer.INSTANCE.deserialize(VisibilityCostSection.class, visCostNode);
-            return new WarpOverrideSection(distance, cost, cast, visibilityCost);
+            final ConfigurationNode petsNode = node.node("pets");
+            final PetsWarpSection pets = (petsNode.virtual() || petsNode.isNull() || petsNode.raw() == null)
+                    ? PetsWarpSection.inherit()
+                    : PetsWarpSection.Serializer.INSTANCE.deserialize(PetsWarpSection.class, petsNode);
+            return new WarpOverrideSection(distance, cost, cast, visibilityCost, pets);
         }
 
         @Override
@@ -673,6 +699,11 @@ public record AetheryteVariation(
                     VisibilityCostSection.class,
                     obj.visibilityCost(),
                     node.node("visibility-cost")
+            );
+            PetsWarpSection.Serializer.INSTANCE.serialize(
+                    PetsWarpSection.class,
+                    obj.pets(),
+                    node.node("pets")
             );
         }
     }
@@ -1367,11 +1398,16 @@ public record AetheryteVariation(
                 ? warp.visibilityCost()
                 : VisibilityCostSection.inherit())
                 .validated("variations." + cleanId + ".warp.visibility-cost", logger);
+        final PetsWarpSection validatedWarpPets = (warp.pets() != null
+                ? warp.pets()
+                : PetsWarpSection.inherit())
+                .validatedOverride(cleanId, logger);
         final WarpOverrideSection validatedWarp = new WarpOverrideSection(
                 validatedWarpDist,
                 warp.cost(),
                 validatedWarpCast,
-                validatedWarpVisibilityCost
+                validatedWarpVisibilityCost,
+                validatedWarpPets
         );
 
         // 8b. Validate network section (#27)

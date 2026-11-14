@@ -245,6 +245,7 @@ public enum MessageKey {
     ERROR_INSUFFICIENT_COST("error.insufficient-cost"),
     ERROR_TOO_CLOSE("error.too-close"),
     ERROR_TOO_FAR("error.too-far"),
+    ERROR_TOO_MANY_PETS("error.too-many-pets"),
     ERROR_NO_ROUTE("error.no-route"),
     ERROR_DIMENSION_PLACE_DISABLED("error.dimension-place-disabled"),
     ERROR_DIMENSION_USE_DISABLED("error.dimension-use-disabled"),

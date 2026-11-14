@@ -1333,6 +1333,18 @@ public final class Messages {
         );
     }
 
+    public Component errorTooManyPets(final CommandSender viewer, final int max) {
+        return errorTooManyPets(locale(viewer), max);
+    }
+
+    public Component errorTooManyPets(final Locale locale, final int max) {
+        return get(
+                locale,
+                MessageKey.ERROR_TOO_MANY_PETS,
+                Placeholder.unparsed("max", String.valueOf(max))
+        );
+    }
+
     /**
      * Joins localized bypass reasons into a single inline component (#69).
      */
