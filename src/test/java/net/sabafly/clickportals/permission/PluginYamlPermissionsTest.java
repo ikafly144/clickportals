@@ -58,6 +58,7 @@ class PluginYamlPermissionsTest {
             assertThat(perms.node(Permissions.BYPASS_COST_WARP, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.BYPASS_COST_PLACE, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.BYPASS_DIMENSION, "default").getString()).isEqualTo("op");
+            assertThat(perms.node(Permissions.NOTIFY_UPDATE, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.ADMIN, "default").getString()).isEqualTo("op");
 
             final ConfigurationNode children = perms.node(Permissions.ADMIN, "children");
@@ -71,6 +72,7 @@ class PluginYamlPermissionsTest {
             assertThat(children.node(Permissions.BYPASS_COST_WARP).getBoolean()).isTrue();
             assertThat(children.node(Permissions.BYPASS_COST_PLACE).getBoolean()).isTrue();
             assertThat(children.node(Permissions.BYPASS_DIMENSION).getBoolean()).isTrue();
+            assertThat(children.node(Permissions.NOTIFY_UPDATE).getBoolean()).isTrue();
         }
     }
 
@@ -119,5 +121,10 @@ class PluginYamlPermissionsTest {
         final Permissible dimensionBypass = mock(Permissible.class);
         when(dimensionBypass.hasPermission(Permissions.BYPASS_DIMENSION)).thenReturn(true);
         assertThat(Permissions.canBypassDimension(dimensionBypass)).isTrue();
+        assertThat(Permissions.canNotifyUpdate(dimensionBypass)).isFalse();
+
+        final Permissible updateNotifier = mock(Permissible.class);
+        when(updateNotifier.hasPermission(Permissions.NOTIFY_UPDATE)).thenReturn(true);
+        assertThat(Permissions.canNotifyUpdate(updateNotifier)).isTrue();
     }
 }
