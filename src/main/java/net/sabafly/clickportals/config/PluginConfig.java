@@ -96,13 +96,34 @@ public record PluginConfig(
 
             @Setting("view-distance")
             @Comment("View distance for holograms and models in blocks (minimum 4.0)")
-            double viewDistance
+            double viewDistance,
+
+            @Setting("delayed-refresh-fallback")
+            @Comment("Opt-in fallback that re-renders client visuals at 5 and 20 ticks after join, respawn, world change, or warp (disabled by default to avoid flickering)")
+            @Nullable Boolean delayedRefreshFallback
     ) {
+        public HologramSection {
+            if (delayedRefreshFallback == null) {
+                delayedRefreshFallback = false;
+            }
+        }
+
+        public HologramSection(final boolean enabled, final double viewDistance) {
+            this(enabled, viewDistance, false);
+        }
+
+        /**
+         * Returns whether delayed 5-tick and 20-tick visual refresh fallback is enabled.
+         */
+        public boolean delayedRefreshFallbackOrDefault() {
+            return Boolean.TRUE.equals(delayedRefreshFallback);
+        }
+
         /**
          * Returns the default hologram section.
          */
         public static HologramSection defaults() {
-            return new HologramSection(true, 32.0);
+            return new HologramSection(true, 32.0, false);
         }
     }
 
@@ -389,7 +410,8 @@ public record PluginConfig(
                 ),
                 new HologramSection(
                         hologram.enabled(),
-                        validViewDistance
+                        validViewDistance,
+                        hologram.delayedRefreshFallbackOrDefault()
                 ),
                 new LimitsSection(validMaxPerPlayer, validCooldownTicks, validMinDistBetween, validMaxFavorites),
                 validWarp,
@@ -509,6 +531,13 @@ public record PluginConfig(
      */
     public double hologramViewDistance() {
         return hologram.viewDistance();
+    }
+
+    /**
+     * Returns whether the delayed 5-tick / 20-tick visual refresh fallback is enabled (#70).
+     */
+    public boolean hologramDelayedRefreshFallback() {
+        return hologram.delayedRefreshFallbackOrDefault();
     }
 
     /**

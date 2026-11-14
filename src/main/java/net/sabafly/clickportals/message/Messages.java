@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.OptionalDouble;
 import java.util.concurrent.ConcurrentHashMap;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.JoinConfiguration;
 import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.format.Style;
 import net.kyori.adventure.text.minimessage.MiniMessage;
@@ -1259,9 +1260,12 @@ public final class Messages {
      * Returns the error message when the player is on placement cooldown (#43).
      */
     public Component errorPlacementCooldown(final CommandSender viewer, final int remainingTicks) {
-        final double secondsValue = Math.max(0.1, remainingTicks / 20.0);
-        final String formattedSeconds = String.format(Locale.ROOT, "%.1f", secondsValue);
-        return get(viewer, MessageKey.ERROR_PLACEMENT_COOLDOWN, Placeholder.unparsed("seconds", formattedSeconds));
+        return get(viewer, MessageKey.ERROR_PLACEMENT_COOLDOWN, Placeholder.unparsed("seconds", formatTicksAsSeconds(remainingTicks)));
+    }
+
+    private static String formatTicksAsSeconds(final int ticks) {
+        final double secondsValue = Math.max(0.1, ticks / 20.0);
+        return String.format(Locale.ROOT, "%.1f", secondsValue);
     }
 
     /**
@@ -1301,5 +1305,111 @@ public final class Messages {
                 MessageKey.ERROR_DIMENSION_USE_DISABLED,
                 Placeholder.component("world", worldDisplay)
         );
+    }
+
+    /**
+     * Joins localized bypass reasons into a single inline component (#69).
+     */
+    public Component joinBypassReasons(final CommandSender viewer, final List<Component> reasons) {
+        if (reasons.isEmpty()) {
+            return Component.empty();
+        }
+        return Component.join(JoinConfiguration.separator(get(viewer, MessageKey.BYPASS_SEPARATOR)), reasons);
+    }
+
+    /**
+     * Formats the chat notification sent when one or more restrictions were bypassed (#69).
+     */
+    public Component bypassNotice(final CommandSender viewer, final List<Component> reasons) {
+        return get(
+                viewer,
+                MessageKey.AETHERYTE_BYPASSED_NOTICE,
+                Placeholder.component("reasons", joinBypassReasons(viewer, reasons))
+        );
+    }
+
+    /**
+     * Formats the dialog notice line shown when placement restrictions are bypassed (#69).
+     */
+    public Component createDialogBypassNotice(final CommandSender viewer, final List<Component> reasons) {
+        return get(
+                viewer,
+                MessageKey.DIALOG_CREATE_BYPASS_NOTICE,
+                Placeholder.component("reasons", joinBypassReasons(viewer, reasons))
+        );
+    }
+
+    /**
+     * Formats the bypass reason for dimension placement restrictions (#69).
+     */
+    public Component bypassReasonDimensionPlace(final CommandSender viewer, final Component worldDisplay) {
+        return get(viewer, MessageKey.BYPASS_REASON_DIMENSION_PLACE, Placeholder.component("world", worldDisplay));
+    }
+
+    /**
+     * Formats the bypass reason for dimension usage restrictions (#69).
+     */
+    public Component bypassReasonDimensionUse(final CommandSender viewer, final Component worldDisplay) {
+        return get(viewer, MessageKey.BYPASS_REASON_DIMENSION_USE, Placeholder.component("world", worldDisplay));
+    }
+
+    /**
+     * Formats the bypass reason for global placement limit (#69).
+     */
+    public Component bypassReasonLimitGlobal(final CommandSender viewer, final int max) {
+        return get(viewer, MessageKey.BYPASS_REASON_LIMIT_GLOBAL, Placeholder.unparsed("max", Integer.toString(max)));
+    }
+
+    /**
+     * Formats the bypass reason for variation placement limit (#69).
+     */
+    public Component bypassReasonLimitVariation(
+            final CommandSender viewer,
+            final String variationDisplayNameMiniMessage,
+            final int max
+    ) {
+        final Component variationComponent = MINI_MESSAGE.deserialize(variationDisplayNameMiniMessage);
+        return get(
+                viewer,
+                MessageKey.BYPASS_REASON_LIMIT_VARIATION,
+                Placeholder.component("variation", variationComponent),
+                Placeholder.unparsed("max", Integer.toString(max))
+        );
+    }
+
+    /**
+     * Formats the bypass reason for placement cooldown (#69).
+     */
+    public Component bypassReasonPlacementCooldown(final CommandSender viewer, final int remainingTicks) {
+        return get(
+                viewer,
+                MessageKey.BYPASS_REASON_PLACEMENT_COOLDOWN,
+                Placeholder.unparsed("seconds", formatTicksAsSeconds(remainingTicks))
+        );
+    }
+
+    /**
+     * Formats the bypass reason for minimum placement distance (#69).
+     */
+    public Component bypassReasonPlacementDistance(final CommandSender viewer, final double distance) {
+        return get(
+                viewer,
+                MessageKey.BYPASS_REASON_PLACEMENT_DISTANCE,
+                Placeholder.unparsed("distance", String.format(Locale.ROOT, "%.1f", distance))
+        );
+    }
+
+    /**
+     * Formats the bypass reason for placement cost (#69).
+     */
+    public Component bypassReasonCostPlace(final CommandSender viewer, final Component costDisplay) {
+        return get(viewer, MessageKey.BYPASS_REASON_COST_PLACE, Placeholder.component("cost", costDisplay));
+    }
+
+    /**
+     * Formats the bypass reason for warp cost (#69).
+     */
+    public Component bypassReasonCostWarp(final CommandSender viewer, final Component costDisplay) {
+        return get(viewer, MessageKey.BYPASS_REASON_COST_WARP, Placeholder.component("cost", costDisplay));
     }
 }

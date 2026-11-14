@@ -49,6 +49,7 @@ public enum MessageKey {
     DIALOG_CREATE_VARIATION("dialog.create.variation"),
     DIALOG_CREATE_COST("dialog.create.cost"),
     DIALOG_CREATE_COST_BYPASSED("dialog.create.cost-bypassed"),
+    DIALOG_CREATE_BYPASS_NOTICE("dialog.create.bypass-notice"),
     DIALOG_CREATE_NAME_INPUT_LABEL("dialog.create.name-input-label"),
     DIALOG_CREATE_DEFAULT_NAME("dialog.create.default-name"),
 
@@ -87,6 +88,7 @@ public enum MessageKey {
     DIALOG_WARP_BODY_EMPTY("dialog.warp.body-empty"),
     DIALOG_WARP_BODY_NO_ROUTE("dialog.warp.body-no-route"),
     DIALOG_WARP_BODY_DIMENSION_DISABLED("dialog.warp.body-dimension-disabled"),
+    DIALOG_WARP_BODY_DIMENSION_BYPASSED("dialog.warp.body-dimension-bypassed"),
     DIALOG_WARP_BODY_SELECT("dialog.warp.body-select"),
     DIALOG_WARP_ROOT_BODY("dialog.warp.root-body"),
     DIALOG_WARP_CATEGORY_FAVORITES("dialog.warp.category-favorites"),
@@ -151,6 +153,17 @@ public enum MessageKey {
     AETHERYTE_OWNER_TRANSFERRED("aetheryte.owner-transferred"),
     AETHERYTE_VARIATION_CHANGED("aetheryte.variation-changed"),
     AETHERYTE_VISUALS_RESYNCED("aetheryte.visuals-resynced"),
+    AETHERYTE_BYPASSED_NOTICE("aetheryte.bypassed-notice"),
+
+    BYPASS_SEPARATOR("bypass.separator"),
+    BYPASS_REASON_DIMENSION_PLACE("bypass.reason.dimension-place"),
+    BYPASS_REASON_DIMENSION_USE("bypass.reason.dimension-use"),
+    BYPASS_REASON_LIMIT_GLOBAL("bypass.reason.limit-global"),
+    BYPASS_REASON_LIMIT_VARIATION("bypass.reason.limit-variation"),
+    BYPASS_REASON_PLACEMENT_COOLDOWN("bypass.reason.placement-cooldown"),
+    BYPASS_REASON_PLACEMENT_DISTANCE("bypass.reason.placement-distance"),
+    BYPASS_REASON_COST_PLACE("bypass.reason.cost-place"),
+    BYPASS_REASON_COST_WARP("bypass.reason.cost-warp"),
 
     WARP_SUCCESS("warp.success"),
     WARP_COST_PAID("warp.cost-paid"),

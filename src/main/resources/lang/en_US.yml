@@ -33,6 +33,7 @@ dialog:
     variation: "<gray>Variation: </gray><variation>"
     cost: "<gray>Placement cost: </gray><cost>"
     cost-bypassed: "<gray>Placement cost: </gray><strikethrough><cost></strikethrough> <green>(Bypassed)</green>"
+    bypass-notice: "<yellow>Bypassed restrictions: </yellow><white><reasons></white>"
     name-input-label: "<aqua>Aetheryte Name</aqua>"
     default-name: "<player>'s Aetheryte"
   button:
@@ -71,6 +72,7 @@ dialog:
     body-empty: "<yellow>No other Aetherytes are available to teleport to yet.</yellow>"
     body-no-route: "<yellow>No connecting routes to other dimensions are available.</yellow>"
     body-dimension-disabled: "<red>Using Aetherytes in this dimension is currently disabled.</red>"
+    body-dimension-bypassed: "<yellow>Note: Using Aetherytes in <world> is normally disabled (bypassed via permission).</yellow>"
     body-select: "<gray>Select an Aetheryte destination to teleport to.</gray>"
     root-body: "<gray>Select a category to browse teleport destinations.</gray>"
     category-favorites: "<gold>★ Favorites</gold> <dark_gray>(</dark_gray><white><count></white><dark_gray>)</dark_gray>"
@@ -141,6 +143,19 @@ aetheryte:
   owner-transferred: "<prefix><green>Transferred ownership of \"<name>\" to </green><white><bold><owner></bold></white><green>.</green>"
   variation-changed: "<prefix><green>Changed variation of \"<name>\" to </green><white><bold><variation></bold></white><green>.</green>"
   visuals-resynced: "<prefix><aqua>Resynchronized visuals for Aetheryte \"<name>\".</aqua>"
+  bypassed-notice: "<prefix><yellow>Bypassed restrictions: </yellow><white><reasons></white>"
+
+bypass:
+  separator: "<gray>, </gray>"
+  reason:
+    dimension-place: "dimension placement (<world>)"
+    dimension-use: "dimension usage (<world>)"
+    limit-global: "global limit (<max>)"
+    limit-variation: "<variation> limit (<max>)"
+    placement-cooldown: "placement cooldown (<seconds>s)"
+    placement-distance: "minimum distance (<distance> blocks)"
+    cost-place: "placement cost (<cost>)"
+    cost-warp: "warp cost (<cost>)"
 
 warp:
   success: "<prefix><aqua>Teleported to \"</aqua><white><bold><name></bold></white><aqua>\".</aqua>"

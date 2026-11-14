@@ -163,6 +163,18 @@ public final class AetheryteDialogFactory {
             costLine = Component.empty();
         }
 
+        final List<Component> bypassReasons = service.collectPlacementBypassReasons(
+                player,
+                world,
+                blockX,
+                blockY,
+                blockZ,
+                normalizedVar
+        );
+        final Component bypassLine = bypassReasons.isEmpty()
+                ? Component.empty()
+                : Component.newline().append(messages.createDialogBypassNotice(player, bypassReasons));
+
         final Component bodyComponent = messages.createDialogDescription(
                         player,
                         service.resolveDimensionDisplayComponent(world.getName()),
@@ -172,7 +184,8 @@ public final class AetheryteDialogFactory {
                 )
                 .append(Component.newline())
                 .append(messages.createDialogVariation(player, variation.displayName()))
-                .append(costLine);
+                .append(costLine)
+                .append(bypassLine);
 
         final Dialog dialog = Dialog.create(factory -> factory.empty()
                 .base(DialogBase.builder(messages.createDialogTitle(player))
@@ -267,17 +280,27 @@ public final class AetheryteDialogFactory {
 
             buttons = buildRootButtons(player, current, state, worldGroups, reachableFavoritesCount, totalReachableCount);
 
+            final Component baseBody;
             if (allAetherytes.size() <= 1) {
-                body = messages.warpDialogBody(player, current, currentOwner, 0);
+                baseBody = messages.warpDialogBody(player, current, currentOwner, 0);
             } else if (totalReachableCount == 0) {
-                body = messages.get(
+                baseBody = messages.get(
                         player,
                         MessageKey.DIALOG_WARP_BODY_NO_ROUTE,
                         Placeholder.unparsed("name", current.name()),
                         Placeholder.unparsed("owner", currentOwner)
                 );
             } else {
-                body = messages.warpRootBody(player, current, currentOwner, currentWorldDisplay);
+                baseBody = messages.warpRootBody(player, current, currentOwner, currentWorldDisplay);
+            }
+            if (!service.dimensionConfig().isUseAllowed(currentWorldName)) {
+                body = baseBody.append(Component.newline()).append(messages.get(
+                        player,
+                        MessageKey.DIALOG_WARP_BODY_DIMENSION_BYPASSED,
+                        Placeholder.component("world", currentWorldDisplay)
+                ));
+            } else {
+                body = baseBody;
             }
         }
 
