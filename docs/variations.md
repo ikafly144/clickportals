@@ -89,6 +89,11 @@ warp:
     ticks: -1
     # Whether to immobilize the player via PacketEvents while casting (null to inherit global)
     immobilize: null
+    # Cancellation condition overrides while casting (null to inherit global; interacting with an Aetheryte always cancels)
+    cancel:
+      on-move: null
+      on-damage: null
+      on-interact: null
 
 # BetterModel animated 3D model engine settings (#46)
 bettermodel:

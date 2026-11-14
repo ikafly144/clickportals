@@ -37,7 +37,6 @@ import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.model.AetheryteModelService;
 import net.sabafly.clickportals.model.BetterModelAetheryteModelService;
-import net.sabafly.clickportals.model.ModelAnimationTrigger;
 import net.sabafly.clickportals.route.DimensionRouter;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.ConfiguredWarpCostEvaluator;
@@ -416,13 +415,13 @@ public final class ClickPortals extends JavaPlugin {
                     }
                     aetheryteRegistry.getById(aetheryteId)
                             .filter(aetheryte -> service.isWithinReach(player, aetheryte))
-                            .ifPresent(aetheryte -> {
-                                final AetheryteModelService currentModels = this.modelService;
-                                if (currentModels != null) {
-                                    currentModels.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
-                                }
-                                dialogs.openWarpDialog(player, aetheryte);
-                            });
+                            .ifPresent(aetheryte -> AetheryteListener.handleAetheryteInteract(
+                                    service,
+                                    this.modelService,
+                                    dialogs,
+                                    player,
+                                    aetheryte
+                            ));
                 }, null)
         );
     }

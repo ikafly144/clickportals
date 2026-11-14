@@ -294,6 +294,7 @@ public final class AetheryteService {
     public enum CastCancelReason {
         MOVED,
         DAMAGED,
+        INTERACT,
         DIED,
         QUIT,
         NEW_WARP,
@@ -805,6 +806,20 @@ public final class AetheryteService {
     }
 
     /**
+     * Cancels the player's active cast if non-Aetheryte interaction cancellation is enabled.
+     */
+    public void onPlayerInteractDuringCast(final Player player) {
+        final UUID playerId = player.getUniqueId();
+        if (playerId == null) {
+            return;
+        }
+        final ActiveCastSession session = activeCasts.get(playerId);
+        if (session != null && session.castSettings.cancelOnInteract()) {
+            cancelCast(player, CastCancelReason.INTERACT);
+        }
+    }
+
+    /**
      * Cancels an active warp cast for {@code player} if one is in progress (#65).
      *
      * @return {@code true} if an active cast was cancelled
@@ -833,7 +848,7 @@ public final class AetheryteService {
                 case MOVED -> MessageKey.WARP_CAST_CANCELLED_MOVE;
                 case DAMAGED -> MessageKey.WARP_CAST_CANCELLED_DAMAGE;
                 case OUT_OF_REACH -> MessageKey.ERROR_TOO_FAR;
-                case DIED, OTHER, QUIT, NEW_WARP -> MessageKey.WARP_CAST_CANCELLED;
+                case INTERACT, DIED, OTHER, QUIT, NEW_WARP -> MessageKey.WARP_CAST_CANCELLED;
             };
             messages.send(player, key);
         }

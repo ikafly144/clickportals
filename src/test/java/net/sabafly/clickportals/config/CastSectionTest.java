@@ -37,7 +37,7 @@ class CastSectionTest {
                 "cast_loop",
                 "arrive_once",
                 false,
-                new CastCancelSection(true, false)
+                new CastCancelSection(true, false, false)
         );
         final CastSection.Resolved resolved = CastSection.inherit().resolve(global);
 
@@ -49,6 +49,7 @@ class CastSectionTest {
         assertThat(resolved.immobilize()).isFalse();
         assertThat(resolved.cancelOnMove()).isTrue();
         assertThat(resolved.cancelOnDamage()).isFalse();
+        assertThat(resolved.cancelOnInteract()).isFalse();
     }
 
     @Test
@@ -59,7 +60,7 @@ class CastSectionTest {
                 "cast_anim",
                 "arrive_anim",
                 false,
-                new CastCancelSection(true, true)
+                new CastCancelSection(true, true, false)
         );
         final CastSection variation = new CastSection(
                 0,
@@ -67,7 +68,7 @@ class CastSectionTest {
                 "",
                 "custom_arrive",
                 true,
-                new CastCancelSection(false, null)
+                new CastCancelSection(false, null, true)
         );
 
         final CastSection.Resolved resolved = variation.resolve(global);
@@ -79,6 +80,7 @@ class CastSectionTest {
         assertThat(resolved.immobilize()).isTrue();
         assertThat(resolved.cancelOnMove()).isFalse();
         assertThat(resolved.cancelOnDamage()).isTrue();
+        assertThat(resolved.cancelOnInteract()).isTrue();
     }
 
     @Test
@@ -105,6 +107,7 @@ class CastSectionTest {
         assertThat(cast.arriveAnimation()).isEqualTo("arrive");
         assertThat(cast.cancelOnMoveOrDefault(false)).isTrue();
         assertThat(cast.cancelOnDamageOrDefault(true)).isFalse();
+        assertThat(cast.cancelOnInteractOrDefault(false)).isTrue();
         assertThat(cast.immobilizeOrDefault(false)).isTrue();
     }
 

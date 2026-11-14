@@ -57,6 +57,8 @@ warp:
       on-move: true
       # Cancel casting when the player takes damage
       on-damage: true
+      # Cancel casting when breaking/placing blocks, attacking entities, or interacting with other blocks/entities
+      on-interact: true
 
 # Cross-dimension warping routes, distance origins, and dimension pricing (#9)
 dimensions:

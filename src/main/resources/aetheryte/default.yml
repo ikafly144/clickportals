@@ -107,6 +107,7 @@ warp:
     cancel:
       on-move: null
       on-damage: null
+      on-interact: null
 
 # Per-player placement limit and cooldown for this variation
 limit:
