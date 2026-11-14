@@ -402,4 +402,29 @@ class WarpCastServiceTest {
         service.warpToAetheryte(player, sourceAetheryte, destAetheryte.id());
         verify(immobilizeService, times(2)).immobilize(player);
     }
+
+    @Test
+    void releasesImmobilizeWhenCancelledConcurrentlyDuringStart() {
+        final WarpCostEvaluator evaluator = mock(WarpCostEvaluator.class);
+        when(evaluator.evaluate(any(), any(), any())).thenReturn(WarpEvaluation.permitted(Component.empty()));
+
+        final CastImmobilizeService immobilizeService = mock(CastImmobilizeService.class);
+        final CastSection castEnabled = new CastSection(4, "steve", "cast", "", true, CastCancelSection.defaults());
+        final AetheryteService service = createService(castEnabled, VariationRegistry.defaults(), evaluator);
+        service.setCastImmobilizeService(immobilizeService);
+
+        doAnswer(invocation -> {
+            service.cancelCast(player, CastCancelReason.OTHER);
+            return null;
+        }).when(immobilizeService).immobilize(player);
+
+        service.warpToAetheryte(player, sourceAetheryte, destAetheryte.id());
+
+        // cancelCast triggers first release before immobilize completes, then startWarpCast detects
+        // session.cancelled and calls release again so the player cannot remain immobilized.
+        verify(immobilizeService).immobilize(player);
+        verify(immobilizeService, times(2)).release(player);
+        assertThat(service.isCasting(playerId)).isFalse();
+        assertThat(activeTickConsumer.get()).isNull();
+    }
 }

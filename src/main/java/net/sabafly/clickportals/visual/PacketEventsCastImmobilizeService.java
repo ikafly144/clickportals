@@ -237,15 +237,21 @@ public final class PacketEventsCastImmobilizeService implements CastImmobilizeSe
         final int entityId = player.getEntityId();
 
         final ImmobilizeSession existing = sessionsByPlayerId.get(playerId);
-        final ImmobilizeSession session;
+        @Nullable ImmobilizeSession updatedExisting = null;
         if (existing != null) {
             synchronized (existing) {
-                existing.anchorX = loc.getX();
-                existing.anchorY = loc.getY();
-                existing.anchorZ = loc.getZ();
-                existing.externalDisplacementUntilMillis = 0L;
+                if (sessionsByPlayerId.get(playerId) == existing) {
+                    existing.anchorX = loc.getX();
+                    existing.anchorY = loc.getY();
+                    existing.anchorZ = loc.getZ();
+                    existing.externalDisplacementUntilMillis = 0L;
+                    updatedExisting = existing;
+                }
             }
-            session = existing;
+        }
+        final ImmobilizeSession session;
+        if (updatedExisting != null) {
+            session = updatedExisting;
         } else {
             final Map<Attribute, PropertySnapshot> attrSnapshot = snapshotAttributes(player, trackedAttributes());
             final AbilitiesSnapshot abilitiesSnapshot = snapshotAbilities(player);
@@ -376,7 +382,9 @@ public final class PacketEventsCastImmobilizeService implements CastImmobilizeSe
                 event.setCancelled(true);
             }
         } else if (packetType == PacketType.Play.Client.PLAYER_ABILITIES) {
-            event.setCancelled(true);
+            if (shouldCancelFlightAbilities(user.getUUID())) {
+                event.setCancelled(true);
+            }
         }
     }
 
@@ -420,6 +428,10 @@ public final class PacketEventsCastImmobilizeService implements CastImmobilizeSe
     ) {
         return sessionsByPlayerId.containsKey(playerId)
                 && action == WrapperPlayClientEntityAction.Action.START_SPRINTING;
+    }
+
+    boolean shouldCancelFlightAbilities(final UUID playerId) {
+        return sessionsByPlayerId.containsKey(playerId);
     }
 
     void handlePacketSend(final PacketSendEvent event) {
@@ -468,6 +480,9 @@ public final class PacketEventsCastImmobilizeService implements CastImmobilizeSe
         }
         boolean modified = false;
         synchronized (session) {
+            if (sessionsByEntityId.get(entityId) != session) {
+                return false;
+            }
             for (int i = 0; i < properties.size(); i++) {
                 final Property prop = properties.get(i);
                 final Double frozenVal = frozenAttributeValues().get(prop.getAttribute());
@@ -493,6 +508,9 @@ public final class PacketEventsCastImmobilizeService implements CastImmobilizeSe
             return false;
         }
         synchronized (session) {
+            if (sessionsByPlayerId.get(userId) != session) {
+                return false;
+            }
             session.realAbilities = new AbilitiesSnapshot(
                     wrapper.isInGodMode(),
                     wrapper.isFlying(),
@@ -501,10 +519,10 @@ public final class PacketEventsCastImmobilizeService implements CastImmobilizeSe
                     wrapper.getFlySpeed(),
                     wrapper.getFOVModifier()
             );
+            wrapper.setFlySpeed(0.0f);
+            wrapper.setFOVModifier(FROZEN_FOV_MODIFIER);
+            return true;
         }
-        wrapper.setFlySpeed(0.0f);
-        wrapper.setFOVModifier(FROZEN_FOV_MODIFIER);
-        return true;
     }
 
     static boolean isExternalDisplacementVelocity(final Vector3d vel) {

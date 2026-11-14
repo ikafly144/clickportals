@@ -300,4 +300,39 @@ class PacketEventsCastImmobilizeServiceTest {
         assertThat(PacketEventsCastImmobilizeService.isExternalDisplacementVelocity(new Vector3d(0.2, 0.0, 0.0))).isTrue();
         assertThat(PacketEventsCastImmobilizeService.isExternalDisplacementVelocity(new Vector3d(0.0, 0.0, -0.2))).isTrue();
     }
+
+    @Test
+    void shouldCancelFlightAbilitiesOnlyWhileImmobilized() {
+        assertThat(service.shouldCancelFlightAbilities(playerId)).isFalse();
+
+        service.immobilize(player);
+        assertThat(service.shouldCancelFlightAbilities(playerId)).isTrue();
+
+        service.release(player);
+        assertThat(service.shouldCancelFlightAbilities(playerId)).isFalse();
+    }
+
+    @Test
+    void doesNotInterceptOutgoingPacketsAfterRelease() {
+        service.immobilize(player);
+        service.release(player);
+        sentPackets.clear();
+
+        final List<Property> updateAfterRelease = new ArrayList<>(
+                List.of(new Property(Attributes.MOVEMENT_SPEED, 0.2, List.of()))
+        );
+        assertThat(service.interceptOutgoingAttributes(playerId, 42, updateAfterRelease)).isFalse();
+        assertThat(updateAfterRelease.getFirst().getValue()).isEqualTo(0.2);
+
+        final WrapperPlayServerPlayerAbilities abilitiesAfterRelease = new WrapperPlayServerPlayerAbilities(
+                false, false, true, false, 0.07f, 0.14f
+        );
+        assertThat(service.interceptOutgoingAbilities(playerId, abilitiesAfterRelease)).isFalse();
+        assertThat(abilitiesAfterRelease.getFlySpeed()).isEqualTo(0.07f);
+        assertThat(abilitiesAfterRelease.getFOVModifier()).isEqualTo(0.14f);
+
+        // Calling immobilize cleanly re-registers a new session
+        service.immobilize(player);
+        assertThat(service.isImmobilized(playerId)).isTrue();
+    }
 }

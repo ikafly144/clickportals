@@ -2658,6 +2658,13 @@ public final class AetheryteService {
         }
         if (castSettings.immobilize()) {
             castImmobilizeService.immobilize(player);
+            if (session.cancelled.get()) {
+                castImmobilizeService.release(player);
+                return;
+            }
+        }
+        if (session.cancelled.get()) {
+            return;
         }
 
         modelService.playPlayerAnimation(
@@ -2666,6 +2673,13 @@ public final class AetheryteService {
                 castSettings.castAnimation(),
                 AetheryteModelService.PlayerAnimationMode.HOLD_ON_LAST
         );
+        if (session.cancelled.get()) {
+            modelService.stopPlayerAnimation(player);
+            if (castSettings.immobilize()) {
+                castImmobilizeService.release(player);
+            }
+            return;
+        }
         player.sendMessage(messages.get(
                 player,
                 MessageKey.WARP_CAST_STARTED,
