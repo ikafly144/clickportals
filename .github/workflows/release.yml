@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build & Attest (Java 25)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate tag and pluginVersion
+        id: meta
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$TAG_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$TAG_NAME' does not match SemVer format vMAJOR.MINOR.PATCH[-PRERELEASE]."
+            exit 1
+          fi
+
+          TAG_VERSION="${TAG_NAME#v}"
+          PLUGIN_VERSION="$(sed -nE 's/^pluginVersion[[:space:]]*=[[:space:]]*([^[:space:]#]+).*/\1/p' gradle.properties | head -n 1 | tr -d '\r')"
+
+          if [[ -z "$PLUGIN_VERSION" ]]; then
+            echo "::error::Could not read pluginVersion from gradle.properties."
+            exit 1
+          fi
+
+          if [[ "$TAG_VERSION" != "$PLUGIN_VERSION" ]]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match gradle.properties pluginVersion ($PLUGIN_VERSION)."
+            exit 1
+          fi
+
+          PRERELEASE="false"
+          if [[ "$TAG_VERSION" == *-* ]]; then
+            PRERELEASE="true"
+          fi
+
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Run checks and build plugin JAR
+        run: ./gradlew check shadowJar --stacktrace
+
+      - name: Prepare release assets and SHA-256 checksum
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          JAR_NAME="ClickPortals-${VERSION}.jar"
+          if [[ ! -f "build/libs/${JAR_NAME}" ]]; then
+            echo "::error::Expected JAR build/libs/${JAR_NAME} was not produced."
+            exit 1
+          fi
+          mkdir -p dist
+          cp "build/libs/${JAR_NAME}" "dist/${JAR_NAME}"
+          (cd dist && sha256sum "${JAR_NAME}" > "${JAR_NAME}.sha256")
+
+      - name: Generate build provenance attestation
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/ClickPortals-${{ steps.meta.outputs.version }}.jar
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Verify SHA-256 checksum
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c "ClickPortals-${VERSION}.jar.sha256")
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+          IS_PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          ARGS=(
+            "$TAG_NAME"
+            "dist/ClickPortals-${VERSION}.jar"
+            "dist/ClickPortals-${VERSION}.jar.sha256"
+            --repo "$GITHUB_REPOSITORY"
+            --verify-tag
+            --title "$TAG_NAME"
+            --generate-notes
+          )
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            ARGS+=(--prerelease)
+          fi
+          gh release create "${ARGS[@]}"
