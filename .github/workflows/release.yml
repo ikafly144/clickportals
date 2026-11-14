@@ -33,8 +33,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ ! "$TAG_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Tag '$TAG_NAME' does not match SemVer format vMAJOR.MINOR.PATCH[-PRERELEASE]."
+          SEMVER_CORE_RE='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+          PRE_ID_RE='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+          TAG_RE="^v${SEMVER_CORE_RE}(-${PRE_ID_RE}(\.${PRE_ID_RE})*)?$"
+
+          if [[ ! "$TAG_NAME" =~ $TAG_RE ]]; then
+            echo "::error::Tag '$TAG_NAME' does not match SemVer 2.0.0 format vMAJOR.MINOR.PATCH[-PRERELEASE]."
             exit 1
           fi
 

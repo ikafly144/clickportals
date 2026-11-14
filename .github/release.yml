@@ -5,25 +5,20 @@ changelog:
   categories:
     - title: Breaking Changes
       labels:
-        - breaking-change
         - type:breaking
     - title: Features
       labels:
         - type:feature
-        - enhancement
     - title: Bug Fixes
       labels:
         - type:bug
-        - bug
     - title: Documentation
       labels:
-        - documentation
-        - area:docs
+        - type:docs
     - title: Maintenance & Dependencies
       labels:
         - type:task
         - area:build
-        - dependencies
     - title: Other Changes
       labels:
         - "*"
