@@ -236,16 +236,23 @@ public record PluginConfig(
 
             @Setting("max-favorites-per-player")
             @Comment("Maximum number of favorite Aetherytes a player can save (-1 for unlimited, 0 to disable)")
-            @Nullable Integer maxFavoritesPerPlayer
+            @Nullable Integer maxFavoritesPerPlayer,
+
+            @Setting("max-networks-per-player")
+            @Comment("Maximum total Aetheryte networks a single player may own (-1 for unlimited) (#27)")
+            @Nullable Integer maxNetworksPerPlayer
     ) {
         public LimitsSection {
             if (maxFavoritesPerPlayer == null) {
                 maxFavoritesPerPlayer = -1;
             }
+            if (maxNetworksPerPlayer == null) {
+                maxNetworksPerPlayer = -1;
+            }
         }
 
         public LimitsSection(final int maxAetherytesPerPlayer, final int placementCooldownTicks) {
-            this(maxAetherytesPerPlayer, placementCooldownTicks, 0.0, -1);
+            this(maxAetherytesPerPlayer, placementCooldownTicks, 0.0, -1, -1);
         }
 
         public LimitsSection(
@@ -253,14 +260,23 @@ public record PluginConfig(
                 final int placementCooldownTicks,
                 final double minDistanceBetweenAetherytes
         ) {
-            this(maxAetherytesPerPlayer, placementCooldownTicks, minDistanceBetweenAetherytes, -1);
+            this(maxAetherytesPerPlayer, placementCooldownTicks, minDistanceBetweenAetherytes, -1, -1);
+        }
+
+        public LimitsSection(
+                final int maxAetherytesPerPlayer,
+                final int placementCooldownTicks,
+                final double minDistanceBetweenAetherytes,
+                final @Nullable Integer maxFavoritesPerPlayer
+        ) {
+            this(maxAetherytesPerPlayer, placementCooldownTicks, minDistanceBetweenAetherytes, maxFavoritesPerPlayer, -1);
         }
 
         /**
-         * Returns the default limits section (-1 = unlimited, 100 ticks = 5s cooldown, 0 min distance, -1 max favorites).
+         * Returns the default limits section (-1 = unlimited, 100 ticks = 5s cooldown, 0 min distance, -1 max favorites/networks).
          */
         public static LimitsSection defaults() {
-            return new LimitsSection(-1, DEFAULT_PLACEMENT_COOLDOWN_TICKS, 0.0, -1);
+            return new LimitsSection(-1, DEFAULT_PLACEMENT_COOLDOWN_TICKS, 0.0, -1, -1);
         }
     }
 
@@ -283,7 +299,11 @@ public record PluginConfig(
 
             @Setting("cast")
             @Comment("Default warp casting (cast time and BetterModel player animation) settings (#65)")
-            CastSection cast
+            CastSection cast,
+
+            @Setting("visibility-cost")
+            @Comment("Cost overrides per destination visibility mode (null = use base cost, [] = free) (#25)")
+            VisibilityCostSection visibilityCost
     ) {
         public WarpSection {
             if (distance == null) {
@@ -295,6 +315,9 @@ public record PluginConfig(
             if (cast == null) {
                 cast = CastSection.defaults();
             }
+            if (visibilityCost == null) {
+                visibilityCost = VisibilityCostSection.defaults();
+            }
         }
 
         public WarpSection(
@@ -302,11 +325,26 @@ public record PluginConfig(
                 final List<CostEntry> cost,
                 final boolean showOptionalCosts
         ) {
-            this(distance, cost, showOptionalCosts, CastSection.defaults());
+            this(distance, cost, showOptionalCosts, CastSection.defaults(), VisibilityCostSection.defaults());
+        }
+
+        public WarpSection(
+                final DistanceSection distance,
+                final List<CostEntry> cost,
+                final boolean showOptionalCosts,
+                final CastSection cast
+        ) {
+            this(distance, cost, showOptionalCosts, cast, VisibilityCostSection.defaults());
         }
 
         public static WarpSection defaults() {
-            return new WarpSection(DistanceSection.defaults(), List.of(), true, CastSection.defaults());
+            return new WarpSection(
+                    DistanceSection.defaults(),
+                    List.of(),
+                    true,
+                    CastSection.defaults(),
+                    VisibilityCostSection.defaults()
+            );
         }
     }
 
@@ -448,6 +486,17 @@ public record PluginConfig(
             validMaxFavorites = rawMaxFavorites;
         }
 
+        final Integer rawMaxNetworks = limits.maxNetworksPerPlayer();
+        final int validMaxNetworks;
+        if (rawMaxNetworks == null) {
+            validMaxNetworks = -1;
+        } else if (rawMaxNetworks < -1) {
+            logger.warn("Invalid limits.max-networks-per-player {} (must be >= -1); falling back to -1 (unlimited)", rawMaxNetworks);
+            validMaxNetworks = -1;
+        } else {
+            validMaxNetworks = rawMaxNetworks;
+        }
+
         final DistanceSection rawDist = warp.distance();
         final double validMinDist;
         if (rawDist.min() == null) {
@@ -521,7 +570,16 @@ public record PluginConfig(
                 validCancel
         );
 
-        final WarpSection validWarp = new WarpSection(validDist, warp.cost(), warp.showOptionalCosts(), validCast);
+        final VisibilityCostSection validVisibilityCost =
+                (warp.visibilityCost() != null ? warp.visibilityCost() : VisibilityCostSection.defaults())
+                        .validated("warp.visibility-cost", logger);
+        final WarpSection validWarp = new WarpSection(
+                validDist,
+                warp.cost(),
+                warp.showOptionalCosts(),
+                validCast,
+                validVisibilityCost
+        );
 
         final DimensionRoutesConfig validDimensions;
         if (dimensions == null) {
@@ -560,7 +618,7 @@ public record PluginConfig(
                         validViewDistance,
                         hologram.delayedRefreshFallbackOrDefault()
                 ),
-                new LimitsSection(validMaxPerPlayer, validCooldownTicks, validMinDistBetween, validMaxFavorites),
+                new LimitsSection(validMaxPerPlayer, validCooldownTicks, validMinDistBetween, validMaxFavorites, validMaxNetworks),
                 validWarp,
                 validDimensions,
                 validUpdateChecker,

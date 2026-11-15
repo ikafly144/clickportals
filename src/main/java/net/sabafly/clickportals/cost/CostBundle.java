@@ -119,10 +119,22 @@ public final class CostBundle {
             final Map<String, Double> externalVariables,
             final @Nullable EconomyProvider economy
     ) {
+        return quote(player, externalVariables, economy, 1.0);
+    }
+
+    /**
+     * Assesses this bundle against the given player with a scalar multiplier (#25).
+     */
+    public CostQuote quote(
+            final Player player,
+            final Map<String, Double> externalVariables,
+            final @Nullable EconomyProvider economy,
+            final double amountMultiplier
+    ) {
         if (entries.isEmpty()) {
             return CostQuote.FREE;
         }
-        return quote(PlayerResourceSnapshot.capture(player, economy), externalVariables);
+        return quote(PlayerResourceSnapshot.capture(player, economy), externalVariables, amountMultiplier);
     }
 
     /**
@@ -137,13 +149,24 @@ public final class CostBundle {
             final PlayerResourceSnapshot snapshot,
             final Map<String, Double> externalVariables
     ) {
+        return quote(snapshot, externalVariables, 1.0);
+    }
+
+    /**
+     * Assesses this bundle using a pre-captured {@link PlayerResourceSnapshot} and a scalar multiplier (#25).
+     */
+    public CostQuote quote(
+            final PlayerResourceSnapshot snapshot,
+            final Map<String, Double> externalVariables,
+            final double amountMultiplier
+    ) {
         if (entries.isEmpty()) {
             return CostQuote.FREE;
         }
         final Map<String, Double> variables = new HashMap<>(externalVariables.size() + 8);
         variables.putAll(externalVariables);
         snapshot.populateVariables(variables);
-        return quoteWithPopulatedVariables(snapshot, variables);
+        return quoteWithPopulatedVariables(snapshot, variables, amountMultiplier);
     }
 
     /**
@@ -155,11 +178,26 @@ public final class CostBundle {
             final PlayerResourceSnapshot snapshot,
             final Map<String, Double> variables
     ) {
+        return quoteWithPopulatedVariables(snapshot, variables, 1.0);
+    }
+
+    /**
+     * Assesses this bundle using a pre-captured {@link PlayerResourceSnapshot}, populated variables,
+     * and a scalar multiplier applied prior to {@link CostType} normalization (#25).
+     */
+    public CostQuote quoteWithPopulatedVariables(
+            final PlayerResourceSnapshot snapshot,
+            final Map<String, Double> variables,
+            final double amountMultiplier
+    ) {
         if (entries.isEmpty()) {
             return CostQuote.FREE;
         }
+        final double safeMultiplier = (!Double.isFinite(amountMultiplier) || amountMultiplier < 0.0)
+                ? 1.0
+                : amountMultiplier;
         if (entries.size() == 1) {
-            return quoteSingleEntry(entries.get(0), compiledExpressions.get(0), snapshot, variables);
+            return quoteSingleEntry(entries.get(0), compiledExpressions.get(0), snapshot, variables, safeMultiplier);
         }
 
         // First pass: evaluate raw amounts and aggregate required sums by CostType (#7)
@@ -182,7 +220,7 @@ public final class CostBundle {
                 continue;
             }
 
-            final double normalizedAmount = type.normalize(rawAmount);
+            final double normalizedAmount = type.normalize(rawAmount * safeMultiplier);
             evaluatedAmounts[i] = normalizedAmount;
             if (entry.required() && !(type == CostType.VAULT && snapshot.economySoftDisabled())) {
                 totalRequiredByType.merge(type, type.toBigDecimal(normalizedAmount), BigDecimal::add);
@@ -249,7 +287,8 @@ public final class CostBundle {
             final CostEntry entry,
             final Expression expr,
             final PlayerResourceSnapshot snapshot,
-            final Map<String, Double> variables
+            final Map<String, Double> variables,
+            final double amountMultiplier
     ) {
         final CostType type = entry.type();
         if (type == null || Objects.equals(expr, Expression.INVALID)) {
@@ -259,7 +298,7 @@ public final class CostBundle {
         if (!Double.isFinite(rawAmount) || rawAmount < 0.0) {
             return new CostQuote(List.of(new CostItemQuote(type, Double.POSITIVE_INFINITY, true, false, 0.0, false)));
         }
-        final double amount = type.normalize(rawAmount);
+        final double amount = type.normalize(rawAmount * amountMultiplier);
         if (type == CostType.VAULT && snapshot.economySoftDisabled()) {
             return new CostQuote(List.of(new CostItemQuote(type, 0.0, entry.required(), true, 0.0, true)));
         }

@@ -58,6 +58,7 @@ class PluginYamlPermissionsTest {
             assertThat(perms.node(Permissions.BYPASS_COST_WARP, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.BYPASS_COST_PLACE, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.BYPASS_DIMENSION, "default").getString()).isEqualTo("op");
+            assertThat(perms.node(Permissions.BYPASS_VISIBILITY, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.NOTIFY_UPDATE, "default").getString()).isEqualTo("op");
             assertThat(perms.node(Permissions.ADMIN, "default").getString()).isEqualTo("op");
 
@@ -72,6 +73,7 @@ class PluginYamlPermissionsTest {
             assertThat(children.node(Permissions.BYPASS_COST_WARP).getBoolean()).isTrue();
             assertThat(children.node(Permissions.BYPASS_COST_PLACE).getBoolean()).isTrue();
             assertThat(children.node(Permissions.BYPASS_DIMENSION).getBoolean()).isTrue();
+            assertThat(children.node(Permissions.BYPASS_VISIBILITY).getBoolean()).isTrue();
             assertThat(children.node(Permissions.NOTIFY_UPDATE).getBoolean()).isTrue();
         }
     }

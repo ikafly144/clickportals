@@ -17,7 +17,11 @@
  */
 package net.sabafly.clickportals.aetheryte;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import org.bukkit.NamespacedKey;
 import org.bukkit.persistence.PersistentDataAdapterContext;
@@ -41,6 +45,9 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
     private static final NamespacedKey KEY_CREATED_AT = new NamespacedKey(NAMESPACE, "created_at");
     private static final NamespacedKey KEY_VARIATION = new NamespacedKey(NAMESPACE, "variation");
     private static final NamespacedKey KEY_OWNER_NAME = new NamespacedKey(NAMESPACE, "owner_name");
+    private static final NamespacedKey KEY_VISIBILITY = new NamespacedKey(NAMESPACE, "visibility");
+    private static final NamespacedKey KEY_INVITEES = new NamespacedKey(NAMESPACE, "invitees");
+    private static final NamespacedKey KEY_NETWORK_ID = new NamespacedKey(NAMESPACE, "network_id");
 
     public static final AetheryteDataType INSTANCE = new AetheryteDataType();
 
@@ -73,6 +80,17 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
         if (complex.ownerName() != null) {
             container.set(KEY_OWNER_NAME, PersistentDataType.STRING, complex.ownerName());
         }
+        container.set(KEY_VISIBILITY, PersistentDataType.STRING, complex.visibility().id());
+        if (!complex.invitedPlayers().isEmpty()) {
+            final List<String> inviteeStrings = new ArrayList<>(complex.invitedPlayers().size());
+            for (final UUID inviteeId : complex.invitedPlayers()) {
+                inviteeStrings.add(inviteeId.toString());
+            }
+            container.set(KEY_INVITEES, PersistentDataType.LIST.strings(), inviteeStrings);
+        }
+        if (complex.networkId() != null) {
+            container.set(KEY_NETWORK_ID, PersistentDataType.STRING, complex.networkId().toString());
+        }
         return container;
     }
 
@@ -89,6 +107,30 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
         final Long createdAt = Objects.requireNonNull(primitive.get(KEY_CREATED_AT, PersistentDataType.LONG), "Missing created_at");
         final String variation = primitive.get(KEY_VARIATION, PersistentDataType.STRING);
         final String ownerName = primitive.get(KEY_OWNER_NAME, PersistentDataType.STRING);
+        final AetheryteVisibility visibility = AetheryteVisibility.fromString(
+                primitive.get(KEY_VISIBILITY, PersistentDataType.STRING)
+        );
+        final List<String> rawInvitees = primitive.get(KEY_INVITEES, PersistentDataType.LIST.strings());
+        final Set<UUID> invitees = new LinkedHashSet<>();
+        if (rawInvitees != null) {
+            for (final String rawId : rawInvitees) {
+                try {
+                    invitees.add(UUID.fromString(rawId));
+                } catch (final IllegalArgumentException ignored) {
+                    // Ignore malformed legacy/corrupted invitee UUID entries
+                }
+            }
+        }
+
+        final String rawNetworkId = primitive.get(KEY_NETWORK_ID, PersistentDataType.STRING);
+        UUID networkId = null;
+        if (rawNetworkId != null && !rawNetworkId.isBlank()) {
+            try {
+                networkId = UUID.fromString(rawNetworkId);
+            } catch (final IllegalArgumentException ignored) {
+                // Ignore malformed network UUID entries
+            }
+        }
 
         return new Aetheryte(
                 UUID.fromString(idStr),
@@ -101,7 +143,10 @@ public final class AetheryteDataType implements PersistentDataType<PersistentDat
                 UUID.fromString(ownerIdStr),
                 createdAt,
                 Aetheryte.normalizeVariation(variation),
-                ownerName
+                ownerName,
+                visibility,
+                invitees,
+                networkId
         );
     }
 }

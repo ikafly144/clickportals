@@ -36,6 +36,13 @@ dialog:
     bypass-notice: "<yellow>Bypassed restrictions: </yellow><white><reasons></white>"
     name-input-label: "<aqua>Aetheryte Name</aqua>"
     default-name: "<player>'s Aetheryte"
+    visibility-label: "<aqua>Initial Visibility</aqua>"
+    network-mode-label: "<aqua>Network</aqua>"
+    network-name-label: "<aqua>New Network Name (optional)</aqua>"
+    network-option-create: "<green>+ Create New Network</green>"
+    network-option-join: "<aqua>Join: </aqua><white><name></white> <dark_gray>(</dark_gray><visibility><dark_gray>)</dark_gray>"
+    network-cost: "<gray>Network fee — Create: </gray><create_cost> <dark_gray>|</dark_gray> <gray>Join: </gray><join_cost>"
+    network-info: "<gray>Child Aetherytes inherit the selected network's visibility setting.</gray>"
   button:
     confirm-create: "<green><bold>Place</bold></green>"
     cancel: "<gray>Cancel</gray>"
@@ -55,6 +62,13 @@ dialog:
     open-rename: "<aqua>✏ Rename Aetheryte</aqua>"
     open-rename-tooltip: "<gray>Change the display name of this Aetheryte</gray>"
     confirm-rename: "<green><bold>Rename</bold></green>"
+    rename-network: "<aqua>✏ Rename Network</aqua>"
+    rename-network-tooltip: "<gray>Change the name of this Aetheryte's network</gray>"
+    manage-networks: "<aqua>🌐 Manage Networks</aqua> <dark_gray>(</dark_gray><white><count></white><dark_gray>)</dark_gray>"
+    manage-networks-tooltip: "<gray>Create and manage networks hosted by this Hub Aetheryte</gray>"
+    create-network: "<green>+ Create Network</green>"
+    delete-network: "<red>🗑 Delete Network</red>"
+    confirm-delete-network: "<red><bold>Delete Network</bold></red>"
     admin-force-remove: "<dark_red>🗑 [Admin] Force Remove (No Refund)</dark_red>"
     admin-force-remove-tooltip: "<gray>Delete this Aetheryte without returning an item</gray>"
     confirm-force-remove: "<dark_red><bold>Force Remove</bold></dark_red>"
@@ -66,6 +80,12 @@ dialog:
     confirm-variation: "<light_purple><bold>Change Variation</bold></light_purple>"
     admin-resync: "<aqua>🔄 [Admin] Resync Visuals</aqua>"
     admin-resync-tooltip: "<gray>Respawn hologram and BetterModel entities for this Aetheryte</gray>"
+    visibility: "<aqua>👁 Visibility & Access</aqua>"
+    visibility-tooltip: "<gray>Change who can warp to this Aetheryte and manage invited players</gray>"
+    visibility-option: "<mode><current>"
+    visibility-current-badge: " <green>(Current)</green>"
+    invite-add: "<green>➕ Invite Player</green>"
+    invite-remove: "<yellow>➖ Remove Invitee</yellow> <dark_gray>(</dark_gray><white><count></white><dark_gray>)</dark_gray>"
   warp:
     title: "<aqua>✦ Aetheryte: </aqua><white><bold><name></bold></white>"
     header: "<gray>Current location: </gray><white><name></white> <dark_gray>(</dark_gray><gray>Owner: </gray><aqua><owner></aqua><dark_gray>)</dark_gray><newline><gray>Coordinates: </gray><white><world> (<x>, <y>, <z>)</white>"
@@ -117,13 +137,18 @@ dialog:
   remove:
     title: "<red><bold>Confirm Removal: </bold></red><white><name></white>"
     body: "<gray>Are you sure you want to remove \"</gray><white><name></white><gray>\"?</gray><newline><yellow>The Aetheryte item will be returned to you.</yellow>"
+    hub-cascade-warning: "<newline><red><bold>Admin Cascade Warning:</bold></red> <red>Removing this Hub will also permanently remove <white><networks></white> hosted network(s) and <white><children></white> child Aetheryte(s) (no items refunded for children).</red>"
   operations:
     title: "<aqua>⚙ Operations: </aqua><white><bold><name></bold></white>"
-    body: "<gray>Name: </gray><white><name></white><newline><gray>Owner: </gray><aqua><owner></aqua><newline><gray>World: </gray><gold><world></gold> <white>(<x>, <y>, <z>)</white><newline><gray>Variation: </gray><variation>"
+    body: "<gray>Name: </gray><white><name></white><newline><gray>Owner: </gray><aqua><owner></aqua><newline><gray>World: </gray><gold><world></gold> <white>(<x>, <y>, <z>)</white><newline><gray>Variation: </gray><variation><newline><gray>Visibility: </gray><visibility> <dark_gray>|</dark_gray> <gray>Network: </gray><white><network></white><newline><gray>Invited players: </gray><white><invited></white>"
   rename:
     title: "<aqua><bold>Rename Aetheryte</bold></aqua>"
     body: "<gray>Current name: </gray><white><name></white>"
     input-label: "<aqua>New Aetheryte Name</aqua>"
+  rename-network:
+    title: "<aqua><bold>Rename Network</bold></aqua>"
+    body: "<gray>Current network name: </gray><white><name></white>"
+    input-label: "<aqua>New Network Name</aqua>"
   force-remove:
     title: "<dark_red><bold>Confirm Force Removal: </bold></dark_red><white><name></white>"
     body: "<gray>Are you sure you want to force-remove \"</gray><white><name></white><gray>\"?</gray><newline><red>No Aetheryte item will be refunded.</red>"
@@ -135,9 +160,57 @@ dialog:
     title: "<light_purple><bold>Change Variation: </bold></light_purple><white><name></white>"
     body: "<gray>Current variation: </gray><white><variation></white><newline><gray>Select the variation preset to apply.</gray>"
     select-label: "<light_purple>Variation</light_purple>"
+  visibility:
+    title: "<aqua>👁 Visibility & Access: </aqua><white><bold><name></bold></white>"
+    body: "<gray>Current visibility: </gray><visibility><newline><gray>Invited players: </gray><white><invited></white><newline><gray>Select a visibility mode or manage invited players.</gray>"
+    tooltip-charge: "<gray>Switch to </gray><mode><newline><yellow>Cost: </yellow><cost>"
+    tooltip-no-change: "<gray>Switch to </gray><mode><newline><gray>No cost adjustment</gray>"
+  invite-add:
+    title: "<green><bold>Invite Player: </bold></green><white><name></white>"
+    body: "<gray>Enter the name of the player to invite to \"</gray><white><name></white><gray>\".</gray>"
+    input-label: "<green>Player Name</green>"
+  invite-remove:
+    title: "<yellow><bold>Remove Invitee: </bold></yellow><white><name></white>"
+    body: "<gray>Click a player to remove them from the invite list of \"</gray><white><name></white><gray>\".</gray>"
+  invite:
+    empty: "<gray>No players are currently invited to this Aetheryte.</gray>"
+  hub-networks:
+    title: "<aqua>🌐 Networks: </aqua><white><bold><name></bold></white>"
+    body: "<gray>Networks hosted on Hub \"</gray><white><name></white><gray>\": </gray><white><count></white>"
+    empty: "<gray>No networks have been created on this Hub yet.</gray>"
+    entry: "<aqua>✦ </aqua><white><name></white> <dark_gray>(</dark_gray><visibility> <dark_gray>|</dark_gray> <white><members></white><dark_gray>)</dark_gray>"
+    create-cost: "<newline><gray>Network creation fee: </gray><cost>"
+  create-network:
+    title: "<green><bold>Create Network</bold></green>"
+    body: "<gray>Creating a new network on Hub \"</gray><white><name></white><gray>\".</gray>"
+    name-label: "<aqua>Network Name</aqua>"
+  manage-network:
+    title: "<aqua>⚙ Network: </aqua><white><bold><name></bold></white>"
+    body: "<gray>Network: </gray><white><name></white><newline><gray>Owner: </gray><aqua><owner></aqua><newline><gray>Hub: </gray><white><hub></white><newline><gray>Visibility: </gray><visibility><newline><gray>Connected Aetherytes: </gray><white><members></white><newline><gray>Invited players: </gray><white><invited></white>"
+  delete-network:
+    title: "<red><bold>Confirm Network Deletion: </bold></red><white><name></white>"
+    body: "<gray>Are you sure you want to delete network \"</gray><white><name></white><gray>\"?</gray><newline><gray>Connected child Aetherytes: </gray><white><members></white>"
+    cascade-warning: "<newline><red><bold>Admin Cascade Warning:</bold></red> <red>Deleting this network will also permanently remove <white><members></white> connected child Aetheryte(s) (no items refunded).</red>"
+
+visibility:
+  public: "<green>Public</green>"
+  invite-only: "<gold>Invite Only</gold>"
+  owner-only: "<red>Owner Only</red>"
+
+network:
+  none: "<gray>None</gray>"
 
 aetheryte:
   created: "<prefix><green>Placed Aetheryte \"</green><white><bold><name></bold></white><green>\".</green>"
+  visibility-changed: "<prefix><green>Updated visibility of \"</green><white><name></white><green>\" to </green><visibility><green>.</green>"
+  visibility-cost-charged: "<prefix><yellow>Charged visibility cost: </yellow><cost>"
+  network-renamed: "<prefix><green>Renamed network to \"</green><white><bold><name></bold></white><green>\".</green>"
+  network-created: "<prefix><green>Created network \"</green><white><bold><name></bold></white><green>\" on Hub \"</green><white><hub></white><green>\".</green>"
+  network-deleted: "<prefix><yellow>Deleted network \"</yellow><white><bold><name></bold></white><yellow>\".</yellow>"
+  network-create-cost-paid: "<prefix><gray>Paid <cost> to create network.</gray>"
+  hub-cascade-removed: "<prefix><yellow>Cascade-removed Hub \"</yellow><white><bold><name></bold></white><yellow>\" along with <white><networks></white> network(s) and <white><children></white> child Aetheryte(s).</yellow>"
+  invitee-added: "<prefix><green>Invited </green><aqua><player></aqua><green> to \"</green><white><name></white><green>\".</green>"
+  invitee-removed: "<prefix><yellow>Removed </yellow><aqua><player></aqua><yellow> from the invite list of \"</yellow><white><name></white><yellow>\".</yellow>"
   removed: "<prefix><yellow>Removed Aetheryte \"</yellow><white><bold><name></bold></white><yellow>\".</yellow>"
   cost-paid: "<prefix><gray>Paid <cost> for Aetheryte placement.</gray>"
   renamed: "<prefix><green>Renamed Aetheryte \"<old_name>\" to \"</green><white><bold><name></bold></white><green>\".</green>"
@@ -158,6 +231,7 @@ bypass:
     placement-distance: "minimum distance (<distance> blocks)"
     cost-place: "placement cost (<cost>)"
     cost-warp: "warp cost (<cost>)"
+    visibility: "visibility restriction (<visibility>)"
 
 warp:
   success: "<prefix><aqua>Teleported to \"</aqua><white><bold><name></bold></white><aqua>\".</aqua>"
@@ -195,6 +269,27 @@ error:
   destination-unsafe: "<prefix><red>Cannot teleport because the destination landing area is obstructed or unsafe.</red>"
   protected-break: "<prefix><red>Aetherytes cannot be broken directly. Please remove it from the right-click menu.</red>"
   player-not-found: "<prefix><red>Player \"<player>\" was not found in server history.</red>"
+  visibility-denied: "<red>This Aetheryte is private</red>"
+  network-mismatch: "<red>Destination is on an unreachable network</red>"
+  visibility-unchanged: "<prefix><yellow>Visibility is already set to that mode.</yellow>"
+  invite-self: "<prefix><red>The owner already has access and cannot be invited.</red>"
+  already-invited: "<prefix><yellow><player> is already invited to this Aetheryte.</yellow>"
+  not-invited: "<prefix><red>That player is not on the invite list.</red>"
+  network-not-found: "<prefix><red>The selected network no longer exists in this world.</red>"
+  network-not-joinable: "<prefix><red>You do not have permission to add Aetherytes to that network.</red>"
+  no-joinable-networks: "<prefix><red>There are no joinable Aetheryte networks in this world. Ask a normal Hub Aetheryte owner to create one or invite you first.</red>"
+  network-hub-required: "<prefix><red>That network does not have a valid Hub Aetheryte in this world.</red>"
+  hub-not-allowed: "<prefix><red>This Aetheryte variation cannot host networks.</red>"
+  cannot-manage-hub: "<prefix><red>Only the Hub Aetheryte owner or an admin can create or manage networks on this Hub.</red>"
+  hub-has-child-networks: "<prefix><red>Cannot remove Hub \"<white><name></white>\" because <white><children></white> child Aetheryte(s) still exist across <white><networks></white> network(s).</red>"
+  hub-has-networks: "<prefix><red>Cannot change variation because Hub \"<white><name></white>\" currently hosts <white><networks></white> network(s).</red>"
+  network-has-aetherytes: "<prefix><red>Cannot delete network \"<white><name></white>\" while <white><count></white> child Aetheryte(s) are still connected.</red>"
+  variation-requires-hub-network: "<prefix><red>Cannot switch a normal Aetheryte to a network variation unless it belongs to a Hub network.</red>"
+  network-limit-global: "<prefix><red>You have reached the maximum number of networks you can own (<max>).</red>"
+  network-limit-variation: "<prefix><red>You have reached the network limit for <variation> (<max>).</red>"
+  network-aetheryte-limit: "<prefix><red>That network has reached its maximum number of Aetherytes (<max>).</red>"
+  network-too-far: "<prefix><red>Too far from existing Aetherytes in that network (max <distance> blocks).</red>"
+  cannot-manage-network: "<prefix><red>Only the network owner can manage this network's settings.</red>"
 
 command:
   given-item: "<prefix><green>Gave <amount> Aetheryte(s) to </green><white><player></white><green>.</green>"

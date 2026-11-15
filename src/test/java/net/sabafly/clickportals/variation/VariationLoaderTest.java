@@ -350,4 +350,23 @@ class VariationLoaderTest {
         assertThat(arcane.sounds().ambient().range()).isEqualTo(18.0);
         assertThat(arcane.sounds().ambient().enabled()).isNull();
     }
+
+    @Test
+    void networkAllowHubDefaultsTrueAndCanBeDisabledForNormalVariations() throws IOException {
+        final Path aetheryteDir = tempDir.resolve("hub_capability");
+        Files.createDirectories(aetheryteDir);
+        Files.writeString(aetheryteDir.resolve("isolated.yml"), """
+                display-name: "<gray>Isolated Normal</gray>"
+                type: normal
+                network:
+                  allow-hub: false
+                """, StandardCharsets.UTF_8);
+
+        final VariationRegistry registry = VariationRegistry.load(aetheryteDir, mock(Logger.class));
+        assertThat(registry.getOrDefault(Aetheryte.DEFAULT_VARIATION).canBeNetworkHub()).isTrue();
+        final AetheryteVariation isolated = registry.getOrDefault("isolated");
+        assertThat(isolated.isNetwork()).isFalse();
+        assertThat(isolated.network().allowHubOrDefault()).isFalse();
+        assertThat(isolated.canBeNetworkHub()).isFalse();
+    }
 }

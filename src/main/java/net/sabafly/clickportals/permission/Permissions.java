@@ -19,6 +19,7 @@ package net.sabafly.clickportals.permission;
 
 import java.util.UUID;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.aetheryte.AetheryteNetwork;
 import org.bukkit.permissions.Permissible;
 
 /**
@@ -80,6 +81,11 @@ public final class Permissions {
      * Allows bypassing per-dimension Aetheryte placement and usage restrictions (default: {@code op}) (#63).
      */
     public static final String BYPASS_DIMENSION = "clickportals.bypass.dimension";
+
+    /**
+     * Allows seeing and warping to private/invite-only Aetherytes regardless of visibility restrictions (default: {@code op}) (#24).
+     */
+    public static final String BYPASS_VISIBILITY = "clickportals.bypass.visibility";
 
     /**
      * Allows receiving in-game update notifications when a new ClickPortals release is available on Modrinth (default: {@code op}) (#76).
@@ -192,5 +198,47 @@ public final class Permissions {
      */
     public static boolean canNotifyUpdate(final Permissible permissible) {
         return permissible.hasPermission(NOTIFY_UPDATE);
+    }
+
+    /**
+     * Checks whether the given permissible bypasses Aetheryte visibility restrictions (#24).
+     */
+    public static boolean canBypassVisibility(final Permissible permissible) {
+        return permissible.hasPermission(BYPASS_VISIBILITY);
+    }
+
+    /**
+     * Checks whether the given permissible with {@code playerId} can view and warp to {@code aetheryte} (#24).
+     */
+    public static boolean canAccessVisibility(final Permissible permissible, final UUID playerId, final Aetheryte aetheryte) {
+        return aetheryte.isAccessibleTo(playerId) || canBypassVisibility(permissible);
+    }
+
+    /**
+     * Checks whether the given permissible with {@code playerId} can view and warp to {@code network} (#27).
+     */
+    public static boolean canAccessVisibility(final Permissible permissible, final UUID playerId, final AetheryteNetwork network) {
+        return network.isAccessibleTo(playerId, canBypassVisibility(permissible));
+    }
+
+    /**
+     * Checks whether the given permissible with {@code playerId} can manage visibility and invitees for {@code aetheryte} (#24).
+     */
+    public static boolean canManageVisibility(final Permissible permissible, final UUID playerId, final Aetheryte aetheryte) {
+        return aetheryte.ownerId().equals(playerId) || canAdmin(permissible);
+    }
+
+    /**
+     * Checks whether the given permissible with {@code playerId} can manage {@code network} (#27).
+     */
+    public static boolean canManageNetwork(final Permissible permissible, final UUID playerId, final AetheryteNetwork network) {
+        return network.ownerId().equals(playerId) || canAdmin(permissible);
+    }
+
+    /**
+     * Checks whether the given permissible with {@code playerId} can create/manage hosted networks on {@code hub} (#27).
+     */
+    public static boolean canManageHub(final Permissible permissible, final UUID playerId, final Aetheryte hub) {
+        return hub.ownerId().equals(playerId) || canAdmin(permissible);
     }
 }

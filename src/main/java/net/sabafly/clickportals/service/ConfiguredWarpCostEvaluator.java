@@ -33,6 +33,9 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import net.kyori.adventure.text.Component;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.aetheryte.AetheryteNetwork;
+import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
+import net.sabafly.clickportals.aetheryte.AetheryteVisibility;
 import net.sabafly.clickportals.config.DistanceSection;
 import net.sabafly.clickportals.config.PluginConfig;
 import net.sabafly.clickportals.cost.CostBundle;
@@ -40,6 +43,7 @@ import net.sabafly.clickportals.cost.CostEntry;
 import net.sabafly.clickportals.cost.CostFormatter;
 import net.sabafly.clickportals.cost.CostItemQuote;
 import net.sabafly.clickportals.cost.CostQuote;
+import net.sabafly.clickportals.dialog.WarpDestinationQuery;
 import net.sabafly.clickportals.economy.EconomyProvider;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
@@ -72,6 +76,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
     private final Supplier<DimensionRouter> routerSupplier;
     private final Messages messages;
     private final Function<UUID, @Nullable World> worldResolver;
+    private final @Nullable AetheryteRegistry registry;
 
     private record ChargedPayment(CostBundle bundle, CostQuote quote, EconomyProvider economy) {
     }
@@ -89,7 +94,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             final Supplier<DimensionRouter> routerSupplier,
             final Messages messages
     ) {
-        this(configSupplier, variationRegistry, economySupplier, routerSupplier, messages, Bukkit::getWorld);
+        this(configSupplier, variationRegistry, economySupplier, routerSupplier, messages, Bukkit::getWorld, null);
     }
 
     public ConfiguredWarpCostEvaluator(
@@ -100,12 +105,25 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             final Messages messages,
             final Function<UUID, @Nullable World> worldResolver
     ) {
+        this(configSupplier, variationRegistry, economySupplier, routerSupplier, messages, worldResolver, null);
+    }
+
+    public ConfiguredWarpCostEvaluator(
+            final Supplier<PluginConfig> configSupplier,
+            final VariationRegistry variationRegistry,
+            final Supplier<EconomyProvider> economySupplier,
+            final Supplier<DimensionRouter> routerSupplier,
+            final Messages messages,
+            final Function<UUID, @Nullable World> worldResolver,
+            final @Nullable AetheryteRegistry registry
+    ) {
         this.configSupplier = configSupplier;
         this.variationRegistry = variationRegistry;
         this.economySupplier = economySupplier;
         this.routerSupplier = routerSupplier;
         this.messages = messages;
         this.worldResolver = worldResolver;
+        this.registry = registry;
     }
 
     private record EvaluationContext(
@@ -120,6 +138,9 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             @Nullable Component blockReason,
             @Nullable DenyReason blockReasonCode
     ) {
+    }
+
+    private record BatchRouteKey(UUID worldId, AetheryteVisibility visibility) {
     }
 
     private record CachedRoute(
@@ -169,9 +190,15 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         final boolean showOptionalCosts = config.showOptionalCosts();
         final Locale playerLocale = messages.locale(player);
 
-        final List<CostEntry> baseEntries = resolveBaseCostEntries(source, config);
-        final CostBundle baseBundle = new CostBundle(baseEntries);
-        final boolean baseHasEntries = !baseEntries.isEmpty();
+        final EnumMap<AetheryteVisibility, List<CostEntry>> entriesByVisibility =
+                new EnumMap<>(AetheryteVisibility.class);
+        final EnumMap<AetheryteVisibility, CostBundle> bundlesByVisibility =
+                new EnumMap<>(AetheryteVisibility.class);
+        for (final AetheryteVisibility vis : AetheryteVisibility.values()) {
+            final List<CostEntry> visEntries = resolveBaseCostEntries(source, vis, config);
+            entriesByVisibility.put(vis, visEntries);
+            bundlesByVisibility.put(vis, new CostBundle(visEntries));
+        }
         final DistanceSection effectiveDistanceLimits = resolveDistanceLimits(source, config);
 
         final @Nullable World sourceWorld = source != null ? worldResolver.apply(source.worldId()) : player.getWorld();
@@ -198,7 +225,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         if (sourceWorld != null && sourceWorldId != null) {
             worldCache.put(sourceWorldId, Optional.of(sourceWorld));
         }
-        final Map<UUID, CachedRoute> routeCache = new HashMap<>();
+        final Map<BatchRouteKey, CachedRoute> routeCache = new HashMap<>();
         final EnumMap<DenyReason, Component> errorCache = new EnumMap<>(DenyReason.class);
         final Map<String, Component> dimensionErrorCache = new HashMap<>();
         final Map<String, Double> vars = new HashMap<>(16);
@@ -222,6 +249,12 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         for (final Aetheryte destination : destinations) {
             final UUID destWorldId = destination.worldId();
             final boolean sameWorld = sourceWorldId != null && destWorldId.equals(sourceWorldId);
+            final AetheryteVisibility destVisibility = resolveEffectiveVisibility(destination);
+            final @Nullable List<CostEntry> rawBaseEntries = entriesByVisibility.get(destVisibility);
+            final List<CostEntry> baseEntries = rawBaseEntries != null ? rawBaseEntries : List.of();
+            final @Nullable CostBundle rawBaseBundle = bundlesByVisibility.get(destVisibility);
+            final CostBundle baseBundle = rawBaseBundle != null ? rawBaseBundle : new CostBundle(baseEntries);
+            final boolean baseHasEntries = !baseEntries.isEmpty();
 
             final double originX;
             final double originY;
@@ -244,6 +277,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
                 dimCostAmt = 0.0;
                 bundle = baseBundle;
                 bundleHasEntries = baseHasEntries;
+                blockReasonCode = resolveVisibilityOrNetworkDeny(player, source, destination);
             } else {
                 final @Nullable World targetWorld = worldCache
                         .computeIfAbsent(destWorldId, id -> Optional.ofNullable(worldResolver.apply(id)))
@@ -296,7 +330,22 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
                     continue;
                 }
 
-                if (sourceWorld == null || fixedSrcLoc == null) {
+                final @Nullable DenyReason visibilityOrNetworkDeny = resolveVisibilityOrNetworkDeny(
+                        player,
+                        source,
+                        destination
+                );
+                if (visibilityOrNetworkDeny != null) {
+                    originX = 0.0;
+                    originY = 0.0;
+                    originZ = 0.0;
+                    crossDim = 0.0;
+                    hops = 0.0;
+                    dimCostAmt = 0.0;
+                    bundle = baseBundle;
+                    bundleHasEntries = baseHasEntries;
+                    blockReasonCode = visibilityOrNetworkDeny;
+                } else if (sourceWorld == null || fixedSrcLoc == null) {
                     originX = 0.0;
                     originY = 0.0;
                     originZ = 0.0;
@@ -307,37 +356,39 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
                     bundleHasEntries = baseHasEntries;
                     blockReasonCode = DenyReason.NO_ROUTE;
                 } else {
-                    final CachedRoute cachedRoute = routeCache.computeIfAbsent(destWorldId, id -> {
-                        final Optional<RoutePlan> plan = router.findRoute(sourceWorld, targetWorld, fixedSrcLoc);
-                        if (plan.isEmpty()) {
-                            return new CachedRoute(false, 0.0, 0.0, 0.0, 0.0, 0.0, baseBundle, baseHasEntries);
-                        }
-                        final RoutePlan route = plan.get();
-                        final Location origin = route.targetOrigin();
-                        final List<CostEntry> extra = route.dimensionCostEntries();
-                        final CostBundle resolvedBundle;
-                        final boolean hasEntries;
-                        if (extra.isEmpty()) {
-                            resolvedBundle = baseBundle;
-                            hasEntries = baseHasEntries;
-                        } else {
-                            final List<CostEntry> combined = new ArrayList<>(baseEntries.size() + extra.size());
-                            combined.addAll(baseEntries);
-                            combined.addAll(extra);
-                            resolvedBundle = new CostBundle(combined);
-                            hasEntries = true;
-                        }
-                        return new CachedRoute(
-                                true,
-                                origin.getX(),
-                                origin.getY(),
-                                origin.getZ(),
-                                route.hops(),
-                                route.dimensionCostAmount(),
-                                resolvedBundle,
-                                hasEntries
-                        );
-                    });
+                    final CachedRoute cachedRoute = routeCache.computeIfAbsent(
+                            new BatchRouteKey(destWorldId, destVisibility),
+                            key -> {
+                                final Optional<RoutePlan> plan = router.findRoute(sourceWorld, targetWorld, fixedSrcLoc);
+                                if (plan.isEmpty()) {
+                                    return new CachedRoute(false, 0.0, 0.0, 0.0, 0.0, 0.0, baseBundle, baseHasEntries);
+                                }
+                                final RoutePlan route = plan.get();
+                                final Location origin = route.targetOrigin();
+                                final List<CostEntry> extra = route.dimensionCostEntries();
+                                final CostBundle resolvedBundle;
+                                final boolean hasEntries;
+                                if (extra.isEmpty()) {
+                                    resolvedBundle = baseBundle;
+                                    hasEntries = baseHasEntries;
+                                } else {
+                                    final List<CostEntry> combined = new ArrayList<>(baseEntries.size() + extra.size());
+                                    combined.addAll(baseEntries);
+                                    combined.addAll(extra);
+                                    resolvedBundle = new CostBundle(combined);
+                                    hasEntries = true;
+                                }
+                                return new CachedRoute(
+                                        true,
+                                        origin.getX(),
+                                        origin.getY(),
+                                        origin.getZ(),
+                                        route.hops(),
+                                        route.dimensionCostAmount(),
+                                        resolvedBundle,
+                                        hasEntries
+                                );
+                            });
                     if (!cachedRoute.hasRoute()) {
                         originX = 0.0;
                         originY = 0.0;
@@ -383,7 +434,7 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
                 horizDist = 0.0;
                 chunkDist = 0.0;
                 dy = 0.0;
-            } else if (blockReasonCode == DenyReason.NO_ROUTE) {
+            } else if (blockReasonCode != null) {
                 blockDist = 0.0;
                 horizDist = 0.0;
                 chunkDist = 0.0;
@@ -531,6 +582,8 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             case NO_ROUTE -> messages.get(playerLocale, MessageKey.ERROR_NO_ROUTE);
             case TOO_CLOSE -> messages.get(playerLocale, MessageKey.ERROR_TOO_CLOSE);
             case TOO_FAR -> messages.get(playerLocale, MessageKey.ERROR_TOO_FAR);
+            case VISIBILITY_DENIED -> messages.get(playerLocale, MessageKey.ERROR_VISIBILITY_DENIED);
+            case NETWORK_MISMATCH -> messages.get(playerLocale, MessageKey.ERROR_NETWORK_MISMATCH);
             case INSUFFICIENT_COST, NO_PERMISSION, DIMENSION_DISABLED, OTHER ->
                     messages.get(playerLocale, MessageKey.ERROR_NOT_FOUND);
         });
@@ -664,7 +717,8 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         final World targetWorld = worldResolver.apply(destination.worldId());
         final World sourceWorld = source != null ? worldResolver.apply(source.worldId()) : player.getWorld();
 
-        final List<CostEntry> baseEntries = resolveBaseCostEntries(source, config);
+        final AetheryteVisibility effectiveVisibility = resolveEffectiveVisibility(destination);
+        final List<CostEntry> baseEntries = resolveBaseCostEntries(source, effectiveVisibility, config);
         final List<CostEntry> extraEntries = new ArrayList<>();
 
         final DimensionRoutesConfig dimensions = config.dimensions();
@@ -691,6 +745,20 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         if (targetWorld == null) {
             return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,
                     messages.get(player, MessageKey.ERROR_NOT_FOUND), WarpEvaluation.DenyReason.NOT_FOUND);
+        }
+
+        final @Nullable DenyReason visibilityOrNetworkDeny = resolveVisibilityOrNetworkDeny(
+                player,
+                source,
+                destination
+        );
+        if (visibilityOrNetworkDeny == DenyReason.VISIBILITY_DENIED) {
+            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,
+                    messages.get(player, MessageKey.ERROR_VISIBILITY_DENIED), DenyReason.VISIBILITY_DENIED);
+        }
+        if (visibilityOrNetworkDeny == DenyReason.NETWORK_MISMATCH) {
+            return new EvaluationContext(0, 0, 0, 0, 0, 0, 0, baseEntries,
+                    messages.get(player, MessageKey.ERROR_NETWORK_MISMATCH), DenyReason.NETWORK_MISMATCH);
         }
 
         final boolean sameWorld = sourceWorld != null && sourceWorld.getUID().equals(targetWorld.getUID());
@@ -757,19 +825,22 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         // Validate source reach and world match if source Aetheryte was provided (#40)
         if (source != null) {
             if (sourceWorld == null || !player.getWorld().getUID().equals(source.worldId())) {
-                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries,
+                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt,
+                        allEntries,
                         messages.get(player, MessageKey.ERROR_NOT_FOUND), WarpEvaluation.DenyReason.NOT_FOUND);
             }
             final Location pLoc = player.getLocation();
             if (pLoc == null) {
-                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries,
+                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt,
+                        allEntries,
                         messages.get(player, MessageKey.ERROR_NOT_FOUND), WarpEvaluation.DenyReason.NOT_FOUND);
             }
             final AetheryteVariation sourceVar = variationRegistry.getOrDefault(source.variation());
             final double hitboxAllowance = Math.max(sourceVar.hitbox().width(), sourceVar.hitbox().height());
             final double maxReach = BASE_INTERACT_REACH + hitboxAllowance;
             if (pLoc.distanceSquared(source.markerLocation(sourceWorld)) > maxReach * maxReach) {
-                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries,
+                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt,
+                        allEntries,
                         messages.get(player, MessageKey.ERROR_TOO_FAR), WarpEvaluation.DenyReason.TOO_FAR);
             }
         }
@@ -783,16 +854,55 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             final double maxDist = effectiveDistanceLimits.maxOrDefault(-1.0);
 
             if (minDist > 0.0 && blockDist < minDist) {
-                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries,
+                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt,
+                        allEntries,
                         messages.get(player, MessageKey.ERROR_TOO_CLOSE), WarpEvaluation.DenyReason.TOO_CLOSE);
             }
             if (maxDist >= 0.0 && blockDist > maxDist) {
-                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries,
+                return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt,
+                        allEntries,
                         messages.get(player, MessageKey.ERROR_TOO_FAR), WarpEvaluation.DenyReason.TOO_FAR);
             }
         }
 
-        return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt, allEntries, null, null);
+        return new EvaluationContext(blockDist, horizDist, chunkDist, dy, crossDim, hops, dimCostAmt,
+                allEntries, null, null);
+    }
+
+    private AetheryteVisibility resolveEffectiveVisibility(final Aetheryte destination) {
+        if (destination.networkId() != null && registry != null) {
+            return registry.getNetworkById(destination.networkId())
+                    .map(AetheryteNetwork::visibility)
+                    .orElse(destination.visibility());
+        }
+        return destination.visibility();
+    }
+
+    private @Nullable DenyReason resolveVisibilityOrNetworkDeny(
+            final Player player,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination
+    ) {
+        final Function<UUID, @Nullable AetheryteNetwork> networkLookup =
+                registry != null ? id -> registry.getNetworkById(id).orElse(null) : id -> null;
+        if (!WarpDestinationQuery.canRouteBetweenAetherytes(source, destination, networkLookup)) {
+            return DenyReason.NETWORK_MISMATCH;
+        }
+        if (destination.networkId() != null) {
+            final @Nullable AetheryteNetwork net = registry != null
+                    ? registry.getNetworkById(destination.networkId()).orElse(null)
+                    : null;
+            if (net != null) {
+                if (!Permissions.canAccessVisibility(player, player.getUniqueId(), net)) {
+                    return DenyReason.VISIBILITY_DENIED;
+                }
+            } else if (!Permissions.canBypassVisibility(player)) {
+                return DenyReason.VISIBILITY_DENIED;
+            }
+        } else if (!Permissions.canAccessVisibility(player, player.getUniqueId(), destination)) {
+            return DenyReason.VISIBILITY_DENIED;
+        }
+        return null;
     }
 
     private DistanceSection resolveDistanceLimits(final @Nullable Aetheryte source, final PluginConfig config) {
@@ -811,13 +921,25 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
         return new DistanceSection(config.warpDistanceMin(), config.warpDistanceMax(), config.warpDistanceCrossDimension());
     }
 
-    private List<CostEntry> resolveBaseCostEntries(final @Nullable Aetheryte source, final PluginConfig config) {
+    private List<CostEntry> resolveBaseCostEntries(
+            final @Nullable Aetheryte source,
+            final AetheryteVisibility destinationVisibility,
+            final PluginConfig config
+    ) {
         if (source != null) {
             final AetheryteVariation var = variationRegistry.getOrDefault(source.variation());
+            final List<CostEntry> visOverride = var.warp().visibilityCost().costFor(destinationVisibility);
+            if (visOverride != null) {
+                return visOverride;
+            }
             final List<CostEntry> override = var.warp().cost();
             if (override != null) {
                 return override;
             }
+        }
+        final List<CostEntry> globalVisOverride = config.warp().visibilityCost().costFor(destinationVisibility);
+        if (globalVisOverride != null) {
+            return globalVisOverride;
         }
         return config.warpCost();
     }
