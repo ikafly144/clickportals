@@ -1953,4 +1953,217 @@ public final class Messages {
                 Placeholder.unparsed("variation", variationId)
         );
     }
+
+    /**
+     * Formats the error message when moving a hub or network member across worlds is blocked (#74).
+     */
+    public Component commandAetheryteCrossWorldNetworkBlocked(final CommandSender viewer, final String name) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_CROSS_WORLD_NETWORK_BLOCKED,
+                Placeholder.unparsed("name", name)
+        );
+    }
+
+    /**
+     * Formats the header for {@code /clickportals aetheryte network list} (#74).
+     */
+    public Component commandAetheryteNetworkListHeader(
+            final CommandSender viewer,
+            final int total,
+            final int page,
+            final int totalPages
+    ) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_NETWORK_LIST_HEADER,
+                Placeholder.unparsed("total", Integer.toString(total)),
+                Placeholder.unparsed("page", Integer.toString(page)),
+                Placeholder.unparsed("total_pages", Integer.toString(totalPages))
+        );
+    }
+
+    /**
+     * Formats one network row for {@code /clickportals aetheryte network list} (#74).
+     */
+    public Component commandAetheryteNetworkListEntry(
+            final CommandSender viewer,
+            final AetheryteNetwork network,
+            final String hubDisplay,
+            final int childCount,
+            final String ownerName
+    ) {
+        final String fullId = network.id().toString();
+        final String shortId = fullId.substring(0, 8);
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_NETWORK_LIST_ENTRY,
+                Placeholder.unparsed("id", fullId),
+                Placeholder.unparsed("short_id", shortId),
+                Placeholder.unparsed("name", network.name()),
+                Placeholder.unparsed("world", network.worldName()),
+                Placeholder.unparsed("hub", hubDisplay),
+                Placeholder.unparsed("children", Integer.toString(childCount)),
+                Placeholder.unparsed("owner", ownerName)
+        );
+    }
+
+    /**
+     * Formats detailed network info for {@code /clickportals aetheryte network get} (#74).
+     */
+    public Component commandAetheryteNetworkGetInfo(
+            final CommandSender viewer,
+            final AetheryteNetwork network,
+            final String hubDisplay,
+            final String ownerName,
+            final int childCount,
+            final String invitedDisplay
+    ) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_NETWORK_GET_INFO,
+                Placeholder.unparsed("id", network.id().toString()),
+                Placeholder.unparsed("name", network.name()),
+                Placeholder.unparsed("world", network.worldName()),
+                Placeholder.unparsed("hub", hubDisplay),
+                Placeholder.unparsed("owner", ownerName),
+                Placeholder.component("visibility", visibilityLabel(viewer, network.visibility())),
+                Placeholder.unparsed("children", Integer.toString(childCount)),
+                Placeholder.unparsed("invited", invitedDisplay)
+        );
+    }
+
+    /**
+     * Formats confirmation for {@code /clickportals aetheryte network create} (#74).
+     */
+    public Component commandAetheryteNetworkCreated(
+            final CommandSender viewer,
+            final AetheryteNetwork network,
+            final String hubName
+    ) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_NETWORK_CREATED,
+                Placeholder.unparsed("id", network.id().toString()),
+                Placeholder.unparsed("name", network.name()),
+                Placeholder.unparsed("hub", hubName)
+        );
+    }
+
+    /**
+     * Formats confirmation for {@code /clickportals aetheryte network delete} (#74).
+     */
+    public Component commandAetheryteNetworkDeleted(
+            final CommandSender viewer,
+            final AetheryteNetwork network,
+            final int cascadeChildren
+    ) {
+        if (cascadeChildren > 0) {
+            return get(
+                    viewer,
+                    MessageKey.COMMAND_AETHERYTE_NETWORK_DELETED_CASCADE,
+                    Placeholder.unparsed("id", network.id().toString()),
+                    Placeholder.unparsed("name", network.name()),
+                    Placeholder.unparsed("children", Integer.toString(cascadeChildren))
+            );
+        }
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_NETWORK_DELETED,
+                Placeholder.unparsed("id", network.id().toString()),
+                Placeholder.unparsed("name", network.name())
+        );
+    }
+
+    /**
+     * Formats confirmation for {@code /clickportals aetheryte network rename} (#74).
+     */
+    public Component commandAetheryteNetworkRenamed(
+            final CommandSender viewer,
+            final AetheryteNetwork updated,
+            final String oldName
+    ) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_NETWORK_RENAMED,
+                Placeholder.unparsed("old_name", oldName),
+                Placeholder.unparsed("name", updated.name())
+        );
+    }
+
+    /**
+     * Formats confirmation for {@code /clickportals aetheryte network set <id> owner} (#74).
+     */
+    public Component commandAetheryteNetworkSetOwner(
+            final CommandSender viewer,
+            final AetheryteNetwork updated,
+            final String ownerName
+    ) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_NETWORK_SET_OWNER,
+                Placeholder.unparsed("name", updated.name()),
+                Placeholder.unparsed("owner", ownerName)
+        );
+    }
+
+    /**
+     * Formats confirmation for {@code /clickportals aetheryte network set <id> visibility} (#74).
+     */
+    public Component commandAetheryteNetworkSetVisibility(
+            final CommandSender viewer,
+            final AetheryteNetwork updated
+    ) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_NETWORK_SET_VISIBILITY,
+                Placeholder.unparsed("name", updated.name()),
+                Placeholder.component("visibility", visibilityLabel(viewer, updated.visibility()))
+        );
+    }
+
+    /**
+     * Formats confirmation for {@code /clickportals aetheryte network set <id> hub} (#74).
+     */
+    public Component commandAetheryteNetworkSetHub(
+            final CommandSender viewer,
+            final AetheryteNetwork updated,
+            final Aetheryte hub
+    ) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_NETWORK_SET_HUB,
+                Placeholder.unparsed("name", updated.name()),
+                Placeholder.unparsed("hub", hub.name()),
+                Placeholder.unparsed("hub_id", hub.id().toString())
+        );
+    }
+
+    /**
+     * Formats confirmation for {@code /clickportals aetheryte network invite <id> add|remove} (#74).
+     */
+    public Component commandAetheryteNetworkInviteUpdated(
+            final CommandSender viewer,
+            final AetheryteNetwork updated,
+            final String playerName,
+            final boolean added
+    ) {
+        return get(
+                viewer,
+                added ? MessageKey.COMMAND_AETHERYTE_NETWORK_INVITE_ADDED : MessageKey.COMMAND_AETHERYTE_NETWORK_INVITE_REMOVED,
+                Placeholder.unparsed("name", updated.name()),
+                Placeholder.unparsed("player", playerName)
+        );
+    }
+
+    /**
+     * Formats error when a network Hub reassignment crosses worlds (#74).
+     */
+    public Component commandAetheryteNetworkWorldMismatch(final CommandSender viewer, final String worldName) {
+        return get(
+                viewer,
+                MessageKey.COMMAND_AETHERYTE_NETWORK_WORLD_MISMATCH,
+                Placeholder.unparsed("world", worldName)
+        );
+    }
 }

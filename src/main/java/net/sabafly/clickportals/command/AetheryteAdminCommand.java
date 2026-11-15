@@ -67,6 +67,7 @@ public final class AetheryteAdminCommand {
                 .then(buildPlaceNode(variationRegistry, messages, service))
                 .then(buildRemoveNode(service))
                 .then(buildSetNode(variationRegistry, messages, service))
+                .then(buildNetworkNode(variationRegistry, messages, service))
                 .build();
     }
 
@@ -234,9 +235,16 @@ public final class AetheryteAdminCommand {
                         .suggests((ctx, builder) -> suggestAetheryteIds(service, builder))
                         .executes(ctx -> {
                             final String rawId = StringArgumentType.getString(ctx, "id");
-                            service.adminRemoveAetheryte(ctx.getSource().getSender(), rawId);
+                            service.adminRemoveAetheryte(ctx.getSource().getSender(), rawId, false);
                             return Command.SINGLE_SUCCESS;
                         })
+                        .then(Commands.literal("cascade")
+                                .executes(ctx -> {
+                                    final String rawId = StringArgumentType.getString(ctx, "id");
+                                    service.adminRemoveAetheryte(ctx.getSource().getSender(), rawId, true);
+                                    return Command.SINGLE_SUCCESS;
+                                })
+                        )
                 )
                 .build();
     }
@@ -354,6 +362,283 @@ public final class AetheryteAdminCommand {
                 .build();
     }
 
+    private static LiteralCommandNode<CommandSourceStack> buildNetworkNode(
+            final VariationRegistry variationRegistry,
+            final Messages messages,
+            final AetheryteService service
+    ) {
+        return Commands.literal("network")
+                .then(buildNetworkListNode(service))
+                .then(buildNetworkGetNode(service))
+                .then(buildNetworkCreateNode(variationRegistry, messages, service))
+                .then(buildNetworkDeleteNode(service))
+                .then(buildNetworkRenameNode(service))
+                .then(buildNetworkSetNode(variationRegistry, messages, service))
+                .then(buildNetworkInviteNode(service))
+                .build();
+    }
+
+    private static LiteralCommandNode<CommandSourceStack> buildNetworkListNode(final AetheryteService service) {
+        return Commands.literal("list")
+                .executes(ctx -> {
+                    service.adminListNetworks(ctx.getSource().getSender(), null, null, 1);
+                    return Command.SINGLE_SUCCESS;
+                })
+                .then(Commands.argument("world", StringArgumentType.word())
+                        .suggests((ctx, builder) -> suggestWorlds(true, builder))
+                        .executes(ctx -> {
+                            service.adminListNetworks(
+                                    ctx.getSource().getSender(),
+                                    StringArgumentType.getString(ctx, "world"),
+                                    null,
+                                    1
+                            );
+                            return Command.SINGLE_SUCCESS;
+                        })
+                        .then(Commands.argument("owner", StringArgumentType.word())
+                                .suggests((ctx, builder) -> suggestPlayers(true, builder))
+                                .executes(ctx -> {
+                                    service.adminListNetworks(
+                                            ctx.getSource().getSender(),
+                                            StringArgumentType.getString(ctx, "world"),
+                                            StringArgumentType.getString(ctx, "owner"),
+                                            1
+                                    );
+                                    return Command.SINGLE_SUCCESS;
+                                })
+                                .then(Commands.argument("page", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> {
+                                            service.adminListNetworks(
+                                                    ctx.getSource().getSender(),
+                                                    StringArgumentType.getString(ctx, "world"),
+                                                    StringArgumentType.getString(ctx, "owner"),
+                                                    IntegerArgumentType.getInteger(ctx, "page")
+                                            );
+                                            return Command.SINGLE_SUCCESS;
+                                        })
+                                )
+                        )
+                )
+                .build();
+    }
+
+    private static LiteralCommandNode<CommandSourceStack> buildNetworkGetNode(final AetheryteService service) {
+        return Commands.literal("get")
+                .then(Commands.argument("networkId", StringArgumentType.word())
+                        .suggests((ctx, builder) -> suggestNetworkIds(service, builder))
+                        .executes(ctx -> {
+                            service.adminGetNetwork(
+                                    ctx.getSource().getSender(),
+                                    StringArgumentType.getString(ctx, "networkId")
+                            );
+                            return Command.SINGLE_SUCCESS;
+                        })
+                )
+                .build();
+    }
+
+    private static LiteralCommandNode<CommandSourceStack> buildNetworkCreateNode(
+            final VariationRegistry variationRegistry,
+            final Messages messages,
+            final AetheryteService service
+    ) {
+        return Commands.literal("create")
+                .then(Commands.argument("hubId", StringArgumentType.word())
+                        .suggests((ctx, builder) -> suggestHubAetheryteIds(variationRegistry, service, builder))
+                        .then(Commands.argument("name", StringArgumentType.string())
+                                .executes(ctx -> executeNetworkCreate(
+                                        ctx.getSource().getSender(), messages, service,
+                                        StringArgumentType.getString(ctx, "hubId"),
+                                        StringArgumentType.getString(ctx, "name"),
+                                        null, null
+                                ))
+                                .then(Commands.argument("owner", StringArgumentType.word())
+                                        .suggests((ctx, builder) -> suggestPlayers(false, builder))
+                                        .executes(ctx -> executeNetworkCreate(
+                                                ctx.getSource().getSender(), messages, service,
+                                                StringArgumentType.getString(ctx, "hubId"),
+                                                StringArgumentType.getString(ctx, "name"),
+                                                StringArgumentType.getString(ctx, "owner"),
+                                                null
+                                        ))
+                                        .then(Commands.argument("visibility", StringArgumentType.word())
+                                                .suggests((ctx, builder) -> suggestVisibilities(builder))
+                                                .executes(ctx -> executeNetworkCreate(
+                                                        ctx.getSource().getSender(), messages, service,
+                                                        StringArgumentType.getString(ctx, "hubId"),
+                                                        StringArgumentType.getString(ctx, "name"),
+                                                        StringArgumentType.getString(ctx, "owner"),
+                                                        StringArgumentType.getString(ctx, "visibility")
+                                                ))
+                                        )
+                                )
+                        )
+                )
+                .build();
+    }
+
+    private static int executeNetworkCreate(
+            final CommandSender sender,
+            final Messages messages,
+            final AetheryteService service,
+            final String hubId,
+            final String name,
+            final @Nullable String rawOwner,
+            final @Nullable String rawVisibility
+    ) {
+        final @Nullable AetheryteVisibility visibility;
+        if (rawVisibility != null) {
+            visibility = parseVisibility(rawVisibility);
+            if (visibility == null) {
+                sender.sendMessage(messages.commandAetheryteInvalidVisibility(sender, rawVisibility));
+                return Command.SINGLE_SUCCESS;
+            }
+        } else {
+            visibility = null;
+        }
+        service.adminCreateNetwork(sender, hubId, name, rawOwner, visibility);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static LiteralCommandNode<CommandSourceStack> buildNetworkDeleteNode(final AetheryteService service) {
+        return Commands.literal("delete")
+                .then(Commands.argument("networkId", StringArgumentType.word())
+                        .suggests((ctx, builder) -> suggestNetworkIds(service, builder))
+                        .executes(ctx -> {
+                            service.adminDeleteNetwork(
+                                    ctx.getSource().getSender(),
+                                    StringArgumentType.getString(ctx, "networkId"),
+                                    false
+                            );
+                            return Command.SINGLE_SUCCESS;
+                        })
+                        .then(Commands.literal("cascade")
+                                .executes(ctx -> {
+                                    service.adminDeleteNetwork(
+                                            ctx.getSource().getSender(),
+                                            StringArgumentType.getString(ctx, "networkId"),
+                                            true
+                                    );
+                                    return Command.SINGLE_SUCCESS;
+                                })
+                        )
+                )
+                .build();
+    }
+
+    private static LiteralCommandNode<CommandSourceStack> buildNetworkRenameNode(final AetheryteService service) {
+        return Commands.literal("rename")
+                .then(Commands.argument("networkId", StringArgumentType.word())
+                        .suggests((ctx, builder) -> suggestNetworkIds(service, builder))
+                        .then(Commands.argument("name", StringArgumentType.greedyString())
+                                .executes(ctx -> {
+                                    service.adminRenameNetwork(
+                                            ctx.getSource().getSender(),
+                                            StringArgumentType.getString(ctx, "networkId"),
+                                            StringArgumentType.getString(ctx, "name")
+                                    );
+                                    return Command.SINGLE_SUCCESS;
+                                })
+                        )
+                )
+                .build();
+    }
+
+    private static LiteralCommandNode<CommandSourceStack> buildNetworkSetNode(
+            final VariationRegistry variationRegistry,
+            final Messages messages,
+            final AetheryteService service
+    ) {
+        return Commands.literal("set")
+                .then(Commands.argument("networkId", StringArgumentType.word())
+                        .suggests((ctx, builder) -> suggestNetworkIds(service, builder))
+                        .then(Commands.literal("owner")
+                                .then(Commands.argument("player", StringArgumentType.word())
+                                        .suggests((ctx, builder) -> suggestPlayers(false, builder))
+                                        .executes(ctx -> {
+                                            service.adminSetNetworkOwner(
+                                                    ctx.getSource().getSender(),
+                                                    StringArgumentType.getString(ctx, "networkId"),
+                                                    StringArgumentType.getString(ctx, "player")
+                                            );
+                                            return Command.SINGLE_SUCCESS;
+                                        })
+                                )
+                        )
+                        .then(Commands.literal("visibility")
+                                .then(Commands.argument("visibility", StringArgumentType.word())
+                                        .suggests((ctx, builder) -> suggestVisibilities(builder))
+                                        .executes(ctx -> {
+                                            final CommandSender sender = ctx.getSource().getSender();
+                                            final String rawVis = StringArgumentType.getString(ctx, "visibility");
+                                            final @Nullable AetheryteVisibility visibility = parseVisibility(rawVis);
+                                            if (visibility == null) {
+                                                sender.sendMessage(
+                                                        messages.commandAetheryteInvalidVisibility(sender, rawVis));
+                                                return Command.SINGLE_SUCCESS;
+                                            }
+                                            service.adminSetNetworkVisibility(
+                                                    sender,
+                                                    StringArgumentType.getString(ctx, "networkId"),
+                                                    visibility
+                                            );
+                                            return Command.SINGLE_SUCCESS;
+                                        })
+                                )
+                        )
+                        .then(Commands.literal("hub")
+                                .then(Commands.argument("hubId", StringArgumentType.word())
+                                        .suggests((ctx, builder) -> suggestHubAetheryteIds(variationRegistry, service, builder))
+                                        .executes(ctx -> {
+                                            service.adminSetNetworkHub(
+                                                    ctx.getSource().getSender(),
+                                                    StringArgumentType.getString(ctx, "networkId"),
+                                                    StringArgumentType.getString(ctx, "hubId")
+                                            );
+                                            return Command.SINGLE_SUCCESS;
+                                        })
+                                )
+                        )
+                )
+                .build();
+    }
+
+    private static LiteralCommandNode<CommandSourceStack> buildNetworkInviteNode(final AetheryteService service) {
+        return Commands.literal("invite")
+                .then(Commands.argument("networkId", StringArgumentType.word())
+                        .suggests((ctx, builder) -> suggestNetworkIds(service, builder))
+                        .then(Commands.literal("add")
+                                .then(Commands.argument("player", StringArgumentType.word())
+                                        .suggests((ctx, builder) -> suggestPlayers(false, builder))
+                                        .executes(ctx -> {
+                                            service.adminUpdateNetworkInvite(
+                                                    ctx.getSource().getSender(),
+                                                    StringArgumentType.getString(ctx, "networkId"),
+                                                    StringArgumentType.getString(ctx, "player"),
+                                                    true
+                                            );
+                                            return Command.SINGLE_SUCCESS;
+                                        })
+                                )
+                        )
+                        .then(Commands.literal("remove")
+                                .then(Commands.argument("player", StringArgumentType.word())
+                                        .suggests((ctx, builder) -> suggestPlayers(false, builder))
+                                        .executes(ctx -> {
+                                            service.adminUpdateNetworkInvite(
+                                                    ctx.getSource().getSender(),
+                                                    StringArgumentType.getString(ctx, "networkId"),
+                                                    StringArgumentType.getString(ctx, "player"),
+                                                    false
+                                            );
+                                            return Command.SINGLE_SUCCESS;
+                                        })
+                                )
+                        )
+                )
+                .build();
+    }
+
     /**
      * Strictly parses a visibility enum/identifier string, returning {@code null} for unrecognized inputs (#74).
      */
@@ -455,6 +740,41 @@ public final class AetheryteAdminCommand {
         return builder.buildFuture();
     }
 
+    private static CompletableFuture<Suggestions> suggestHubAetheryteIds(
+            final VariationRegistry variationRegistry,
+            final AetheryteService service,
+            final SuggestionsBuilder builder
+    ) {
+        final String remaining = builder.getRemaining().toLowerCase(Locale.ROOT);
+        for (final Aetheryte entry : service.registry().getAll()) {
+            if (entry.networkId() != null) {
+                continue;
+            }
+            if (!variationRegistry.getOrDefault(entry.variation()).canBeNetworkHub()) {
+                continue;
+            }
+            final String id = entry.id().toString();
+            if (id.toLowerCase(Locale.ROOT).startsWith(remaining)) {
+                builder.suggest(id);
+            }
+        }
+        return builder.buildFuture();
+    }
+
+    private static CompletableFuture<Suggestions> suggestNetworkIds(
+            final AetheryteService service,
+            final SuggestionsBuilder builder
+    ) {
+        final String remaining = builder.getRemaining().toLowerCase(Locale.ROOT);
+        for (final AetheryteNetwork network : service.registry().getAllNetworks()) {
+            final String id = network.id().toString();
+            if (id.toLowerCase(Locale.ROOT).startsWith(remaining)) {
+                builder.suggest(id);
+            }
+        }
+        return builder.buildFuture();
+    }
+
     private static CompletableFuture<Suggestions> suggestNetworks(
             final AetheryteService service,
             final SuggestionsBuilder builder
@@ -463,11 +783,8 @@ public final class AetheryteAdminCommand {
         if ("none".startsWith(remaining)) {
             builder.suggest("none");
         }
-        if ("new".startsWith(remaining)) {
-            builder.suggest("new");
-        }
-        for (final AetheryteNetwork net : service.registry().getAllNetworks()) {
-            final String id = net.id().toString();
+        for (final AetheryteNetwork network : service.registry().getAllNetworks()) {
+            final String id = network.id().toString();
             if (id.toLowerCase(Locale.ROOT).startsWith(remaining)) {
                 builder.suggest(id);
             }

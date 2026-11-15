@@ -314,6 +314,22 @@ command:
     unknown-world: "<prefix><red>Unknown world: <world></red>"
     invalid-visibility: "<prefix><red>Invalid visibility: <visibility> (expected PUBLIC, INVITE_ONLY, or OWNER_ONLY).</red>"
     network-variation-required: "<prefix><red>Aetheryte variation \"<variation>\" does not support networks (requires type: network).</red>"
+    cross-world-network-blocked: "<prefix><red>Cannot move \"<white><name></white>\" to another world while it is connected to or hosting world-scoped networks.</red>"
+    network:
+      list-header: "<prefix><aqua>Networks (<total> total, page <page>/<total_pages>):</aqua>"
+      list-empty: "<prefix><yellow>No matching Aetheryte networks found.</yellow>"
+      list-entry: "<gray>- <click:copy_to_clipboard:'<id>'><hover:show_text:'<gray>Click to copy ID: <white><id></white></gray>'><aqua>[<short_id>]</aqua></hover></click> <white><bold><name></bold></white> @ <world> (Hub: <aqua><hub></aqua>, Children: <white><children></white>, Owner: <yellow><owner></yellow>)</gray>"
+      get-info: "<prefix><aqua>Network Details:</aqua>\n<gray>ID: <white><id></white>\nName: <white><name></white>\nWorld: <white><world></white>\nHub: <aqua><hub></aqua>\nOwner: <yellow><owner></yellow>\nVisibility: <visibility>\nChild Aetherytes: <white><children></white>\nInvited: <white><invited></white></gray>"
+      created: "<prefix><green>Created network \"<white><name></white>\" (<id>) on Hub \"<aqua><hub></aqua>\".</green>"
+      deleted: "<prefix><yellow>Deleted network \"<white><name></white>\" (<id>).</yellow>"
+      deleted-cascade: "<prefix><yellow>Cascade-deleted network \"<white><name></white>\" (<id>) along with <white><children></white> child Aetheryte(s).</yellow>"
+      renamed: "<prefix><green>Renamed network \"<old_name>\" to \"<white><name></white>\".</green>"
+      set-owner: "<prefix><green>Set owner of network \"<white><name></white>\" to <yellow><owner></yellow>.</green>"
+      set-visibility: "<prefix><green>Set visibility of network \"<white><name></white>\" to <visibility>.</green>"
+      set-hub: "<prefix><green>Assigned Hub of network \"<white><name></white>\" to \"<aqua><hub></aqua>\" (<hub_id>).</green>"
+      invite-added: "<prefix><green>Invited <yellow><player></yellow> to network \"<white><name></white>\".</green>"
+      invite-removed: "<prefix><yellow>Removed <white><player></white> from network \"<white><name></white>\".</yellow>"
+      world-mismatch: "<prefix><red>Hub Aetheryte must be in the same world (<world>) as the network.</red>"
 
 update:
   available-console: "<prefix><yellow>A new version is available! Current: v<current>, Latest: v<latest> (<url>)</yellow>"

@@ -32,7 +32,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import net.kyori.adventure.text.Component;
@@ -107,8 +106,23 @@ class AetheryteAdminCommandTest {
                 def.bettermodel(),
                 def.sounds()
         );
+        final AetheryteVariation noHubVar = new AetheryteVariation(
+                "Solo",
+                VariationType.NORMAL,
+                def.item(),
+                def.recipe(),
+                def.model(),
+                def.hitbox(),
+                def.teleport(),
+                def.placement(),
+                def.limit(),
+                def.warp(),
+                new NetworkSection(NetworkSection.defaults().limit(), NetworkSection.defaults().cost(), false),
+                def.bettermodel(),
+                def.sounds()
+        );
         variationRegistry = new VariationRegistry(
-                Map.of(Aetheryte.DEFAULT_VARIATION, def, "network", networkVar),
+                Map.of(Aetheryte.DEFAULT_VARIATION, def, "network", networkVar, "nohub", noHubVar),
                 null
         );
 
@@ -137,6 +151,15 @@ class AetheryteAdminCommandTest {
             }
             if ("Bob".equalsIgnoreCase(name)) {
                 return new ResolvedPlayer(bobId, "Bob");
+            }
+            return null;
+        });
+        service.setOwnerNameLookup(uuid -> {
+            if (aliceId.equals(uuid)) {
+                return "Alice";
+            }
+            if (bobId.equals(uuid)) {
+                return "Bob";
             }
             return null;
         });
@@ -248,92 +271,218 @@ class AetheryteAdminCommandTest {
             service.adminPlaceAetheryte(sender, "does_not_exist", world, 30, 64, 40, "X", "Alice", null, null);
             assertThat(registry.getAll()).hasSize(1);
 
-            // Network placement creates network automatically
+            // Standalone network placement without Hub network rejected
             service.adminPlaceAetheryte(
-                    sender, "network", world, 50, 64, 60, "NetOne", "Bob",
+                    sender, "network", world, 50, 64, 60, "OrphanNet", "Bob",
                     AetheryteVisibility.INVITE_ONLY, null
             );
-            final Aetheryte netPlaced = registry.getByPosition(world, 50, 64, 60).orElseThrow();
-            final UUID placedNetId = Objects.requireNonNull(netPlaced.networkId());
-            assertThat(registry.getNetworkById(placedNetId)).isPresent();
+            assertThat(registry.getByPosition(world, 50, 64, 60)).isEmpty();
+            assertThat(registry.getAllNetworks()).isEmpty();
 
-            // Admin remove deletes without item drop and cleans up empty network
-            service.adminRemoveAetheryte(sender, netPlaced.id().toString());
+            // Create Hub-backed network via adminCreateNetwork, then place child onto it
+            service.adminCreateNetwork(sender, normal.id().toString(), "SpawnNet", "Alice", AetheryteVisibility.INVITE_ONLY);
+            final AetheryteNetwork hubNet = registry.getNetworksByHub(normal.id()).getFirst();
+
+            service.adminPlaceAetheryte(
+                    sender, "network", world, 50, 64, 60, "NetOne", "Bob",
+                    AetheryteVisibility.PUBLIC, hubNet.id().toString()
+            );
+            final Aetheryte netPlaced = registry.getByPosition(world, 50, 64, 60).orElseThrow();
+            assertThat(netPlaced.networkId()).isEqualTo(hubNet.id());
+            // Inherited visibility from Hub network
+            assertThat(netPlaced.visibility()).isEqualTo(AetheryteVisibility.INVITE_ONLY);
+
+            // Cross-world network placement rejected cleanly
+            service.adminPlaceAetheryte(
+                    sender, "network", secondWorld, 50, 64, 60, "BadCross", "Bob",
+                    AetheryteVisibility.PUBLIC, hubNet.id().toString()
+            );
+            assertThat(registry.getByPosition(secondWorld, 50, 64, 60)).isEmpty();
+
+            // Non-cascade Hub remove refuses while children exist
+            service.adminRemoveAetheryte(sender, normal.id().toString(), false);
+            assertThat(registry.getById(normal.id())).isPresent();
+            assertThat(registry.getById(netPlaced.id())).isPresent();
+
+            // Cascade Hub remove cleans up Hub, network, and all children
+            service.adminRemoveAetheryte(sender, normal.id().toString(), true);
+            assertThat(registry.getById(normal.id())).isEmpty();
             assertThat(registry.getById(netPlaced.id())).isEmpty();
             assertThat(registry.getAllNetworks()).isEmpty();
+            verify(modelService, atLeastOnce()).unregisterAetheryte(normal.id());
             verify(modelService, atLeastOnce()).unregisterAetheryte(netPlaced.id());
             verify(hologramService, atLeastOnce()).hideAetheryte(netPlaced.id());
         });
     }
 
     @Test
-    void adminSetSubcommandsUpdatePropertiesAndMoveAcrossWorlds() throws Exception {
+    void adminSetSubcommandsEnforceHubModelAndCrossWorldGuards() throws Exception {
         withMockServer(() -> {
             final CommandSender sender = mock(CommandSender.class);
-            final Aetheryte initial = new Aetheryte(
+            final Aetheryte hub = new Aetheryte(
                     UUID.randomUUID(), "OldName", worldId, "world", 5, 64, 5,
                     aliceId, 100L, Aetheryte.DEFAULT_VARIATION, "Alice"
             );
-            registry.register(world, initial);
-            final String idStr = initial.id().toString();
+            registry.register(world, hub);
+            final String hubIdStr = hub.id().toString();
 
-            service.adminSetName(sender, idStr, "New Name");
-            assertThat(registry.getById(initial.id())).get().extracting(Aetheryte::name).isEqualTo("New Name");
+            service.adminSetName(sender, hubIdStr, "New Name");
+            assertThat(registry.getById(hub.id())).get().extracting(Aetheryte::name).isEqualTo("New Name");
 
-            service.adminSetOwner(sender, idStr, "Bob");
-            assertThat(registry.getById(initial.id())).get().extracting(Aetheryte::ownerId).isEqualTo(bobId);
+            service.adminSetOwner(sender, hubIdStr, "Bob");
+            assertThat(registry.getById(hub.id())).get().extracting(Aetheryte::ownerId).isEqualTo(bobId);
 
-            // Transition normal -> network creates network
-            service.adminSetVariation(sender, idStr, "network");
-            final Aetheryte asNetwork = registry.getById(initial.id()).orElseThrow();
-            assertThat(asNetwork.variation()).isEqualTo("network");
-            assertThat(asNetwork.networkId()).isNotNull();
-            final UUID createdNetId = Objects.requireNonNull(asNetwork.networkId());
-            assertThat(registry.getNetworkById(createdNetId)).isPresent();
+            // Standalone normal -> network transition refused without Hub network
+            service.adminSetVariation(sender, hubIdStr, "network");
+            assertThat(registry.getById(hub.id()).orElseThrow().variation()).isEqualTo("default");
 
-            // Set visibility updates the owning network
-            service.adminSetVisibility(sender, idStr, AetheryteVisibility.OWNER_ONLY);
-            assertThat(registry.getNetworkById(createdNetId)).get()
+            // Calling set network on normal variation rejects gracefully
+            final CommandSender errSender = mock(CommandSender.class);
+            service.adminSetNetwork(errSender, hubIdStr, "new");
+            assertThat(lastPlainMessages(errSender).getFirst()).contains("does not support networks");
+
+            // Host a network on the Hub and attach a child Aetheryte
+            service.adminCreateNetwork(sender, hubIdStr, "MainNet", "Bob", AetheryteVisibility.PUBLIC);
+            final AetheryteNetwork net = registry.getNetworksByHub(hub.id()).getFirst();
+            service.adminPlaceAetheryte(
+                    sender, "network", world, 30, 64, 30, "ChildOne", "Alice",
+                    AetheryteVisibility.PUBLIC, net.id().toString()
+            );
+            final Aetheryte child = registry.getByPosition(world, 30, 64, 30).orElseThrow();
+            final String childIdStr = child.id().toString();
+
+            // Hub hosting networks cannot switch to allow-hub: false or network variation
+            service.adminSetVariation(sender, hubIdStr, "nohub");
+            assertThat(registry.getById(hub.id()).orElseThrow().variation()).isEqualTo("default");
+            service.adminSetVariation(sender, hubIdStr, "network");
+            assertThat(registry.getById(hub.id()).orElseThrow().variation()).isEqualTo("default");
+
+            // Hub and child cannot move across worlds while bound to a world-scoped network
+            service.adminSetLocation(sender, hubIdStr, secondWorld, 10, 70, 10);
+            assertThat(registry.getById(hub.id()).orElseThrow().worldId()).isEqualTo(worldId);
+            service.adminSetLocation(sender, childIdStr, secondWorld, 20, 70, 20);
+            assertThat(registry.getById(child.id()).orElseThrow().worldId()).isEqualTo(worldId);
+
+            // Set visibility updates owning network
+            service.adminSetVisibility(sender, childIdStr, AetheryteVisibility.OWNER_ONLY);
+            assertThat(registry.getNetworkById(net.id())).get()
                     .extracting(AetheryteNetwork::visibility)
                     .isEqualTo(AetheryteVisibility.OWNER_ONLY);
 
-            // Detach network with "none" and clean up empty network
-            service.adminSetNetwork(sender, idStr, "none");
-            assertThat(registry.getById(initial.id()).orElseThrow().networkId()).isNull();
-            assertThat(registry.getNetworkById(createdNetId)).isEmpty();
+            // "new" is rejected by adminSetNetwork under Hub model
+            service.adminSetNetwork(sender, childIdStr, "new");
+            assertThat(registry.getById(child.id()).orElseThrow().networkId()).isEqualTo(net.id());
 
-            // Re-attach to a new network
-            service.adminSetNetwork(sender, idStr, "new");
-            final UUID secondNetId = Objects.requireNonNull(registry.getById(initial.id()).orElseThrow().networkId());
-            assertThat(secondNetId).isNotNull();
+            // Detach with "none" leaves Hub-hosted network intact; re-attach works
+            service.adminSetNetwork(sender, childIdStr, "none");
+            assertThat(registry.getById(child.id()).orElseThrow().networkId()).isNull();
+            assertThat(registry.getNetworkById(net.id())).isPresent();
+            service.adminSetNetwork(sender, childIdStr, net.id().toString());
+            assertThat(registry.getById(child.id()).orElseThrow().networkId()).isEqualTo(net.id());
 
-            // Cross-world location move saves both worlds and recreates network in destination world
-            service.adminSetLocation(sender, idStr, secondWorld, 100, 70, 200);
-            final Aetheryte moved = registry.getById(initial.id()).orElseThrow();
+            // Transition child network -> normal detaches network without deleting Hub network
+            service.adminSetVariation(sender, childIdStr, "default");
+            final Aetheryte backToNormal = registry.getById(child.id()).orElseThrow();
+            assertThat(backToNormal.variation()).isEqualTo("default");
+            assertThat(backToNormal.networkId()).isNull();
+            assertThat(registry.getNetworkById(net.id())).isPresent();
+
+            // Unlinked normal Aetheryte CAN move across worlds cleanly
+            service.adminSetLocation(sender, childIdStr, secondWorld, 100, 70, 200);
+            final Aetheryte moved = registry.getById(child.id()).orElseThrow();
             assertThat(moved.worldId()).isEqualTo(secondWorldId);
             assertThat(moved.worldName()).isEqualTo("world_nether");
             assertThat(moved.blockX()).isEqualTo(100);
             assertThat(moved.blockY()).isEqualTo(70);
             assertThat(moved.blockZ()).isEqualTo(200);
-            assertThat(moved.networkId()).isNotNull().isNotEqualTo(secondNetId);
-            assertThat(registry.getNetworkById(secondNetId)).isEmpty();
-            assertThat(registry.getByWorld(worldId)).isEmpty();
             assertThat(registry.getByWorld(secondWorldId)).containsExactly(moved);
-            assertThat(world.getPersistentDataContainer().has(AetheryteRegistry.WORLD_AETHERYTES_KEY)).isFalse();
             assertThat(secondWorld.getPersistentDataContainer().has(AetheryteRegistry.WORLD_AETHERYTES_KEY)).isTrue();
+        });
+    }
 
-            // Transition network -> normal detaches network
-            final UUID netherNetId = Objects.requireNonNull(moved.networkId());
-            service.adminSetVariation(sender, idStr, "default");
-            final Aetheryte backToNormal = registry.getById(initial.id()).orElseThrow();
-            assertThat(backToNormal.variation()).isEqualTo("default");
-            assertThat(backToNormal.networkId()).isNull();
-            assertThat(registry.getNetworkById(netherNetId)).isEmpty();
+    @Test
+    void adminNetworkSubcommandsManageLifecycleHubAssignmentInvitesAndCascadeDelete() throws Exception {
+        withMockServer(() -> {
+            final CommandSender sender = mock(CommandSender.class);
+            final Aetheryte hub1 = new Aetheryte(
+                    UUID.randomUUID(), "HubAlpha", worldId, "world", 0, 64, 0,
+                    aliceId, 100L, Aetheryte.DEFAULT_VARIATION, "Alice"
+            );
+            final Aetheryte hub2 = new Aetheryte(
+                    UUID.randomUUID(), "HubBeta", worldId, "world", 40, 64, 0,
+                    bobId, 110L, Aetheryte.DEFAULT_VARIATION, "Bob"
+            );
+            final Aetheryte noHub = new Aetheryte(
+                    UUID.randomUUID(), "NoHub", worldId, "world", 80, 64, 0,
+                    aliceId, 120L, "nohub", "Alice"
+            );
+            final Aetheryte netherHub = new Aetheryte(
+                    UUID.randomUUID(), "NetherHub", secondWorldId, "world_nether", 0, 64, 0,
+                    aliceId, 130L, Aetheryte.DEFAULT_VARIATION, "Alice"
+            );
+            registry.register(world, hub1);
+            registry.register(world, hub2);
+            registry.register(world, noHub);
+            registry.register(secondWorld, netherHub);
 
-            // Calling set network on normal variation rejects gracefully
-            final CommandSender errSender = mock(CommandSender.class);
-            service.adminSetNetwork(errSender, idStr, "new");
-            assertThat(lastPlainMessages(errSender).getFirst()).contains("does not support networks");
+            // Reject non-hub variation
+            service.adminCreateNetwork(sender, noHub.id().toString(), "Rejected", "Alice", null);
+            assertThat(registry.getAllNetworks()).isEmpty();
+
+            // Create network on hub1
+            service.adminCreateNetwork(sender, hub1.id().toString(), "AlphaNet", "Alice", AetheryteVisibility.INVITE_ONLY);
+            assertThat(registry.getAllNetworks()).hasSize(1);
+            final AetheryteNetwork created = registry.getAllNetworks().getFirst();
+            final String netPrefix = created.id().toString().substring(0, 8);
+
+            // Place child into AlphaNet
+            service.adminPlaceAetheryte(
+                    sender, "network", world, 15, 64, 15, "Outpost", "Bob", null, netPrefix);
+            final Aetheryte outpost = registry.getByPosition(world, 15, 64, 15).orElseThrow();
+
+            // List & Get
+            final CommandSender listSender = mock(CommandSender.class);
+            service.adminListNetworks(listSender, "world", "Alice", 1);
+            final List<String> listMsgs = lastPlainMessages(listSender);
+            assertThat(listMsgs.getFirst()).contains("1 total");
+            assertThat(listMsgs.get(1)).contains("AlphaNet", "HubAlpha", "1");
+
+            service.adminUpdateNetworkInvite(sender, netPrefix, "Bob", true);
+            service.adminUpdateNetworkInvite(sender, netPrefix, "Alice", true); // self-invite ignored
+
+            final CommandSender getSender = mock(CommandSender.class);
+            service.adminGetNetwork(getSender, netPrefix);
+            final String getOut = String.join("\n", lastPlainMessages(getSender));
+            assertThat(getOut).contains("AlphaNet", "HubAlpha", "Bob", "Alice", "Invite Only");
+
+            // Remove invite
+            service.adminUpdateNetworkInvite(sender, netPrefix, "Bob", false);
+            assertThat(registry.getNetworkById(created.id()).orElseThrow().invitedPlayers()).isEmpty();
+
+            // Rename, set owner, set visibility, set hub
+            service.adminRenameNetwork(sender, netPrefix, "Renamed Net");
+            service.adminSetNetworkOwner(sender, netPrefix, "Bob");
+            service.adminSetNetworkVisibility(sender, netPrefix, AetheryteVisibility.OWNER_ONLY);
+            service.adminSetNetworkHub(sender, netPrefix, netherHub.id().toString()); // cross-world hub rejected
+            assertThat(registry.getNetworkById(created.id()).orElseThrow().hubAetheryteId()).isEqualTo(hub1.id());
+            service.adminSetNetworkHub(sender, netPrefix, hub2.id().toString());
+
+            final AetheryteNetwork updated = registry.getNetworkById(created.id()).orElseThrow();
+            assertThat(updated.name()).isEqualTo("Renamed Net");
+            assertThat(updated.ownerId()).isEqualTo(bobId);
+            assertThat(updated.visibility()).isEqualTo(AetheryteVisibility.OWNER_ONLY);
+            assertThat(updated.hubAetheryteId()).isEqualTo(hub2.id());
+
+            // Non-cascade delete blocked while child exists
+            service.adminDeleteNetwork(sender, netPrefix, false);
+            assertThat(registry.getNetworkById(created.id())).isPresent();
+            assertThat(registry.getById(outpost.id())).isPresent();
+
+            // Cascade delete removes child + network cleanly while preserving Hub
+            service.adminDeleteNetwork(sender, netPrefix, true);
+            assertThat(registry.getNetworkById(created.id())).isEmpty();
+            assertThat(registry.getById(outpost.id())).isEmpty();
+            assertThat(registry.getById(hub2.id())).isPresent();
         });
     }
 
