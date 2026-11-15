@@ -208,13 +208,13 @@ jobs:
           USER_AGENT="ikafly144/clickportals/${VERSION} (https://github.com/${GITHUB_REPOSITORY})"
           JAR_FILE="dist/ClickPortals-${VERSION}.jar"
 
-          PROJECT_ID="$(curl -fsSL -H "User-Agent: ${USER_AGENT}" "https://api.modrinth.com/v2/project/${MODRINTH_PROJECT_SLUG}" | jq -er '.id')"
+          PROJECT_ID="$(curl -fsSL -H "User-Agent: ${USER_AGENT}" -H "Authorization: ${MODRINTH_TOKEN}" "https://api.modrinth.com/v2/project/${MODRINTH_PROJECT_SLUG}" | jq -er '.id')"
 
           resolve_dependency() {
             local slug="$1"
             local dep_type="$2"
             local resp
-            if resp="$(curl -fsSL -H "User-Agent: ${USER_AGENT}" "https://api.modrinth.com/v2/project/${slug}" 2>/dev/null)"; then
+            if resp="$(curl -fsSL -H "User-Agent: ${USER_AGENT}" -H "Authorization: ${MODRINTH_TOKEN}" "https://api.modrinth.com/v2/project/${slug}" 2>/dev/null)"; then
               local dep_id
               dep_id="$(printf '%s' "$resp" | jq -er '.id // empty')"
               if [[ -n "$dep_id" ]]; then
@@ -235,12 +235,8 @@ jobs:
 
           add_dep "$(resolve_dependency "packetevents" "required")"
           add_dep "$(resolve_dependency "bettermodel" "required")"
-          # Vault / VaultUnlocked optional integration
-          VAULT_DEP="$(resolve_dependency "vault" "optional")"
-          if [[ -z "$VAULT_DEP" ]]; then
-            VAULT_DEP="$(resolve_dependency "vaultunlocked" "optional")"
-          fi
-          add_dep "$VAULT_DEP"
+          # Vault optional integration
+          # add_dep "$(resolve_dependency "vault" "optional")"
 
           FEATURED="true"
           if [[ "${IS_PRERELEASE}" == "true" ]]; then
