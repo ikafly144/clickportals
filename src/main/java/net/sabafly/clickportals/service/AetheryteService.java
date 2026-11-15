@@ -4453,6 +4453,7 @@ public final class AetheryteService {
                         if (playerId != null) {
                             inFlightWarps.remove(playerId);
                         }
+                        PetWarpHelper.scheduleReattachAll(plugin, safePets, player);
                         if (paidFlag) {
                             handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
                         }
@@ -4461,6 +4462,7 @@ public final class AetheryteService {
                         if (playerId != null) {
                             inFlightWarps.remove(playerId);
                         }
+                        PetWarpHelper.scheduleReattachAll(plugin, safePets, player);
                         if (paidFlag) {
                             handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
                         }
@@ -4498,9 +4500,11 @@ public final class AetheryteService {
             final List<Component> warpBypassReasons,
             final List<Leashable> detachedPets
     ) {
+        boolean petsDispatched = false;
         try {
             final CompletableFuture<Boolean> playerTeleportFuture = player.teleportAsync(destinationLoc);
             PetWarpHelper.teleportAndReattachPets(plugin, player, destinationLoc, detachedPets, playerTeleportFuture);
+            petsDispatched = true;
             final CompletableFuture<Void> unused = playerTeleportFuture.thenAccept(success -> {
                 if (playerId != null) {
                     inFlightWarps.remove(playerId);
@@ -4558,6 +4562,9 @@ public final class AetheryteService {
         } catch (final Throwable t) {
             if (playerId != null) {
                 inFlightWarps.remove(playerId);
+            }
+            if (!petsDispatched && !detachedPets.isEmpty()) {
+                PetWarpHelper.scheduleReattachAll(plugin, detachedPets, player);
             }
             plugin.getSLF4JLogger().error(
                     "Unexpected error during warp teleport for player {} to {}",

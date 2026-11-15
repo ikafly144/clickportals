@@ -163,8 +163,9 @@ public final class PetWarpHelper {
     }
 
     /**
-     * Teleports each previously detached pet to {@code destinationLoc} and re-attaches its leash to {@code player}
-     * once both {@code playerTeleportFuture} and the pet's {@code teleportAsync} have completed successfully (#22).
+     * Teleports each previously detached pet to {@code destinationLoc} and schedules leash re-attachment to
+     * {@code player} once both teleport futures settle (so both successful warps and failed/cancelled teleports that
+     * leave the player and pet near each other restore the leash) (#22).
      */
     public static void teleportAndReattachPets(
             final Plugin plugin,
@@ -182,20 +183,32 @@ public final class PetWarpHelper {
                 final CompletableFuture<Boolean> rawFuture = pet.teleportAsync(destinationLoc);
                 petTeleportFuture = rawFuture != null ? rawFuture : CompletableFuture.completedFuture(false);
             } catch (final RuntimeException e) {
+                final var _ = playerTeleportFuture.whenComplete((ignored, ex) -> scheduleReattach(plugin, pet, player));
                 continue;
             }
             final var _ = playerTeleportFuture.thenCombine(
                     petTeleportFuture,
                     (playerOk, petOk) -> Boolean.TRUE.equals(playerOk) && Boolean.TRUE.equals(petOk)
-            ).thenAccept(bothSucceeded -> {
-                if (!Boolean.TRUE.equals(bothSucceeded)) {
-                    return;
+            ).handle((bothSucceeded, ex) -> {
+                if (ex != null) {
+                    plugin.getSLF4JLogger().debug("Pet teleport completion callback failed: {}", ex.getMessage());
                 }
                 scheduleReattach(plugin, pet, player);
-            }).exceptionally(ex -> {
-                plugin.getSLF4JLogger().debug("Pet teleport completion callback failed: {}", ex.getMessage());
                 return null;
             });
+        }
+    }
+
+    /**
+     * Schedules leash re-attachment for all previously detached pets (used when warp dispatch aborts) (#22).
+     */
+    public static void scheduleReattachAll(
+            final Plugin plugin,
+            final List<Leashable> detachedPets,
+            final Player player
+    ) {
+        for (final Leashable pet : detachedPets) {
+            scheduleReattach(plugin, pet, player);
         }
     }
 

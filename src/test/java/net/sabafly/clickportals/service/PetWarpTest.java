@@ -461,4 +461,62 @@ class PetWarpTest {
         assertThat(future).isCompletedWithValue(List.of(pet));
         verify(pet).setLeashHolder(null);
     }
+
+    @Test
+    void failedPlayerTeleportReattachesDetachedPetAtOriginAndSkipsOutOfRange() {
+        final Wolf nearPet = mockLeashedWolf(null, true, false);
+        when(nearPet.teleportAsync(any(Location.class))).thenReturn(CompletableFuture.completedFuture(false));
+        final EntityScheduler nearScheduler = mock(EntityScheduler.class);
+        final List<Runnable> nearTasks = new ArrayList<>();
+        when(nearPet.getScheduler()).thenReturn(nearScheduler);
+        doAnswer(inv -> {
+            @SuppressWarnings("unchecked")
+            final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+            nearTasks.add(() -> consumer.accept(mock(ScheduledTask.class)));
+            return mock(ScheduledTask.class);
+        }).when(nearScheduler).runDelayed(any(), any(), any(), anyLong());
+
+        final Wolf failedPet = mockLeashedWolf(null, true, false);
+        when(failedPet.teleportAsync(any(Location.class)))
+                .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("boom")));
+        final EntityScheduler failedScheduler = mock(EntityScheduler.class);
+        final List<Runnable> failedTasks = new ArrayList<>();
+        when(failedPet.getScheduler()).thenReturn(failedScheduler);
+        doAnswer(inv -> {
+            @SuppressWarnings("unchecked")
+            final Consumer<ScheduledTask> consumer = (Consumer<ScheduledTask>) inv.getArgument(1);
+            failedTasks.add(() -> consumer.accept(mock(ScheduledTask.class)));
+            return mock(ScheduledTask.class);
+        }).when(failedScheduler).runDelayed(any(), any(), any(), anyLong());
+
+        final Plugin plugin = mock(Plugin.class);
+        when(plugin.getSLF4JLogger()).thenReturn(LoggerFactory.getLogger(PetWarpTest.class));
+
+        final CompletableFuture<Boolean> playerFuture = CompletableFuture.completedFuture(false);
+        PetWarpHelper.teleportAndReattachPets(
+                plugin,
+                player,
+                new Location(world, 100, 64, 100),
+                List.of(nearPet, failedPet),
+                playerFuture
+        );
+
+        assertThat(nearTasks).hasSize(1);
+        assertThat(failedTasks).hasSize(1);
+        nearTasks.getFirst().run();
+        failedTasks.getFirst().run();
+        verify(nearPet).setLeashHolder(player);
+        verify(failedPet).setLeashHolder(player);
+
+        // Ensure scheduleReattachAll leaves detached pets intact across worlds
+        final World otherWorld = mock(World.class);
+        when(otherWorld.getUID()).thenReturn(UUID.randomUUID());
+        final Wolf crossWorldPet = mockLeashedWolf(null, true, false);
+        when(crossWorldPet.getWorld()).thenReturn(otherWorld);
+        when(crossWorldPet.getLocation()).thenReturn(new Location(otherWorld, 5, 64, 5));
+        when(crossWorldPet.getScheduler()).thenReturn(null);
+
+        PetWarpHelper.scheduleReattachAll(plugin, List.of(crossWorldPet), player);
+        verify(crossWorldPet, never()).setLeashHolder(player);
+    }
 }
