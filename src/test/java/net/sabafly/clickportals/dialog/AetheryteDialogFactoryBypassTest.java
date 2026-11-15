@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.OptionalDouble;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -38,8 +39,11 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.sabafly.clickportals.ClickPortals;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.aetheryte.AetheryteNetwork;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
+import net.sabafly.clickportals.aetheryte.AetheryteVisibility;
 import net.sabafly.clickportals.dialog.WarpDestinationQuery.Candidate;
+import net.sabafly.clickportals.dialog.WarpDestinationQuery.NetworkGroup;
 import net.sabafly.clickportals.dialog.WarpDestinationQuery.WorldGroup;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.permission.Permissions;
@@ -296,6 +300,229 @@ class AetheryteDialogFactoryBypassTest {
                     List.of(dest)
             );
             assertThat(PLAIN.serialize(freeBody)).doesNotContain("warp cost");
+        } finally {
+            serverField.set(null, null);
+        }
+    }
+
+    @Test
+    void hubRootPlanSeparatesHostedNetworksAndHidesEmptyOrNonHubNetworkCategories() throws Exception {
+        final Field serverField = Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        try {
+            final Server server = mock(Server.class);
+            final World world = mock(World.class);
+            when(world.getUID()).thenReturn(SOURCE_WORLD_ID);
+            when(world.getName()).thenReturn("world");
+            when(world.getEnvironment()).thenReturn(World.Environment.NORMAL);
+            when(world.getPersistentDataContainer()).thenReturn(mock(PersistentDataContainer.class));
+            when(server.getWorld(SOURCE_WORLD_ID)).thenReturn(world);
+            serverField.set(null, server);
+
+            final ClickPortals plugin = mock(ClickPortals.class);
+            final AetheryteRegistry registry = new AetheryteRegistry();
+            final Messages messages = Messages.defaults();
+            final AetheryteService service = new AetheryteService(
+                    plugin,
+                    registry,
+                    VariationRegistry.defaults(),
+                    NoopHologramService.INSTANCE,
+                    messages,
+                    () -> -1,
+                    (p, s, d) -> WarpEvaluation.permitted(Component.text("Free"))
+            );
+            final AetheryteDialogFactory factory = new AetheryteDialogFactory(service, messages);
+
+            final UUID ownerId = UUID.randomUUID();
+            final UUID otherId = UUID.randomUUID();
+            final UUID net1Id = UUID.randomUUID();
+            final UUID emptyNetId = UUID.randomUUID();
+
+            final Aetheryte hub = new Aetheryte(
+                    UUID.randomUUID(), "CapitalHub", SOURCE_WORLD_ID, "world", 0, 64, 0, ownerId, 1L
+            );
+            final Aetheryte childAccessible = new Aetheryte(
+                    UUID.randomUUID(), "Plaza", SOURCE_WORLD_ID, "world", 10, 64, 0, ownerId, 2L,
+                    Aetheryte.DEFAULT_VARIATION, "Alice", AetheryteVisibility.PUBLIC, Set.of(), net1Id
+            );
+            final Aetheryte childPrivateOther = new Aetheryte(
+                    UUID.randomUUID(), "Vault", SOURCE_WORLD_ID, "world", 20, 64, 0, otherId, 3L,
+                    Aetheryte.DEFAULT_VARIATION, "Bob", AetheryteVisibility.OWNER_ONLY, Set.of(), emptyNetId
+            );
+            final Aetheryte normalDest = new Aetheryte(
+                    UUID.randomUUID(), "Outpost", SOURCE_WORLD_ID, "world", 30, 64, 0, ownerId, 4L
+            );
+
+            final AetheryteNetwork net1 = new AetheryteNetwork(
+                    net1Id, "Capital Transit", SOURCE_WORLD_ID, "world", ownerId, "Alice", 1L,
+                    AetheryteVisibility.PUBLIC, Set.of(), hub.id()
+            );
+            final AetheryteNetwork emptyNet = new AetheryteNetwork(
+                    emptyNetId, "Private Net", SOURCE_WORLD_ID, "world", otherId, "Bob", 2L,
+                    AetheryteVisibility.OWNER_ONLY, Set.of(), hub.id()
+            );
+
+            registry.register(world, hub);
+            registry.register(world, childAccessible);
+            registry.register(world, childPrivateOther);
+            registry.register(world, normalDest);
+            registry.registerNetwork(world, net1);
+            registry.registerNetwork(world, emptyNet);
+
+            final Player viewer = mock(Player.class);
+            when(viewer.getUniqueId()).thenReturn(ownerId);
+            when(viewer.locale()).thenReturn(Locale.US);
+            when(viewer.hasPermission(Permissions.USE)).thenReturn(true);
+
+            final List<Aetheryte> all = registry.getAll();
+            final AetheryteDialogFactory.RootMenuPlan hubPlan = factory.planRootMenu(viewer, hub, all);
+            assertThat(hubPlan.networkGroups()).containsExactly(
+                    new NetworkGroup(net1Id, "Capital Transit", 1)
+            );
+            assertThat(hubPlan.normalReachableCount()).isEqualTo(1);
+            assertThat(hubPlan.totalReachableCount()).isEqualTo(2);
+            assertThat(hubPlan.worldGroups()).hasSize(1);
+            assertThat(hubPlan.worldGroups().get(0).destinationCount()).isEqualTo(1);
+
+            final List<Candidate> networkList = factory.queryDestinationCandidates(
+                    viewer, hub, WarpDialogState.root(WarpSortOrder.NAME).toNetwork(net1Id), all
+            );
+            assertThat(networkList).extracting(c -> c.aetheryte().name()).containsExactly("Plaza");
+
+            final List<Candidate> worldList = factory.queryDestinationCandidates(
+                    viewer, hub, WarpDialogState.root(WarpSortOrder.NAME).toWorld(SOURCE_WORLD_ID), all
+            );
+            assertThat(worldList).extracting(c -> c.aetheryte().name()).containsExactly("Outpost");
+
+            final List<Candidate> allList = factory.queryDestinationCandidates(
+                    viewer, hub, WarpDialogState.root(WarpSortOrder.NAME).toAll(), all
+            );
+            assertThat(allList).extracting(c -> c.aetheryte().name()).containsExactly("Outpost");
+
+            final Component networkLabel = messages.warpNetworkCategoryLabel(viewer, "Capital Transit", 1);
+            final Component networkScope = factory.resolveScopeLabel(
+                    viewer, WarpDialogState.root(WarpSortOrder.NAME).toNetwork(net1Id), all
+            );
+            assertThat(PLAIN.serialize(networkLabel)).contains("Capital Transit").contains("(1)");
+            assertThat(PLAIN.serialize(networkScope)).contains("Capital Transit");
+
+            // Non-Hub child Aetheryte must never expose hosted network categories even with hub lookup
+            final AetheryteDialogFactory.RootMenuPlan childPlan = factory.planRootMenu(viewer, childAccessible, all);
+            assertThat(childPlan.networkGroups()).isEmpty();
+
+            // Root button ordering: Hosted Network -> Favorites -> Worlds -> All Worlds -> Operations
+            final List<AetheryteDialogFactory.RootButtonSpec> rootButtons = AetheryteDialogFactory.planRootButtons(hubPlan);
+            assertThat(rootButtons).containsExactly(
+                    new AetheryteDialogFactory.RootButtonSpec.NetworkCategory(new NetworkGroup(net1Id, "Capital Transit", 1)),
+                    new AetheryteDialogFactory.RootButtonSpec.FavoritesCategory(0),
+                    new AetheryteDialogFactory.RootButtonSpec.WorldCategory(hubPlan.worldGroups().get(0)),
+                    new AetheryteDialogFactory.RootButtonSpec.AllWorldsCategory(1),
+                    new AetheryteDialogFactory.RootButtonSpec.Operations()
+            );
+        } finally {
+            serverField.set(null, null);
+        }
+    }
+
+    @Test
+    void rootButtonPlanHandlesMultipleNetworksPartialAccessBlankNameAndAllWorldsSuppression() throws Exception {
+        final Field serverField = Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        try {
+            final Server server = mock(Server.class);
+            final World world = mock(World.class);
+            when(world.getUID()).thenReturn(SOURCE_WORLD_ID);
+            when(world.getName()).thenReturn("world");
+            when(world.getEnvironment()).thenReturn(World.Environment.NORMAL);
+            when(world.getPersistentDataContainer()).thenReturn(mock(PersistentDataContainer.class));
+            when(server.getWorld(SOURCE_WORLD_ID)).thenReturn(world);
+            serverField.set(null, server);
+
+            final ClickPortals plugin = mock(ClickPortals.class);
+            final AetheryteRegistry registry = new AetheryteRegistry();
+            final Messages messages = Messages.defaults();
+            final AetheryteService service = new AetheryteService(
+                    plugin,
+                    registry,
+                    VariationRegistry.defaults(),
+                    NoopHologramService.INSTANCE,
+                    messages,
+                    () -> -1,
+                    (p, s, d) -> WarpEvaluation.permitted(Component.text("Free"))
+            );
+            final AetheryteDialogFactory factory = new AetheryteDialogFactory(service, messages);
+
+            final UUID ownerId = UUID.randomUUID();
+            final UUID otherId = UUID.randomUUID();
+            final UUID betaNetId = UUID.randomUUID();
+            final UUID alphaNetId = UUID.randomUUID();
+            final UUID blankNetId = UUID.randomUUID();
+
+            final Aetheryte hub = new Aetheryte(
+                    UUID.randomUUID(), "CentralHub", SOURCE_WORLD_ID, "world", 0, 64, 0, ownerId, 1L
+            );
+            final Aetheryte betaPublic = new Aetheryte(
+                    UUID.randomUUID(), "BetaPublic", SOURCE_WORLD_ID, "world", 10, 64, 0, otherId, 2L,
+                    Aetheryte.DEFAULT_VARIATION, "Bob", AetheryteVisibility.PUBLIC, Set.of(), betaNetId
+            );
+            final Aetheryte betaPrivate = new Aetheryte(
+                    UUID.randomUUID(), "BetaPrivate", SOURCE_WORLD_ID, "world", 20, 64, 0, otherId, 3L,
+                    Aetheryte.DEFAULT_VARIATION, "Bob", AetheryteVisibility.OWNER_ONLY, Set.of(), blankNetId
+            );
+            final Aetheryte alphaPublic = new Aetheryte(
+                    UUID.randomUUID(), "AlphaPublic", SOURCE_WORLD_ID, "world", 30, 64, 0, ownerId, 4L,
+                    Aetheryte.DEFAULT_VARIATION, "Alice", AetheryteVisibility.PUBLIC, Set.of(), alphaNetId
+            );
+            // Alpha & Beta networks are PUBLIC while blankNet is OWNER_ONLY for otherId,
+            // so blankNet's child is excluded and normalReachableCount stays 0.
+            final AetheryteNetwork betaNet = new AetheryteNetwork(
+                    betaNetId, "Beta Line", SOURCE_WORLD_ID, "world", ownerId, "Alice", 1L,
+                    AetheryteVisibility.PUBLIC, Set.of(), hub.id()
+            );
+            final AetheryteNetwork alphaNet = new AetheryteNetwork(
+                    alphaNetId, "Alpha Line", SOURCE_WORLD_ID, "world", ownerId, "Alice", 2L,
+                    AetheryteVisibility.PUBLIC, Set.of(), hub.id()
+            );
+            final AetheryteNetwork blankNet = new AetheryteNetwork(
+                    blankNetId, "   ", SOURCE_WORLD_ID, "world", otherId, "Bob", 3L,
+                    AetheryteVisibility.OWNER_ONLY, Set.of(), hub.id()
+            );
+
+            registry.register(world, hub);
+            registry.register(world, betaPublic);
+            registry.register(world, betaPrivate);
+            registry.register(world, alphaPublic);
+            registry.registerNetwork(world, betaNet);
+            registry.registerNetwork(world, alphaNet);
+            registry.registerNetwork(world, blankNet);
+
+            final Player viewer = mock(Player.class);
+            when(viewer.getUniqueId()).thenReturn(ownerId);
+            when(viewer.locale()).thenReturn(Locale.US);
+            when(viewer.hasPermission(Permissions.USE)).thenReturn(true);
+
+            final List<Aetheryte> all = registry.getAll();
+            final AetheryteDialogFactory.RootMenuPlan plan = factory.planRootMenu(viewer, hub, all);
+            assertThat(plan.networkGroups()).containsExactly(
+                    new NetworkGroup(alphaNetId, "Alpha Line", 1),
+                    new NetworkGroup(betaNetId, "Beta Line", 1)
+            );
+            assertThat(plan.normalReachableCount()).isZero();
+            assertThat(plan.totalReachableCount()).isEqualTo(2);
+
+            final List<AetheryteDialogFactory.RootButtonSpec> buttons = AetheryteDialogFactory.planRootButtons(plan);
+            assertThat(buttons).containsExactly(
+                    new AetheryteDialogFactory.RootButtonSpec.NetworkCategory(new NetworkGroup(alphaNetId, "Alpha Line", 1)),
+                    new AetheryteDialogFactory.RootButtonSpec.NetworkCategory(new NetworkGroup(betaNetId, "Beta Line", 1)),
+                    new AetheryteDialogFactory.RootButtonSpec.FavoritesCategory(0),
+                    new AetheryteDialogFactory.RootButtonSpec.Operations()
+            );
+
+            // Blank network name falls back to UUID string in scope label
+            final Component blankScope = factory.resolveScopeLabel(
+                    viewer, WarpDialogState.root(WarpSortOrder.NAME).toNetwork(blankNetId), all
+            );
+            assertThat(PLAIN.serialize(blankScope)).contains(blankNetId.toString());
         } finally {
             serverField.set(null, null);
         }

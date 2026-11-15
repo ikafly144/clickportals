@@ -299,6 +299,7 @@ public final class AetheryteService {
     private final Set<UUID> inFlightWarps = ConcurrentHashMap.newKeySet();
     private final Map<UUID, ActiveCastSession> activeCasts = new ConcurrentHashMap<>();
     private volatile Supplier<CastSection> globalCastSupplier = CastSection::defaults;
+    private volatile Supplier<CastSection> globalHubToNetworkCastSupplier = CastSection::inherit;
     private volatile Supplier<PetsWarpSection> globalPetsWarpSupplier = PetsWarpSection::defaults;
     private volatile IntSupplier maxNetworksPerPlayerSupplier = () -> -1;
     private volatile CastImmobilizeService castImmobilizeService = NoopCastImmobilizeService.INSTANCE;
@@ -840,6 +841,13 @@ public final class AetheryteService {
      */
     public void setGlobalCastSupplier(final Supplier<CastSection> globalCastSupplier) {
         this.globalCastSupplier = globalCastSupplier;
+    }
+
+    /**
+     * Sets the supplier for global Hub-to-network warp casting overrides (#86).
+     */
+    public void setGlobalHubToNetworkCastSupplier(final Supplier<CastSection> globalHubToNetworkCastSupplier) {
+        this.globalHubToNetworkCastSupplier = globalHubToNetworkCastSupplier;
     }
 
     /**
@@ -4083,10 +4091,7 @@ public final class AetheryteService {
         final float yaw = player.getYaw();
         final float pitch = player.getPitch();
         final AetheryteVariation destVariation = variationRegistry.getOrDefault(destination.variation());
-        final CastSection globalCast = globalCastSupplier.get();
-        final CastSection.Resolved resolvedCast = source != null
-                ? variationRegistry.getOrDefault(source.variation()).warp().cast().resolve(globalCast)
-                : globalCast.resolveGlobal();
+        final CastSection.Resolved resolvedCast = resolveWarpCast(source, destination);
 
         final AtomicBoolean regionTaskEntered = new AtomicBoolean(false);
         try {
@@ -4153,6 +4158,39 @@ public final class AetheryteService {
                 messages.send(player, MessageKey.ERROR_NOT_FOUND);
             }
         }
+    }
+
+    /**
+     * Returns whether the warp is a Hub-to-child-network warp ({@code hub -> network}) (#86).
+     */
+    public boolean isHubToNetworkWarp(final @Nullable Aetheryte source, final Aetheryte destination) {
+        if (source == null || source.networkId() != null || destination.networkId() == null) {
+            return false;
+        }
+        final @Nullable AetheryteNetwork destNetwork = networkFor(destination);
+        return destNetwork != null && source.id().equals(destNetwork.hubAetheryteId());
+    }
+
+    /**
+     * Resolves concrete warp casting settings for {@code source -> destination}, applying
+     * {@code warp.hub-to-network-cast} overrides (variation -> global) with fallback to normal
+     * {@code warp.cast} (variation -> global) when warping {@code hub -> network} (#65, #86).
+     */
+    public CastSection.Resolved resolveWarpCast(final @Nullable Aetheryte source, final Aetheryte destination) {
+        final CastSection rawGlobalCast = globalCastSupplier.get();
+        final CastSection globalCast = rawGlobalCast != null ? rawGlobalCast : CastSection.defaults();
+        if (source == null) {
+            return globalCast.resolveGlobal();
+        }
+        final AetheryteVariation sourceVariation = variationRegistry.getOrDefault(source.variation());
+        final CastSection.Resolved normalResolved = sourceVariation.warp().cast().resolve(globalCast);
+        if (!isHubToNetworkWarp(source, destination)) {
+            return normalResolved;
+        }
+        final CastSection rawGlobalHubCast = globalHubToNetworkCastSupplier.get();
+        final CastSection globalHubCast = rawGlobalHubCast != null ? rawGlobalHubCast : CastSection.inherit();
+        final CastSection.Resolved withGlobalHub = globalHubCast.resolve(normalResolved);
+        return sourceVariation.warp().hubToNetworkCast().resolve(withGlobalHub);
     }
 
     private void startWarpCast(

@@ -17,10 +17,17 @@
  */
 package net.sabafly.clickportals.config;
 
+import java.lang.reflect.Type;
+import java.util.Collections;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.spongepowered.configurate.CommentedConfigurationNode;
+import org.spongepowered.configurate.ConfigurationNode;
 import org.spongepowered.configurate.objectmapping.ConfigSerializable;
 import org.spongepowered.configurate.objectmapping.meta.Comment;
 import org.spongepowered.configurate.objectmapping.meta.Setting;
+import org.spongepowered.configurate.serialize.SerializationException;
+import org.spongepowered.configurate.serialize.TypeSerializer;
 
 /**
  * Warp casting (cast time and player animation) configuration (#65).
@@ -252,23 +259,31 @@ public record CastSection(
      * Resolves this (potentially partial/inheriting) cast section against {@code global} defaults.
      */
     public Resolved resolve(final CastSection global) {
-        final int globalTicks = global.ticksOrDefault(0);
-        final String globalModel = global.playerModelOrDefault("steve");
-        final String globalCastAnim = global.castAnimationOrDefault("");
-        final String globalArriveAnim = global.arriveAnimationOrDefault("");
-        final boolean globalImmobilize = global.immobilizeOrDefault(true);
-        final boolean globalOnMove = global.cancelOnMoveOrDefault(true);
-        final boolean globalOnDamage = global.cancelOnDamageOrDefault(true);
-        final boolean globalOnInteract = global.cancelOnInteractOrDefault(true);
+        return resolve(new Resolved(
+                global.ticksOrDefault(0),
+                global.playerModelOrDefault("steve"),
+                global.castAnimationOrDefault(""),
+                global.arriveAnimationOrDefault(""),
+                global.immobilizeOrDefault(true),
+                global.cancelOnMoveOrDefault(true),
+                global.cancelOnDamageOrDefault(true),
+                global.cancelOnInteractOrDefault(true)
+        ));
+    }
+
+    /**
+     * Resolves this (potentially partial/inheriting) cast section against an already-resolved fallback (#86).
+     */
+    public Resolved resolve(final Resolved fallback) {
         return new Resolved(
-                ticksOrDefault(globalTicks),
-                playerModelOrDefault(globalModel),
-                castAnimationOrDefault(globalCastAnim),
-                arriveAnimationOrDefault(globalArriveAnim),
-                immobilizeOrDefault(globalImmobilize),
-                cancelOnMoveOrDefault(globalOnMove),
-                cancelOnDamageOrDefault(globalOnDamage),
-                cancelOnInteractOrDefault(globalOnInteract)
+                ticksOrDefault(fallback.ticks()),
+                playerModelOrDefault(fallback.playerModel()),
+                castAnimationOrDefault(fallback.castAnimation()),
+                arriveAnimationOrDefault(fallback.arriveAnimation()),
+                immobilizeOrDefault(fallback.immobilize()),
+                cancelOnMoveOrDefault(fallback.cancelOnMove()),
+                cancelOnDamageOrDefault(fallback.cancelOnDamage()),
+                cancelOnInteractOrDefault(fallback.cancelOnInteract())
         );
     }
 
@@ -277,5 +292,210 @@ public record CastSection(
      */
     public Resolved resolveGlobal() {
         return resolve(defaults());
+    }
+
+    /**
+     * Validates this cast section as an inherit-capable override (preserving {@code -1} / {@code null} inheritance) (#65, #86).
+     */
+    public CastSection validatedOverride(final String settingPath, final Logger logger) {
+        final Integer validTicks;
+        if (ticks != null && ticks < -1) {
+            logger.warn("Invalid {}.ticks {} (must be >= -1); falling back to -1 (inherit)", settingPath, ticks);
+            validTicks = -1;
+        } else {
+            validTicks = ticks;
+        }
+        final String validPlayerModel = (playerModel == null || playerModel.isBlank()) ? null : playerModel.strip();
+        final String validCastAnim = castAnimation == null ? null : castAnimation.strip();
+        final String validArriveAnim = arriveAnimation == null ? null : arriveAnimation.strip();
+        final CastCancelSection validCancel = cancel != null ? cancel : CastCancelSection.inherit();
+        return new CastSection(
+                validTicks,
+                validPlayerModel,
+                validCastAnim,
+                validArriveAnim,
+                immobilize,
+                validCancel
+        );
+    }
+
+    private static final String COMMENT_TICKS =
+            "Cast time in ticks before warping (0 or less for instant warp; -1 to inherit)";
+    private static final String COMMENT_PLAYER_MODEL =
+            "BetterModel player limb model name used for player animations (e.g. steve; null to inherit)";
+    private static final String COMMENT_CAST_ANIMATION =
+            "BetterModel player animation played during casting with HOLD_ON_LAST (empty to disable; null to inherit)";
+    private static final String COMMENT_ARRIVE_ANIMATION =
+            "BetterModel player animation played after teleport arrival with PLAY_ONCE (empty to disable; null to inherit)";
+    private static final String COMMENT_IMMOBILIZE =
+            "Whether to prevent the player from moving via PacketEvents while casting (head rotation remains allowed; null to inherit)";
+    private static final String COMMENT_CANCEL =
+            "Cancellation conditions while casting";
+    private static final String COMMENT_CANCEL_MOVE =
+            "Cancel casting when the player moves (head rotation is allowed; null to inherit)";
+    private static final String COMMENT_CANCEL_DAMAGE =
+            "Cancel casting when the player takes damage (null to inherit)";
+    private static final String COMMENT_CANCEL_INTERACT =
+            "Cancel casting when breaking/placing blocks, attacking entities, or interacting with other blocks/entities (null to inherit)";
+
+    /**
+     * Replaces {@code null} inheritance fields with {@link VisibilityCostSection#NULL_SENTINEL} so dumped
+     * YAML files explicitly write {@code null} with comments (#86).
+     */
+    public static void applyNullSentinels(
+            final CommentedConfigurationNode node,
+            final @Nullable CastSection section,
+            final String sectionComment
+    ) throws SerializationException {
+        final CastSection target = section != null ? section : inherit();
+        setCommentIfBlank(node, sectionComment);
+        if (target.ticks() == null) {
+            final CommentedConfigurationNode ticksNode = node.node("ticks");
+            ticksNode.set(VisibilityCostSection.NULL_SENTINEL);
+            setCommentIfBlank(ticksNode, COMMENT_TICKS);
+        }
+        if (target.playerModel() == null) {
+            final CommentedConfigurationNode modelNode = node.node("player-model");
+            modelNode.set(VisibilityCostSection.NULL_SENTINEL);
+            setCommentIfBlank(modelNode, COMMENT_PLAYER_MODEL);
+        }
+        if (target.castAnimation() == null) {
+            final CommentedConfigurationNode castNode = node.node("cast-animation");
+            castNode.set(VisibilityCostSection.NULL_SENTINEL);
+            setCommentIfBlank(castNode, COMMENT_CAST_ANIMATION);
+        }
+        if (target.arriveAnimation() == null) {
+            final CommentedConfigurationNode arriveNode = node.node("arrive-animation");
+            arriveNode.set(VisibilityCostSection.NULL_SENTINEL);
+            setCommentIfBlank(arriveNode, COMMENT_ARRIVE_ANIMATION);
+        }
+        if (target.immobilize() == null) {
+            final CommentedConfigurationNode immNode = node.node("immobilize");
+            immNode.set(VisibilityCostSection.NULL_SENTINEL);
+            setCommentIfBlank(immNode, COMMENT_IMMOBILIZE);
+        }
+        final CommentedConfigurationNode cancelNode = node.node("cancel");
+        setCommentIfBlank(cancelNode, COMMENT_CANCEL);
+        final CastCancelSection cancel = target.cancel() != null ? target.cancel() : CastCancelSection.inherit();
+        if (cancel.onMove() == null) {
+            final CommentedConfigurationNode moveNode = cancelNode.node("on-move");
+            moveNode.set(VisibilityCostSection.NULL_SENTINEL);
+            setCommentIfBlank(moveNode, COMMENT_CANCEL_MOVE);
+        }
+        if (cancel.onDamage() == null) {
+            final CommentedConfigurationNode dmgNode = cancelNode.node("on-damage");
+            dmgNode.set(VisibilityCostSection.NULL_SENTINEL);
+            setCommentIfBlank(dmgNode, COMMENT_CANCEL_DAMAGE);
+        }
+        if (cancel.onInteract() == null) {
+            final CommentedConfigurationNode interactNode = cancelNode.node("on-interact");
+            interactNode.set(VisibilityCostSection.NULL_SENTINEL);
+            setCommentIfBlank(interactNode, COMMENT_CANCEL_INTERACT);
+        }
+    }
+
+    private static void setCommentIfBlank(final ConfigurationNode node, final String comment) {
+        if (node instanceof CommentedConfigurationNode commented) {
+            final String existing = commented.comment();
+            if (existing == null || existing.isBlank()) {
+                commented.comment(comment);
+            }
+        }
+    }
+
+    /**
+     * Custom {@link TypeSerializer} preserving explicit {@code null} inheritance fields, non-virtual map structure
+     * for schema-sync idempotency, and inline comments (#65, #86).
+     */
+    public static final class Serializer implements TypeSerializer<CastSection> {
+        public static final Serializer INSTANCE = new Serializer();
+
+        private Serializer() {
+        }
+
+        @Override
+        public CastSection deserialize(final Type type, final ConfigurationNode node)
+                throws SerializationException {
+            if (node == null || node.virtual() || node.isNull()) {
+                return inherit();
+            }
+            final Integer ticks = readNullableInteger(node.node("ticks"));
+            final String playerModel = readNullableString(node.node("player-model"));
+            final String castAnim = readNullableString(node.node("cast-animation"));
+            final String arriveAnim = readNullableString(node.node("arrive-animation"));
+            final Boolean immobilize = readNullableBoolean(node.node("immobilize"));
+            final ConfigurationNode cancelNode = node.node("cancel");
+            final CastCancelSection cancel = (cancelNode.virtual() || cancelNode.isNull())
+                    ? CastCancelSection.inherit()
+                    : new CastCancelSection(
+                            readNullableBoolean(cancelNode.node("on-move")),
+                            readNullableBoolean(cancelNode.node("on-damage")),
+                            readNullableBoolean(cancelNode.node("on-interact"))
+                    );
+            return new CastSection(ticks, playerModel, castAnim, arriveAnim, immobilize, cancel);
+        }
+
+        private static @Nullable Integer readNullableInteger(final ConfigurationNode child)
+                throws SerializationException {
+            if (child == null || child.virtual() || child.isNull() || child.raw() == null
+                    || VisibilityCostSection.NULL_SENTINEL.equals(child.raw())) {
+                return null;
+            }
+            return child.get(Integer.class);
+        }
+
+        private static @Nullable String readNullableString(final ConfigurationNode child) {
+            if (child == null || child.virtual() || child.isNull() || child.raw() == null
+                    || VisibilityCostSection.NULL_SENTINEL.equals(child.raw())) {
+                return null;
+            }
+            return child.getString();
+        }
+
+        private static @Nullable Boolean readNullableBoolean(final ConfigurationNode child)
+                throws SerializationException {
+            if (child == null || child.virtual() || child.isNull() || child.raw() == null
+                    || VisibilityCostSection.NULL_SENTINEL.equals(child.raw())) {
+                return null;
+            }
+            return child.getBoolean();
+        }
+
+        @Override
+        public void serialize(
+                final Type type,
+                final @Nullable CastSection obj,
+                final ConfigurationNode node
+        ) throws SerializationException {
+            final CastSection target = obj != null ? obj : inherit();
+            node.raw(Collections.emptyMap());
+
+            writeField(node.node("ticks"), target.ticks(), COMMENT_TICKS);
+            writeField(node.node("player-model"), target.playerModel(), COMMENT_PLAYER_MODEL);
+            writeField(node.node("cast-animation"), target.castAnimation(), COMMENT_CAST_ANIMATION);
+            writeField(node.node("arrive-animation"), target.arriveAnimation(), COMMENT_ARRIVE_ANIMATION);
+            writeField(node.node("immobilize"), target.immobilize(), COMMENT_IMMOBILIZE);
+
+            final ConfigurationNode cancelNode = node.node("cancel");
+            cancelNode.raw(Collections.emptyMap());
+            setCommentIfBlank(cancelNode, COMMENT_CANCEL);
+            final CastCancelSection cancel = target.cancel() != null ? target.cancel() : CastCancelSection.inherit();
+            writeField(cancelNode.node("on-move"), cancel.onMove(), COMMENT_CANCEL_MOVE);
+            writeField(cancelNode.node("on-damage"), cancel.onDamage(), COMMENT_CANCEL_DAMAGE);
+            writeField(cancelNode.node("on-interact"), cancel.onInteract(), COMMENT_CANCEL_INTERACT);
+        }
+
+        private static void writeField(
+                final ConfigurationNode child,
+                final @Nullable Object value,
+                final String comment
+        ) throws SerializationException {
+            if (value == null) {
+                child.raw(null);
+            } else {
+                child.set(value);
+                setCommentIfBlank(child, comment);
+            }
+        }
     }
 }

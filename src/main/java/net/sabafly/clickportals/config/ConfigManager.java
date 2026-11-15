@@ -56,6 +56,7 @@ public final class ConfigManager {
                 .defaultOptions(opts -> opts.header(HEADER)
                         .shouldCopyDefaults(true)
                         .serializers(builder -> builder
+                                .register(CastSection.class, CastSection.Serializer.INSTANCE)
                                 .register(VisibilityCostSection.class, VisibilityCostSection.Serializer.INSTANCE)
                                 .register(PetsWarpSection.class, PetsWarpSection.Serializer.INSTANCE)))
                 .build();
@@ -190,6 +191,13 @@ public final class ConfigManager {
             final CommentedConfigurationNode root,
             final PluginConfig validated
     ) throws ConfigurateException {
+        final CommentedConfigurationNode hubCastNode = root.node("warp", "hub-to-network-cast");
+        CastSection.applyNullSentinels(
+                hubCastNode,
+                validated.warp().hubToNetworkCast(),
+                "Optional cast overrides when warping from a Hub Aetheryte to a child network Aetheryte (-1/null inherits warp.cast) (#86)"
+        );
+
         final CommentedConfigurationNode warpVisCostNode = root.node("warp", "visibility-cost");
         if (warpVisCostNode.comment() == null || warpVisCostNode.comment().isBlank()) {
             warpVisCostNode.comment("Per-visibility warp cost override lists (null = fall back to warp.cost, [] = free) (#25)");
@@ -204,6 +212,7 @@ public final class ConfigManager {
                 .defaultOptions(opts -> opts.header(HEADER)
                         .shouldCopyDefaults(true)
                         .serializers(builder -> builder
+                                .register(CastSection.class, CastSection.Serializer.INSTANCE)
                                 .register(VisibilityCostSection.class, VisibilityCostSection.Serializer.INSTANCE)
                                 .register(PetsWarpSection.class, PetsWarpSection.Serializer.INSTANCE)))
                 .build();

@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.config.CastSection;
 import net.sabafly.clickportals.config.PetsWarpSection;
 import net.sabafly.clickportals.config.VisibilityCostSection;
 import net.sabafly.clickportals.config.YamlSchemaSync;
@@ -300,6 +301,20 @@ public final class VariationLoader {
         }
         VisibilityCostSection.applyNullSentinels(placementVisCostNode, variation.placement().visibilityCost());
 
+        final CommentedConfigurationNode warpCastNode = dumpRoot.node("warp", "cast");
+        CastSection.applyNullSentinels(
+                warpCastNode,
+                variation.warp().cast(),
+                "Optional warp casting (cast time and player animation) overrides for warps originating from this variation (#65)"
+        );
+
+        final CommentedConfigurationNode hubCastNode = dumpRoot.node("warp", "hub-to-network-cast");
+        CastSection.applyNullSentinels(
+                hubCastNode,
+                variation.warp().hubToNetworkCast(),
+                "Optional cast overrides when warping from a Hub using this variation to a child network Aetheryte (-1/null inherits warp.cast) (#86)"
+        );
+
         final CommentedConfigurationNode warpVisCostNode = dumpRoot.node("warp", "visibility-cost");
         warpVisCostNode.comment("Cost overrides per destination visibility mode (null = use warp.cost/global, [] = free) (#25)");
         VisibilityCostSection.applyNullSentinels(warpVisCostNode, variation.warp().visibilityCost());
@@ -361,6 +376,7 @@ public final class VariationLoader {
     ) {
         final ConfigurationOptions withSerializers = opts.serializers(s -> s
                 .register(AetheryteVariation.VariationType.class, AetheryteVariation.VariationTypeSerializer.INSTANCE)
+                .register(CastSection.class, CastSection.Serializer.INSTANCE)
                 .register(VisibilityCostSection.class, VisibilityCostSection.Serializer.INSTANCE)
                 .register(PetsWarpSection.class, PetsWarpSection.Serializer.INSTANCE)
                 .register(AetheryteVariation.WarpOverrideSection.class, AetheryteVariation.WarpOverrideSectionSerializer.INSTANCE)

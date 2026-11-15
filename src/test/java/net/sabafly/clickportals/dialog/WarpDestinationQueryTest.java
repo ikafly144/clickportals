@@ -27,6 +27,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.aetheryte.AetheryteNetwork;
+import net.sabafly.clickportals.aetheryte.AetheryteVisibility;
 import org.bukkit.World;
 import org.junit.jupiter.api.Test;
 
@@ -310,6 +312,82 @@ class WarpDestinationQueryTest {
                 name -> displayNames.getOrDefault(name, name)
         );
         assertThat(matched).extracting(c -> c.aetheryte().name()).containsExactly("GateZ");
+    }
+
+    @Test
+    void hostedNetworksGroupOnlyAccessibleChildrenAndAreExcludedFromWorldAndAllViews() {
+        final UUID ownerId = UUID.randomUUID();
+        final UUID net1Id = UUID.randomUUID();
+        final UUID net2Id = UUID.randomUUID();
+        final UUID blockedChildId = UUID.randomUUID();
+
+        final Aetheryte hub = new Aetheryte(
+                UUID.randomUUID(), "CityHub", OVERWORLD_ID, "world", 0, 64, 0, ownerId, 1L,
+                Aetheryte.DEFAULT_VARIATION, "Alice", AetheryteVisibility.PUBLIC, Set.of(), null
+        );
+        final Aetheryte childA = new Aetheryte(
+                UUID.randomUUID(), "Market", OVERWORLD_ID, "world", 10, 64, 0, ownerId, 2L,
+                Aetheryte.DEFAULT_VARIATION, "Alice", AetheryteVisibility.PUBLIC, Set.of(), net1Id
+        );
+        final Aetheryte blockedChild = new Aetheryte(
+                blockedChildId, "SecretVault", OVERWORLD_ID, "world", 20, 64, 0, ownerId, 3L,
+                Aetheryte.DEFAULT_VARIATION, "Alice", AetheryteVisibility.OWNER_ONLY, Set.of(), net2Id
+        );
+        final Aetheryte normal = aetheryte("TownGate", OVERWORLD_ID, "world", 30, 64, 0, ownerId, "Alice", 4L);
+
+        final AetheryteNetwork net1 = new AetheryteNetwork(
+                net1Id, "Districts", OVERWORLD_ID, "world", ownerId, "Alice", 1L,
+                AetheryteVisibility.PUBLIC, Set.of(), hub.id()
+        );
+        final AetheryteNetwork net2 = new AetheryteNetwork(
+                net2Id, "HiddenNet", OVERWORLD_ID, "world", ownerId, "Alice", 2L,
+                AetheryteVisibility.OWNER_ONLY, Set.of(), hub.id()
+        );
+        final List<Aetheryte> all = List.of(hub, childA, blockedChild, normal);
+
+        final List<WarpDestinationQuery.NetworkGroup> networkGroups = WarpDestinationQuery.groupHostedNetworks(
+                hub,
+                all,
+                List.of(net1, net2),
+                dest -> !dest.id().equals(blockedChildId)
+        );
+        assertThat(networkGroups).containsExactly(
+                new WarpDestinationQuery.NetworkGroup(net1Id, "Districts", 1)
+        );
+
+        final Set<UUID> excluded = Set.of(net1Id, net2Id);
+        final List<WarpDestinationQuery.WorldGroup> worldGroups = WarpDestinationQuery.groupReachableWorlds(
+                hub,
+                all,
+                dest -> !dest.id().equals(blockedChildId),
+                id -> World.Environment.NORMAL,
+                Function.identity(),
+                excluded
+        );
+        assertThat(worldGroups).hasSize(1);
+        assertThat(worldGroups.get(0).destinationCount()).isEqualTo(1);
+
+        final WarpDialogState netState = WarpDialogState.root(WarpSortOrder.NAME).toNetwork(net1Id);
+        final List<WarpDestinationQuery.Candidate> netCandidates = WarpDestinationQuery.queryCandidates(
+                hub, ownerId, all, netState, Set.of(),
+                dest -> !dest.id().equals(blockedChildId),
+                a -> "Alice", Function.identity(), excluded
+        );
+        assertThat(netCandidates).extracting(c -> c.aetheryte().name()).containsExactly("Market");
+
+        final List<WarpDestinationQuery.Candidate> worldCandidates = WarpDestinationQuery.queryCandidates(
+                hub, ownerId, all, WarpDialogState.root(WarpSortOrder.NAME).toWorld(OVERWORLD_ID), Set.of(),
+                dest -> !dest.id().equals(blockedChildId),
+                a -> "Alice", Function.identity(), excluded
+        );
+        assertThat(worldCandidates).extracting(c -> c.aetheryte().name()).containsExactly("TownGate");
+
+        final List<WarpDestinationQuery.Candidate> allCandidates = WarpDestinationQuery.queryCandidates(
+                hub, ownerId, all, WarpDialogState.root(WarpSortOrder.NAME).toAll(), Set.of(),
+                dest -> !dest.id().equals(blockedChildId),
+                a -> "Alice", Function.identity(), excluded
+        );
+        assertThat(allCandidates).extracting(c -> c.aetheryte().name()).containsExactly("TownGate");
     }
 
     private static Aetheryte aetheryte(

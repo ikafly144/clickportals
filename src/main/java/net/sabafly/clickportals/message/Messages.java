@@ -1057,6 +1057,49 @@ public final class Messages {
     }
 
     /**
+     * Returns a formatted Hub-hosted network category button label (#87).
+     */
+    public Component warpNetworkCategoryLabel(
+            final CommandSender viewer,
+            final String networkName,
+            final int count
+    ) {
+        return get(
+                viewer,
+                MessageKey.DIALOG_WARP_CATEGORY_NETWORK,
+                Placeholder.unparsed("network", networkName),
+                Placeholder.unparsed("count", Integer.toString(count))
+        );
+    }
+
+    /**
+     * Returns a formatted Hub-hosted network category tooltip (#87).
+     */
+    public Component warpNetworkCategoryTooltip(
+            final CommandSender viewer,
+            final String networkName,
+            final int count
+    ) {
+        return get(
+                viewer,
+                MessageKey.DIALOG_WARP_CATEGORY_NETWORK_TOOLTIP,
+                Placeholder.unparsed("network", networkName),
+                Placeholder.unparsed("count", Integer.toString(count))
+        );
+    }
+
+    /**
+     * Returns the list header scope label for a Hub-hosted network destination view (#87).
+     */
+    public Component warpNetworkScopeLabel(final CommandSender viewer, final String networkName) {
+        return get(
+                viewer,
+                MessageKey.DIALOG_WARP_SCOPE_NETWORK,
+                Placeholder.unparsed("network", networkName)
+        );
+    }
+
+    /**
      * Returns the localized label for the given {@link WarpSortOrder} (#55).
      */
     public Component warpSortOrderLabel(final CommandSender viewer, final WarpSortOrder order) {

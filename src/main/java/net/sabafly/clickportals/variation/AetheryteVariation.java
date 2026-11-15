@@ -586,6 +586,10 @@ public record AetheryteVariation(
             @Comment("Optional warp casting (cast time and player animation) overrides for warps originating from this variation (#65)")
             CastSection cast,
 
+            @Setting("hub-to-network-cast")
+            @Comment("Optional cast overrides when warping from a Hub using this variation to a child network Aetheryte (-1/null inherits warp.cast) (#86)")
+            CastSection hubToNetworkCast,
+
             @Setting("visibility-cost")
             @Comment("Cost overrides per destination visibility mode (null = use warp.cost/global, [] = free) (#25)")
             VisibilityCostSection visibilityCost,
@@ -598,7 +602,7 @@ public record AetheryteVariation(
                 @Nullable final DistanceSection distance,
                 @Nullable final List<CostEntry> cost
         ) {
-            this(distance, cost, CastSection.inherit(), VisibilityCostSection.inherit(), PetsWarpSection.inherit());
+            this(distance, cost, CastSection.inherit(), CastSection.inherit(), VisibilityCostSection.inherit(), PetsWarpSection.inherit());
         }
 
         public WarpOverrideSection(
@@ -606,7 +610,7 @@ public record AetheryteVariation(
                 @Nullable final List<CostEntry> cost,
                 @Nullable final CastSection cast
         ) {
-            this(distance, cost, cast, VisibilityCostSection.inherit(), PetsWarpSection.inherit());
+            this(distance, cost, cast, CastSection.inherit(), VisibilityCostSection.inherit(), PetsWarpSection.inherit());
         }
 
         public WarpOverrideSection(
@@ -615,7 +619,7 @@ public record AetheryteVariation(
                 @Nullable final CastSection cast,
                 @Nullable final VisibilityCostSection visibilityCost
         ) {
-            this(distance, cost, cast, visibilityCost, PetsWarpSection.inherit());
+            this(distance, cost, cast, CastSection.inherit(), visibilityCost, PetsWarpSection.inherit());
         }
 
         public WarpOverrideSection(
@@ -625,9 +629,21 @@ public record AetheryteVariation(
                 @Nullable final VisibilityCostSection visibilityCost,
                 @Nullable final PetsWarpSection pets
         ) {
+            this(distance, cost, cast, CastSection.inherit(), visibilityCost, pets);
+        }
+
+        public WarpOverrideSection(
+                @Nullable final DistanceSection distance,
+                @Nullable final List<CostEntry> cost,
+                @Nullable final CastSection cast,
+                @Nullable final CastSection hubToNetworkCast,
+                @Nullable final VisibilityCostSection visibilityCost,
+                @Nullable final PetsWarpSection pets
+        ) {
             this.distance = distance == null ? DistanceSection.inherit() : distance;
             this.cost = cost == null ? null : List.copyOf(cost);
             this.cast = cast == null ? CastSection.inherit() : cast;
+            this.hubToNetworkCast = hubToNetworkCast == null ? CastSection.inherit() : hubToNetworkCast;
             this.visibilityCost = visibilityCost == null ? VisibilityCostSection.inherit() : visibilityCost;
             this.pets = pets == null ? PetsWarpSection.inherit() : pets;
         }
@@ -636,6 +652,7 @@ public record AetheryteVariation(
             return new WarpOverrideSection(
                     DistanceSection.inherit(),
                     null,
+                    CastSection.inherit(),
                     CastSection.inherit(),
                     VisibilityCostSection.inherit(),
                     PetsWarpSection.inherit()
@@ -663,10 +680,8 @@ public record AetheryteVariation(
             } else {
                 cost = null;
             }
-            final ConfigurationNode castNode = node.node("cast");
-            final CastSection cast = (castNode.virtual() || castNode.isNull() || castNode.raw() == null)
-                    ? CastSection.inherit()
-                    : castNode.get(CastSection.class, CastSection.inherit());
+            final CastSection cast = deserializeCastNode(node.node("cast"));
+            final CastSection hubToNetworkCast = deserializeCastNode(node.node("hub-to-network-cast"));
             final ConfigurationNode visCostNode = node.node("visibility-cost");
             final VisibilityCostSection visibilityCost = (visCostNode.virtual() || visCostNode.isNull() || visCostNode.raw() == null)
                     ? VisibilityCostSection.inherit()
@@ -675,7 +690,13 @@ public record AetheryteVariation(
             final PetsWarpSection pets = (petsNode.virtual() || petsNode.isNull() || petsNode.raw() == null)
                     ? PetsWarpSection.inherit()
                     : PetsWarpSection.Serializer.INSTANCE.deserialize(PetsWarpSection.class, petsNode);
-            return new WarpOverrideSection(distance, cost, cast, visibilityCost, pets);
+            return new WarpOverrideSection(distance, cost, cast, hubToNetworkCast, visibilityCost, pets);
+        }
+
+        private static CastSection deserializeCastNode(final ConfigurationNode castNode) throws SerializationException {
+            return (castNode.virtual() || castNode.isNull() || castNode.raw() == null)
+                    ? CastSection.inherit()
+                    : CastSection.Serializer.INSTANCE.deserialize(CastSection.class, castNode);
         }
 
         @Override
@@ -694,7 +715,12 @@ public record AetheryteVariation(
             } else {
                 node.node("cost").setList(CostEntry.class, obj.cost());
             }
-            node.node("cast").set(CastSection.class, obj.cast());
+            CastSection.Serializer.INSTANCE.serialize(CastSection.class, obj.cast(), node.node("cast"));
+            CastSection.Serializer.INSTANCE.serialize(
+                    CastSection.class,
+                    obj.hubToNetworkCast(),
+                    node.node("hub-to-network-cast")
+            );
             VisibilityCostSection.Serializer.INSTANCE.serialize(
                     VisibilityCostSection.class,
                     obj.visibilityCost(),
@@ -1374,26 +1400,12 @@ public record AetheryteVariation(
                 }
             }
         }
-        final CastSection rawWarpCast = warp.cast() != null ? warp.cast() : CastSection.inherit();
-        final Integer rawCastTicks = rawWarpCast.ticks();
-        final Integer validCastTicks;
-        if (rawCastTicks != null && rawCastTicks < -1) {
-            logger.warn("Invalid warp.cast.ticks {} in variation '{}' (must be >= -1); falling back to -1 (inherit)", rawCastTicks, cleanId);
-            validCastTicks = -1;
-        } else {
-            validCastTicks = rawCastTicks;
-        }
-        final String validPlayerModel = rawWarpCast.playerModel() == null ? null : rawWarpCast.playerModel().strip();
-        final String validCastAnim = rawWarpCast.castAnimation() == null ? null : rawWarpCast.castAnimation().strip();
-        final String validArriveAnim = rawWarpCast.arriveAnimation() == null ? null : rawWarpCast.arriveAnimation().strip();
-        final CastSection validatedWarpCast = new CastSection(
-                validCastTicks,
-                validPlayerModel,
-                validCastAnim,
-                validArriveAnim,
-                rawWarpCast.immobilize(),
-                rawWarpCast.cancel()
-        );
+        final CastSection validatedWarpCast = (warp.cast() != null ? warp.cast() : CastSection.inherit())
+                .validatedOverride("variations." + cleanId + ".warp.cast", logger);
+        final CastSection validatedHubToNetworkCast = (warp.hubToNetworkCast() != null
+                ? warp.hubToNetworkCast()
+                : CastSection.inherit())
+                .validatedOverride("variations." + cleanId + ".warp.hub-to-network-cast", logger);
         final VisibilityCostSection validatedWarpVisibilityCost = (warp.visibilityCost() != null
                 ? warp.visibilityCost()
                 : VisibilityCostSection.inherit())
@@ -1406,6 +1418,7 @@ public record AetheryteVariation(
                 validatedWarpDist,
                 warp.cost(),
                 validatedWarpCast,
+                validatedHubToNetworkCast,
                 validatedWarpVisibilityCost,
                 validatedWarpPets
         );

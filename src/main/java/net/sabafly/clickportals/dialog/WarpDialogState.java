@@ -26,6 +26,7 @@ import org.jspecify.annotations.Nullable;
 public record WarpDialogState(
         ViewMode mode,
         @Nullable UUID targetWorldId,
+        @Nullable UUID targetNetworkId,
         String searchQuery,
         WarpSortOrder sortOrder,
         int page,
@@ -33,10 +34,25 @@ public record WarpDialogState(
 ) {
 
     /**
+     * Backward-compatible constructor without {@code targetNetworkId}.
+     */
+    public WarpDialogState(
+            final ViewMode mode,
+            final @Nullable UUID targetWorldId,
+            final String searchQuery,
+            final WarpSortOrder sortOrder,
+            final int page,
+            final boolean favoriteEditMode
+    ) {
+        this(mode, targetWorldId, null, searchQuery, sortOrder, page, favoriteEditMode);
+    }
+
+    /**
      * Active screen within the warp Dialog hierarchy.
      */
     public enum ViewMode {
         ROOT,
+        NETWORK,
         FAVORITES,
         WORLD,
         ALL,
@@ -60,7 +76,7 @@ public record WarpDialogState(
      * Creates a root-menu state preserving {@code sortOrder} and an existing {@code searchQuery} (#55).
      */
     public static WarpDialogState root(final WarpSortOrder sortOrder, @Nullable final String searchQuery) {
-        return new WarpDialogState(ViewMode.ROOT, null, searchQuery == null ? "" : searchQuery, sortOrder, 0, false);
+        return new WarpDialogState(ViewMode.ROOT, null, null, searchQuery == null ? "" : searchQuery, sortOrder, 0, false);
     }
 
     /**
@@ -71,38 +87,45 @@ public record WarpDialogState(
     }
 
     /**
+     * Returns a state navigating to the specified Hub-hosted network's destination page while preserving {@code searchQuery} (#87).
+     */
+    public WarpDialogState toNetwork(final UUID networkId) {
+        return new WarpDialogState(ViewMode.NETWORK, null, networkId, searchQuery, sortOrder, 0, false);
+    }
+
+    /**
      * Returns a state navigating to the specified world's destination page while preserving {@code searchQuery}.
      */
     public WarpDialogState toWorld(final UUID worldId) {
-        return new WarpDialogState(ViewMode.WORLD, worldId, searchQuery, sortOrder, 0, false);
+        return new WarpDialogState(ViewMode.WORLD, worldId, null, searchQuery, sortOrder, 0, false);
     }
 
     /**
      * Returns a state navigating to the favorites destination page while preserving {@code searchQuery}.
      */
     public WarpDialogState toFavorites() {
-        return new WarpDialogState(ViewMode.FAVORITES, null, searchQuery, sortOrder, 0, false);
+        return new WarpDialogState(ViewMode.FAVORITES, null, null, searchQuery, sortOrder, 0, false);
     }
 
     /**
      * Returns a state navigating to the cross-world search/all-destinations page while preserving {@code searchQuery}.
      */
     public WarpDialogState toAll() {
-        return new WarpDialogState(ViewMode.ALL, null, searchQuery, sortOrder, 0, false);
+        return new WarpDialogState(ViewMode.ALL, null, null, searchQuery, sortOrder, 0, false);
     }
 
     /**
      * Returns a state navigating to the operations/management page while preserving {@code searchQuery}.
      */
     public WarpDialogState toOperations() {
-        return new WarpDialogState(ViewMode.OPERATIONS, null, searchQuery, sortOrder, 0, false);
+        return new WarpDialogState(ViewMode.OPERATIONS, null, null, searchQuery, sortOrder, 0, false);
     }
 
     /**
      * Returns a copy with an updated page index.
      */
     public WarpDialogState withPage(final int newPage) {
-        return new WarpDialogState(mode, targetWorldId, searchQuery, sortOrder, newPage, favoriteEditMode);
+        return new WarpDialogState(mode, targetWorldId, targetNetworkId, searchQuery, sortOrder, newPage, favoriteEditMode);
     }
 
     /**
@@ -110,20 +133,20 @@ public record WarpDialogState(
      */
     public WarpDialogState withSearchQuery(@Nullable final String newQuery) {
         final String normalized = newQuery == null ? "" : newQuery.strip();
-        return new WarpDialogState(mode, targetWorldId, normalized, sortOrder, 0, favoriteEditMode);
+        return new WarpDialogState(mode, targetWorldId, targetNetworkId, normalized, sortOrder, 0, favoriteEditMode);
     }
 
     /**
      * Returns a copy with an updated sort order, resetting the page index to {@code 0}.
      */
     public WarpDialogState withSortOrder(final WarpSortOrder newSortOrder) {
-        return new WarpDialogState(mode, targetWorldId, searchQuery, newSortOrder, 0, favoriteEditMode);
+        return new WarpDialogState(mode, targetWorldId, targetNetworkId, searchQuery, newSortOrder, 0, favoriteEditMode);
     }
 
     /**
      * Returns a copy with toggled favorite edit mode.
      */
     public WarpDialogState withFavoriteEditMode(final boolean enabled) {
-        return new WarpDialogState(mode, targetWorldId, searchQuery, sortOrder, page, enabled);
+        return new WarpDialogState(mode, targetWorldId, targetNetworkId, searchQuery, sortOrder, page, enabled);
     }
 }

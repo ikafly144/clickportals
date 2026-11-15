@@ -20,6 +20,7 @@ package net.sabafly.clickportals.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
+import java.util.Objects;
 import net.sabafly.clickportals.config.CastSection.CastCancelSection;
 import net.sabafly.clickportals.route.DimensionRoutesConfig;
 import net.sabafly.clickportals.variation.AetheryteVariation;
@@ -137,5 +138,59 @@ class CastSectionTest {
         assertThat(validated.warp().cast().playerModel()).isEqualTo("custom");
         assertThat(validated.warp().cast().castAnimation()).isNull();
         assertThat(validated.warp().cast().arriveAnimation()).isEqualTo("arrive");
+    }
+
+    @Test
+    void resolveChainAppliesFourTierHubToNetworkCastFallback() {
+        final CastSection globalNormal = new CastSection(
+                80, "steve", "global_cast", "global_arrive", true, new CastCancelSection(true, true, false)
+        );
+        final CastSection variationNormal = new CastSection(
+                60, "alex", null, "var_arrive", false, new CastCancelSection(false, null, true)
+        );
+        final CastSection globalHubToNet = new CastSection(
+                null, "global_hub_model", "global_hub_cast", null, null, new CastCancelSection(null, false, null)
+        );
+        final CastSection variationHubToNet = new CastSection(
+                10, null, "", null, true, new CastCancelSection(true, null, null)
+        );
+
+        final CastSection.Resolved tier1 = globalNormal.resolve(CastSection.defaults());
+        final CastSection.Resolved tier2 = variationNormal.resolve(tier1);
+        final CastSection.Resolved tier3 = globalHubToNet.resolve(tier2);
+        final CastSection.Resolved resolved = variationHubToNet.resolve(tier3);
+
+        assertThat(resolved.ticks()).isEqualTo(10);
+        assertThat(resolved.playerModel()).isEqualTo("global_hub_model");
+        assertThat(resolved.castAnimation()).isEmpty();
+        assertThat(resolved.arriveAnimation()).isEqualTo("var_arrive");
+        assertThat(resolved.immobilize()).isTrue();
+        assertThat(resolved.cancelOnMove()).isTrue();
+        assertThat(resolved.cancelOnDamage()).isFalse();
+        assertThat(resolved.cancelOnInteract()).isTrue();
+    }
+
+    @Test
+    void validatedOverrideClampsNegativeTicksAndTrimsBlankFields() {
+        final Logger logger = mock(Logger.class);
+        final CastSection raw = new CastSection(
+                -5,
+                "   ",
+                "   ",
+                " custom_arrive ",
+                false,
+                new CastCancelSection(true, null, false)
+        );
+
+        final CastSection validated = raw.validatedOverride("warp.hub-to-network-cast", logger);
+        assertThat(validated.ticks()).isEqualTo(-1);
+        assertThat(validated.playerModel()).isNull();
+        assertThat(validated.castAnimation()).isEmpty();
+        assertThat(validated.arriveAnimation()).isEqualTo("custom_arrive");
+        assertThat(validated.immobilize()).isFalse();
+        final CastCancelSection cancel = Objects.requireNonNull(validated.cancel());
+        assertThat(cancel.onMove()).isTrue();
+        assertThat(cancel.onDamage()).isNull();
+        assertThat(cancel.onInteract()).isFalse();
     }
 }

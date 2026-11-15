@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Objects;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import org.bukkit.Material;
 import org.junit.jupiter.api.Test;
@@ -368,5 +369,56 @@ class VariationLoaderTest {
         assertThat(isolated.isNetwork()).isFalse();
         assertThat(isolated.network().allowHubOrDefault()).isFalse();
         assertThat(isolated.canBeNetworkHub()).isFalse();
+    }
+
+    @Test
+    void hubToNetworkCastVariationOverrideLoadsNullsAndIsSchemaSyncIdempotent() throws IOException {
+        final Path aetheryteDir = tempDir.resolve("hub_cast_variation");
+        Files.createDirectories(aetheryteDir);
+        final Path hubFile = aetheryteDir.resolve("hub_city.yml");
+        Files.writeString(hubFile, """
+                display-name: "<gold>Hub City</gold>"
+                recipe:
+                  enabled: false
+                warp:
+                  cast:
+                    ticks: 40
+                  hub-to-network-cast:
+                    ticks: 5
+                    immobilize: false
+                    cancel:
+                      on-damage: true
+                """, StandardCharsets.UTF_8);
+
+        final VariationRegistry firstLoad = VariationRegistry.load(aetheryteDir, mock(Logger.class), true);
+        final AetheryteVariation hub = firstLoad.getOrDefault("hub_city");
+        assertThat(hub.warp().cast().ticks()).isEqualTo(40);
+        assertThat(hub.warp().hubToNetworkCast().ticks()).isEqualTo(5);
+        assertThat(hub.warp().hubToNetworkCast().playerModel()).isNull();
+        assertThat(hub.warp().hubToNetworkCast().castAnimation()).isNull();
+        assertThat(hub.warp().hubToNetworkCast().immobilize()).isFalse();
+        final var cancel = Objects.requireNonNull(hub.warp().hubToNetworkCast().cancel());
+        assertThat(cancel.onMove()).isNull();
+        assertThat(cancel.onDamage()).isTrue();
+        assertThat(cancel.onInteract()).isNull();
+
+        final String syncedContent = Files.readString(hubFile, StandardCharsets.UTF_8);
+        assertThat(syncedContent).contains("hub-to-network-cast:");
+
+        // Clean initial sync backups and verify second sync run is strictly idempotent
+        try (var stream = Files.list(aetheryteDir)) {
+            for (final Path path : stream.toList()) {
+                if (path.getFileName().toString().endsWith(".bak")) {
+                    Files.deleteIfExists(path);
+                }
+            }
+        }
+        final VariationRegistry secondLoad = VariationRegistry.load(aetheryteDir, mock(Logger.class), true);
+        assertThat(secondLoad.getOrDefault("hub_city").warp().hubToNetworkCast())
+                .isEqualTo(hub.warp().hubToNetworkCast());
+        try (var stream = Files.list(aetheryteDir)) {
+            assertThat(stream.map(p -> p.getFileName().toString()))
+                    .noneMatch(name -> name.endsWith(".bak"));
+        }
     }
 }

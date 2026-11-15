@@ -301,6 +301,10 @@ public record PluginConfig(
             @Comment("Default warp casting (cast time and BetterModel player animation) settings (#65)")
             CastSection cast,
 
+            @Setting("hub-to-network-cast")
+            @Comment("Optional cast overrides when warping from a Hub Aetheryte to a child network Aetheryte (-1/null inherits warp.cast) (#86)")
+            CastSection hubToNetworkCast,
+
             @Setting("visibility-cost")
             @Comment("Cost overrides per destination visibility mode (null = use base cost, [] = free) (#25)")
             VisibilityCostSection visibilityCost,
@@ -319,6 +323,9 @@ public record PluginConfig(
             if (cast == null) {
                 cast = CastSection.defaults();
             }
+            if (hubToNetworkCast == null) {
+                hubToNetworkCast = CastSection.inherit();
+            }
             if (visibilityCost == null) {
                 visibilityCost = VisibilityCostSection.defaults();
             }
@@ -332,7 +339,7 @@ public record PluginConfig(
                 final List<CostEntry> cost,
                 final boolean showOptionalCosts
         ) {
-            this(distance, cost, showOptionalCosts, CastSection.defaults(), VisibilityCostSection.defaults(), PetsWarpSection.defaults());
+            this(distance, cost, showOptionalCosts, CastSection.defaults(), CastSection.inherit(), VisibilityCostSection.defaults(), PetsWarpSection.defaults());
         }
 
         public WarpSection(
@@ -341,7 +348,7 @@ public record PluginConfig(
                 final boolean showOptionalCosts,
                 final CastSection cast
         ) {
-            this(distance, cost, showOptionalCosts, cast, VisibilityCostSection.defaults(), PetsWarpSection.defaults());
+            this(distance, cost, showOptionalCosts, cast, CastSection.inherit(), VisibilityCostSection.defaults(), PetsWarpSection.defaults());
         }
 
         public WarpSection(
@@ -351,7 +358,18 @@ public record PluginConfig(
                 final CastSection cast,
                 final VisibilityCostSection visibilityCost
         ) {
-            this(distance, cost, showOptionalCosts, cast, visibilityCost, PetsWarpSection.defaults());
+            this(distance, cost, showOptionalCosts, cast, CastSection.inherit(), visibilityCost, PetsWarpSection.defaults());
+        }
+
+        public WarpSection(
+                final DistanceSection distance,
+                final List<CostEntry> cost,
+                final boolean showOptionalCosts,
+                final CastSection cast,
+                final VisibilityCostSection visibilityCost,
+                final PetsWarpSection pets
+        ) {
+            this(distance, cost, showOptionalCosts, cast, CastSection.inherit(), visibilityCost, pets);
         }
 
         public static WarpSection defaults() {
@@ -360,6 +378,7 @@ public record PluginConfig(
                     List.of(),
                     true,
                     CastSection.defaults(),
+                    CastSection.inherit(),
                     VisibilityCostSection.defaults(),
                     PetsWarpSection.defaults()
             );
@@ -588,6 +607,9 @@ public record PluginConfig(
                 validCancel
         );
 
+        final CastSection validHubToNetworkCast =
+                (warp.hubToNetworkCast() != null ? warp.hubToNetworkCast() : CastSection.inherit())
+                        .validatedOverride("warp.hub-to-network-cast", logger);
         final VisibilityCostSection validVisibilityCost =
                 (warp.visibilityCost() != null ? warp.visibilityCost() : VisibilityCostSection.defaults())
                         .validated("warp.visibility-cost", logger);
@@ -598,6 +620,7 @@ public record PluginConfig(
                 warp.cost(),
                 warp.showOptionalCosts(),
                 validCast,
+                validHubToNetworkCast,
                 validVisibilityCost,
                 validPets
         );
