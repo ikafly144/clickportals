@@ -883,7 +883,9 @@ public final class ConfiguredWarpCostEvaluator implements WarpCostEvaluator {
             final @Nullable Aetheryte source,
             final Aetheryte destination
     ) {
-        if (!WarpDestinationQuery.canRouteBetweenAetherytes(source, destination)) {
+        final Function<UUID, @Nullable AetheryteNetwork> networkLookup =
+                registry != null ? id -> registry.getNetworkById(id).orElse(null) : id -> null;
+        if (!WarpDestinationQuery.canRouteBetweenAetherytes(source, destination, networkLookup)) {
             return DenyReason.NETWORK_MISMATCH;
         }
         if (destination.networkId() != null) {

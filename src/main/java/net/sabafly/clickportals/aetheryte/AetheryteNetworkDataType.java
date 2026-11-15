@@ -27,6 +27,7 @@ import org.bukkit.NamespacedKey;
 import org.bukkit.persistence.PersistentDataAdapterContext;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Paper {@link PersistentDataType} serializing {@link AetheryteNetwork} instances into world PDC (#27).
@@ -43,6 +44,7 @@ public final class AetheryteNetworkDataType implements PersistentDataType<Persis
     private static final NamespacedKey KEY_CREATED_AT = new NamespacedKey(NAMESPACE, "created_at");
     private static final NamespacedKey KEY_VISIBILITY = new NamespacedKey(NAMESPACE, "visibility");
     private static final NamespacedKey KEY_INVITEES = new NamespacedKey(NAMESPACE, "invitees");
+    private static final NamespacedKey KEY_HUB_ID = new NamespacedKey(NAMESPACE, "hub_id");
 
     public static final AetheryteNetworkDataType INSTANCE = new AetheryteNetworkDataType();
 
@@ -82,6 +84,9 @@ public final class AetheryteNetworkDataType implements PersistentDataType<Persis
             }
             container.set(KEY_INVITEES, PersistentDataType.LIST.strings(), inviteeStrings);
         }
+        if (complex.hubAetheryteId() != null) {
+            container.set(KEY_HUB_ID, PersistentDataType.STRING, complex.hubAetheryteId().toString());
+        }
         return container;
     }
 
@@ -111,6 +116,7 @@ public final class AetheryteNetworkDataType implements PersistentDataType<Persis
                 }
             }
         }
+        final @Nullable UUID hubId = parseOptionalUuid(primitive.get(KEY_HUB_ID, PersistentDataType.STRING));
         return new AetheryteNetwork(
                 UUID.fromString(idStr),
                 name,
@@ -120,7 +126,19 @@ public final class AetheryteNetworkDataType implements PersistentDataType<Persis
                 ownerName,
                 createdAt,
                 visibility,
-                invitees
+                invitees,
+                hubId
         );
+    }
+
+    private static @Nullable UUID parseOptionalUuid(final @Nullable String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw);
+        } catch (final IllegalArgumentException ignored) {
+            return null;
+        }
     }
 }

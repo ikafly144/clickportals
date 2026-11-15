@@ -37,12 +37,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.aetheryte.AetheryteNetwork;
+import net.sabafly.clickportals.aetheryte.AetheryteVisibility;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.dialog.WarpSortOrder;
 import net.sabafly.clickportals.message.Messages;
@@ -346,6 +349,103 @@ class AetheryteManagementServiceTest {
             verify(hologramService, times(2)).showAetheryte(syncedCaptor.capture());
             assertThat(syncedCaptor.getAllValues().getLast()).isEqualTo(updated);
             verify(modelService, times(2)).unregisterAetheryte(target.id());
+        });
+    }
+
+    @Test
+    void removeHubProtectsChildNetworksForNonAdminAndCascadesForAdmin() throws Exception {
+        final Aetheryte hub = createAetheryte("TownHub", ownerId, "Alice");
+        registry.register(world, hub);
+
+        final UUID netId = UUID.randomUUID();
+        final AetheryteNetwork net = new AetheryteNetwork(
+                netId, "TownNet", worldId, "world", ownerId, "Alice", 2L,
+                AetheryteVisibility.PUBLIC, Set.of(), hub.id());
+        registry.registerNetwork(world, net);
+
+        final Aetheryte child = new Aetheryte(
+                UUID.randomUUID(), "Outpost", worldId, "world", 50, 64, 50, ownerId, 3L,
+                "net_var", "Alice", AetheryteVisibility.PUBLIC,
+                Set.of(), netId);
+        registry.register(world, child);
+
+        final Player nonAdminOwner = mockPlayer(ownerId, "Alice");
+        final Player admin = mockPlayer(otherPlayerId, "Admin");
+        when(admin.hasPermission(Permissions.REMOVE_ANY)).thenReturn(true);
+        when(admin.hasPermission(Permissions.ADMIN)).thenReturn(true);
+
+        withMockServer(() -> {
+            // Non-admin owner cannot remove Hub while child Aetherytes exist
+            service.removeAetheryte(nonAdminOwner, hub.id(), true);
+            assertThat(registry.getById(hub.id())).isPresent();
+            assertThat(registry.getById(child.id())).isPresent();
+            assertThat(registry.getNetworkById(netId)).isPresent();
+
+            // Admin cascade-removes Hub + hosted network + child Aetheryte without refunding child
+            service.removeAetheryte(admin, hub.id(), false);
+            assertThat(registry.getById(hub.id())).isEmpty();
+            assertThat(registry.getById(child.id())).isEmpty();
+            assertThat(registry.getNetworkById(netId)).isEmpty();
+            verify(hologramService, atLeastOnce()).hideAetheryte(child.id());
+            verify(modelService, atLeastOnce()).unregisterAetheryte(child.id());
+        });
+    }
+
+    @Test
+    void changeVariationRejectsIncompatibleHubAndNetworkSwitches() throws Exception {
+        final Aetheryte hub = createAetheryte("BusyHub", ownerId, "Alice");
+        registry.register(world, hub);
+        final AetheryteNetwork net = new AetheryteNetwork(
+                UUID.randomUUID(), "Net", worldId, "world", ownerId, "Alice", 2L,
+                AetheryteVisibility.PUBLIC, Set.of(), hub.id());
+        registry.registerNetwork(world, net);
+
+        final AetheryteVariation def = AetheryteVariation.defaultVariation();
+        final AetheryteVariation noHubVar = new AetheryteVariation(
+                def.displayName(),
+                AetheryteVariation.VariationType.NORMAL,
+                def.item(),
+                def.recipe(),
+                def.model(),
+                def.hitbox(),
+                def.teleport(),
+                def.placement(),
+                def.limit(),
+                def.warp(),
+                new AetheryteVariation.NetworkSection(def.network().limit(), def.network().cost(), false),
+                def.bettermodel(),
+                def.sounds()
+        );
+        final AetheryteVariation networkTypeVar = new AetheryteVariation(
+                def.displayName(),
+                AetheryteVariation.VariationType.NETWORK,
+                def.item(),
+                def.recipe(),
+                def.model(),
+                def.hitbox(),
+                def.teleport(),
+                def.placement(),
+                def.limit(),
+                def.warp(),
+                def.network(),
+                def.bettermodel(),
+                def.sounds()
+        );
+        when(variationRegistry.find("no_hub")).thenReturn(Optional.of(noHubVar));
+        when(variationRegistry.find("net_only")).thenReturn(Optional.of(networkTypeVar));
+
+        final Player admin = mockPlayer(otherPlayerId, "Admin");
+        when(admin.hasPermission(Permissions.ADMIN)).thenReturn(true);
+
+        withMockServer(() -> {
+            // Hub hosting networks cannot switch to allow-hub: false or type: network
+            service.changeVariation(admin, hub.id(), "no_hub");
+            assertThat(registry.getById(hub.id())).get().extracting(Aetheryte::variation)
+                    .isEqualTo(Aetheryte.DEFAULT_VARIATION);
+
+            service.changeVariation(admin, hub.id(), "net_only");
+            assertThat(registry.getById(hub.id())).get().extracting(Aetheryte::variation)
+                    .isEqualTo(Aetheryte.DEFAULT_VARIATION);
         });
     }
 

@@ -1707,7 +1707,18 @@ public final class AetheryteService {
         if (source == null) {
             return true;
         }
-        return WarpDestinationQuery.canRouteBetweenAetherytes(source, destination);
+        return WarpDestinationQuery.canRouteBetweenAetherytes(
+                source,
+                destination,
+                id -> registry.getNetworkById(id).orElse(null)
+        );
+    }
+
+    /**
+     * Plays the configured error sound to {@code player} using {@code variation}'s overrides (#77).
+     */
+    public void playErrorSound(final Player player, final String variation) {
+        soundService.playError(player, variation);
     }
 
     /**
@@ -2196,14 +2207,24 @@ public final class AetheryteService {
         return evaluation;
     }
 
+    private boolean hasValidHub(final AetheryteNetwork network, final UUID worldId) {
+        final @Nullable UUID hubId = network.hubAetheryteId();
+        if (hubId == null) {
+            return false;
+        }
+        return registry.getById(hubId)
+                .filter(hub -> hub.worldId().equals(worldId) && hub.networkId() == null)
+                .isPresent();
+    }
+
     /**
-     * Lists existing Aetheryte networks in {@code worldId} that {@code player} is allowed to join (#27).
+     * Lists existing Hub-backed Aetheryte networks in {@code worldId} that {@code player} is allowed to join (#27).
      */
     public List<AetheryteNetwork> listJoinableNetworks(final Player player, final UUID worldId) {
         final UUID playerId = player.getUniqueId();
         final boolean admin = Permissions.canAdmin(player);
         return registry.getNetworksByWorld(worldId).stream()
-                .filter(net -> net.canJoin(playerId, admin))
+                .filter(net -> hasValidHub(net, worldId) && net.canJoin(playerId, admin))
                 .sorted(java.util.Comparator
                         .comparing((AetheryteNetwork net) -> !net.ownerId().equals(playerId))
                         .thenComparing(AetheryteNetwork::name, String.CASE_INSENSITIVE_ORDER))
@@ -2305,22 +2326,33 @@ public final class AetheryteService {
         final boolean bypassLimit = Permissions.canBypassLimit(player);
         final boolean canBypassDistance = Permissions.canBypassPlacementDistance(player);
         final boolean networkVariation = variation.isNetwork();
-        final boolean creatingNewNetwork = networkVariation && joinNetworkId == null;
 
         final AetheryteVisibility requestedVisibility =
                 initialVisibility != null ? initialVisibility : AetheryteVisibility.PUBLIC;
         final AetheryteVisibility effectiveVisibility;
-        final @Nullable String resolvedNewNetworkName;
 
         final int effectiveMaxGlobalNetworks = bypassLimit ? -1 : maxNetworksPerPlayerSupplier.getAsInt();
         final int effectiveMaxVariationNetworks = bypassLimit ? -1 : variation.network().limit().maxPerPlayerOrDefault();
         final int effectiveMaxNetworkAetherytes = bypassLimit ? -1 : variation.network().limit().maxAetheryteOrDefault();
         final double effectiveMaxNetworkDistance = canBypassDistance ? -1.0 : variation.network().limit().maxDistanceOrDefault();
 
-        if (networkVariation && joinNetworkId != null) {
+        if (networkVariation) {
+            if (joinNetworkId == null) {
+                final MessageKey errKey = listJoinableNetworks(player, world.getUID()).isEmpty()
+                        ? MessageKey.ERROR_NO_JOINABLE_NETWORKS
+                        : MessageKey.ERROR_NETWORK_HUB_REQUIRED;
+                messages.send(player, errKey);
+                soundService.playError(player, normalizedVar);
+                return;
+            }
             final AetheryteNetwork existingNet = registry.getNetworkById(joinNetworkId).orElse(null);
             if (existingNet == null || !existingNet.worldId().equals(world.getUID())) {
                 messages.send(player, MessageKey.ERROR_NETWORK_NOT_FOUND);
+                soundService.playError(player, normalizedVar);
+                return;
+            }
+            if (!hasValidHub(existingNet, world.getUID())) {
+                messages.send(player, MessageKey.ERROR_NETWORK_HUB_REQUIRED);
                 soundService.playError(player, normalizedVar);
                 return;
             }
@@ -2341,38 +2373,8 @@ public final class AetheryteService {
                 return;
             }
             effectiveVisibility = existingNet.visibility();
-            resolvedNewNetworkName = null;
-        } else if (creatingNewNetwork) {
-            if (newNetworkName != null && !newNetworkName.isBlank()) {
-                final Optional<String> validNetName = sanitizeName(newNetworkName);
-                if (validNetName.isEmpty()) {
-                    messages.send(player, MessageKey.ERROR_INVALID_NAME);
-                    return;
-                }
-                resolvedNewNetworkName = validNetName.get();
-            } else {
-                resolvedNewNetworkName = name;
-            }
-            if (effectiveMaxGlobalNetworks >= 0 && registry.countNetworksByOwner(ownerId) >= effectiveMaxGlobalNetworks) {
-                player.sendMessage(messages.errorNetworkLimitGlobal(player, effectiveMaxGlobalNetworks));
-                soundService.playError(player, normalizedVar);
-                return;
-            }
-            if (effectiveMaxVariationNetworks >= 0
-                    && registry.countNetworksByOwnerAndVariation(ownerId, normalizedVar) >= effectiveMaxVariationNetworks) {
-                player.sendMessage(messages.errorNetworkLimitVariation(player, variation.displayName(), effectiveMaxVariationNetworks));
-                soundService.playError(player, normalizedVar);
-                return;
-            }
-            if (effectiveMaxNetworkAetherytes == 0) {
-                player.sendMessage(messages.errorNetworkAetheryteLimit(player, 0));
-                soundService.playError(player, normalizedVar);
-                return;
-            }
-            effectiveVisibility = requestedVisibility;
         } else {
             effectiveVisibility = requestedVisibility;
-            resolvedNewNetworkName = null;
         }
 
         final Location targetLocation = new Location(world, blockX, blockY, blockZ);
@@ -2407,7 +2409,7 @@ public final class AetheryteService {
             final boolean bypassCost = Permissions.canBypassPlaceCost(player);
             final List<CostEntry> basePlacementEntries = resolvePlacementCostEntries(variation, effectiveVisibility);
             final List<CostEntry> networkExtraEntries = networkVariation
-                    ? resolveNetworkExtraCostEntries(variation, creatingNewNetwork)
+                    ? resolveNetworkExtraCostEntries(variation, false)
                     : List.of();
             final List<CostEntry> combinedPlacementEntries = new ArrayList<>(basePlacementEntries.size() + networkExtraEntries.size());
             combinedPlacementEntries.addAll(basePlacementEntries);
@@ -2486,29 +2488,21 @@ public final class AetheryteService {
                         return;
                     }
 
-                    final AetheryteNetwork createdNetwork;
-                    final UUID assignedNetworkId;
+                    final @Nullable UUID assignedNetworkId;
                     final AetheryteVisibility storedVisibility;
-                    if (creatingNewNetwork) {
-                        assignedNetworkId = UUID.randomUUID();
-                        storedVisibility = effectiveVisibility;
-                        createdNetwork = new AetheryteNetwork(
-                                assignedNetworkId,
-                                resolvedNewNetworkName != null ? resolvedNewNetworkName : name,
-                                world.getUID(),
-                                world.getName(),
-                                ownerId,
-                                player.getName(),
-                                System.currentTimeMillis(),
-                                storedVisibility,
-                                Set.of()
-                        );
-                    } else if (networkVariation && joinNetworkId != null) {
+                    if (networkVariation && joinNetworkId != null) {
                         final AetheryteNetwork latestJoinNet = registry.getNetworkById(joinNetworkId).orElse(null);
                         if (latestJoinNet == null || !latestJoinNet.worldId().equals(world.getUID())) {
                             refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
                             pendingPlacements.remove(ownerId);
                             messages.send(player, MessageKey.ERROR_NETWORK_NOT_FOUND);
+                            soundService.playError(player, normalizedVar);
+                            return;
+                        }
+                        if (!hasValidHub(latestJoinNet, world.getUID())) {
+                            refundPlacement(player, targetLocation, normalizedVar, creative, bypassCost, placementCostBundle, chargedPlacementQuote, activeEconomy);
+                            pendingPlacements.remove(ownerId);
+                            messages.send(player, MessageKey.ERROR_NETWORK_HUB_REQUIRED);
                             soundService.playError(player, normalizedVar);
                             return;
                         }
@@ -2521,11 +2515,9 @@ public final class AetheryteService {
                         }
                         assignedNetworkId = latestJoinNet.id();
                         storedVisibility = latestJoinNet.visibility();
-                        createdNetwork = null;
                     } else {
                         assignedNetworkId = null;
                         storedVisibility = effectiveVisibility;
-                        createdNetwork = null;
                     }
 
                     final Aetheryte aetheryte = new Aetheryte(
@@ -2566,7 +2558,7 @@ public final class AetheryteService {
                             ? registry.tryRegisterInNetwork(
                                     world,
                                     aetheryte,
-                                    createdNetwork,
+                                    null,
                                     effectiveMaxGlobal,
                                     effectiveMaxVariation,
                                     effectiveMinDist,
@@ -2598,6 +2590,7 @@ public final class AetheryteService {
                                     messages.errorLimitReachedVariation(player, variation.displayName(), effectiveMaxVariation)
                             );
                             case NETWORK_NOT_FOUND -> messages.send(player, MessageKey.ERROR_NETWORK_NOT_FOUND);
+                            case NETWORK_HUB_REQUIRED -> messages.send(player, MessageKey.ERROR_NETWORK_HUB_REQUIRED);
                             case GLOBAL_NETWORK_LIMIT_REACHED ->
                                     player.sendMessage(messages.errorNetworkLimitGlobal(player, effectiveMaxGlobalNetworks));
                             case VARIATION_NETWORK_LIMIT_REACHED -> player.sendMessage(
@@ -2780,6 +2773,8 @@ public final class AetheryteService {
 
     /**
      * Removes an existing Aetheryte, optionally refunding its creation item (#38, #57).
+     * Hub Aetherytes with existing child Aetherytes cannot be removed by regular players; admins bypass this guard
+     * and cascade-remove all hosted networks and child Aetherytes without refunding child items (#27).
      */
     public void removeAetheryte(final Player player, final UUID aetheryteId, final boolean refundItem) {
         final Optional<Aetheryte> opt = registry.getById(aetheryteId);
@@ -2795,6 +2790,15 @@ public final class AetheryteService {
         if (!canRemove(player, aetheryte)) {
             messages.send(player, MessageKey.ERROR_NOT_OWNER);
             return;
+        }
+        if (aetheryte.networkId() == null) {
+            final int childCount = registry.countChildAetherytesByHub(aetheryte.id());
+            if (childCount > 0 && !canAdmin(player)) {
+                final int networkCount = registry.getNetworksByHub(aetheryte.id()).size();
+                player.sendMessage(messages.errorHubHasChildNetworks(player, aetheryte.name(), networkCount, childCount));
+                soundService.playError(player, aetheryte.variation());
+                return;
+            }
         }
         final World world = Bukkit.getWorld(aetheryte.worldId());
         if (world == null) {
@@ -2818,34 +2822,80 @@ public final class AetheryteService {
                 messages.send(player, MessageKey.ERROR_NOT_OWNER);
                 return;
             }
-            final Optional<Aetheryte> removed = registry.unregister(world, latest.id());
-            if (removed.isEmpty()) {
-                messages.send(player, MessageKey.ERROR_NOT_FOUND);
+            final int childCount = latest.networkId() == null ? registry.countChildAetherytesByHub(latest.id()) : 0;
+            if (childCount > 0 && !canAdmin(player)) {
+                final int networkCount = registry.getNetworksByHub(latest.id()).size();
+                player.sendMessage(messages.errorHubHasChildNetworks(player, latest.name(), networkCount, childCount));
+                soundService.playError(player, latest.variation());
                 return;
             }
-            final Aetheryte removedTarget = removed.get();
 
-            removeMarkerEntitiesAt(world, removedTarget);
-
-            // Clean up legacy Lodestone block if present from v0.1 worlds
-            final Block block = world.getBlockAt(removedTarget.blockX(), removedTarget.blockY(), removedTarget.blockZ());
-            if (block.getType() == Material.LODESTONE) {
-                block.setType(Material.AIR, true);
+            final Aetheryte removedTarget;
+            final int cascadedNetworks;
+            final int cascadedChildren;
+            if (childCount > 0) {
+                final Optional<AetheryteRegistry.HubCascadeRemoval> cascadeOpt =
+                        registry.unregisterHubCascade(world, latest.id());
+                if (cascadeOpt.isEmpty()) {
+                    messages.send(player, MessageKey.ERROR_NOT_FOUND);
+                    return;
+                }
+                final AetheryteRegistry.HubCascadeRemoval cascade = cascadeOpt.get();
+                removedTarget = cascade.hub();
+                cascadedNetworks = cascade.removedNetworks().size();
+                cascadedChildren = cascade.removedChildren().size();
+                for (final Aetheryte child : cascade.removedChildren()) {
+                    cleanupChildAetheryteInRegion(world, child);
+                }
+            } else {
+                final Optional<Aetheryte> removed = registry.unregister(world, latest.id());
+                if (removed.isEmpty()) {
+                    messages.send(player, MessageKey.ERROR_NOT_FOUND);
+                    return;
+                }
+                removedTarget = removed.get();
+                cascadedNetworks = 0;
+                cascadedChildren = 0;
             }
 
-            modelService.unregisterAetheryte(removedTarget.id());
-            hologramService.hideAetheryte(removedTarget.id());
+            cleanupPhysicalAetheryteArtifacts(world, removedTarget);
             soundService.playAtLocation(blockLoc, SoundEventType.DESTROY, removedTarget.variation());
 
             if (refundItem && player.getGameMode() != GameMode.CREATIVE) {
                 refundItemToPlayer(player, blockLoc, removedTarget.variation());
             }
-            if (refundItem) {
+            if (cascadedChildren > 0) {
+                player.sendMessage(messages.aetheryteHubCascadeRemoved(
+                        player, removedTarget.name(), cascadedNetworks, cascadedChildren));
+            } else if (refundItem) {
                 player.sendMessage(messages.aetheryteRemoved(player, removedTarget.name()));
             } else {
                 player.sendMessage(messages.get(player, MessageKey.AETHERYTE_FORCE_REMOVED, Placeholder.unparsed("name", removedTarget.name())));
             }
         });
+    }
+
+    private void cleanupChildAetheryteInRegion(final World fallbackWorld, final Aetheryte child) {
+        final @Nullable World childWorld = Bukkit.getWorld(child.worldId());
+        final World effectiveWorld = childWorld != null ? childWorld : fallbackWorld;
+        modelService.unregisterAetheryte(child.id());
+        hologramService.hideAetheryte(child.id());
+        Bukkit.getRegionScheduler().execute(
+                plugin,
+                child.blockLocation(effectiveWorld),
+                () -> cleanupPhysicalAetheryteArtifacts(effectiveWorld, child)
+        );
+    }
+
+    private void cleanupPhysicalAetheryteArtifacts(final World world, final Aetheryte target) {
+        removeMarkerEntitiesAt(world, target);
+        // Clean up legacy Lodestone block if present from v0.1 worlds
+        final Block block = world.getBlockAt(target.blockX(), target.blockY(), target.blockZ());
+        if (block.getType() == Material.LODESTONE) {
+            block.setType(Material.AIR, true);
+        }
+        modelService.unregisterAetheryte(target.id());
+        hologramService.hideAetheryte(target.id());
     }
 
     /**
@@ -2937,11 +2987,34 @@ public final class AetheryteService {
             actor.sendMessage(messages.commandUnknownVariation(actor, variationId));
             return;
         }
+        final Aetheryte initial = opt.get();
         final AetheryteVariation variation = variationOpt.get();
+        if (initial.networkId() == null && variation.isNetwork()) {
+            messages.send(actor, MessageKey.ERROR_VARIATION_REQUIRES_HUB_NETWORK);
+            return;
+        }
+        final int hostedCount = initial.networkId() == null ? registry.getNetworksByHub(initial.id()).size() : 0;
+        if (hostedCount > 0 && !variation.canBeNetworkHub()) {
+            actor.sendMessage(messages.errorHubHasNetworks(actor, initial.name(), hostedCount));
+            return;
+        }
         executeAetheryteUpdate(
                 actor,
-                opt.get(),
-                latest -> canAdmin(actor) ? null : MessageKey.ERROR_NO_PERMISSION,
+                initial,
+                latest -> {
+                    if (!canAdmin(actor)) {
+                        return MessageKey.ERROR_NO_PERMISSION;
+                    }
+                    if (latest.networkId() == null && variation.isNetwork()) {
+                        return MessageKey.ERROR_VARIATION_REQUIRES_HUB_NETWORK;
+                    }
+                    if (latest.networkId() == null
+                            && !variation.canBeNetworkHub()
+                            && !registry.getNetworksByHub(latest.id()).isEmpty()) {
+                        return MessageKey.ERROR_HUB_HAS_NETWORKS;
+                    }
+                    return null;
+                },
                 a -> a.withVariation(normalizedVar),
                 (world, previous, updated) -> {
                     refreshAllVisuals(world, updated, variation);
@@ -3079,32 +3152,15 @@ public final class AetheryteService {
                 messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
                 return;
             }
-            executeNetworkUpdate(
+            executeNetworkVisibilityChange(
                     actor,
                     network.id(),
+                    currentVisibility,
+                    targetVisibility,
                     world,
                     initial.blockLocation(world),
-                    currentNet -> {
-                        if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), currentNet)) {
-                            return MessageKey.ERROR_CANNOT_MANAGE_NETWORK;
-                        }
-                        if (currentNet.visibility() != currentVisibility) {
-                            return MessageKey.ERROR_VISIBILITY_UNCHANGED;
-                        }
-                        return null;
-                    },
-                    currentNet -> currentNet.withVisibility(targetVisibility),
-                    (w, updatedNet) -> {
-                        refreshNetworkMemberHolograms(w, updatedNet.id());
-                        actor.sendMessage(messages.aetheryteVisibilityChanged(
-                                actor, updatedNet.name(), updatedNet.visibility()));
-                        if (!finalChargedCost.isFree()) {
-                            actor.sendMessage(messages.aetheryteVisibilityCostCharged(
-                                    actor,
-                                    CostFormatter.format(messages.locale(actor), finalChargedCost, activeEconomy, messages, false)
-                            ));
-                        }
-                    },
+                    finalChargedCost,
+                    activeEconomy,
                     rollbackCharge
             );
             return;
@@ -3138,6 +3194,350 @@ public final class AetheryteService {
     }
 
     /**
+     * Changes the visibility of an {@link AetheryteNetwork} directly by its ID from a Hub management dialog (#27).
+     */
+    public void changeNetworkVisibilityById(
+            final Player actor,
+            final UUID networkId,
+            final AetheryteVisibility targetVisibility
+    ) {
+        final Optional<AetheryteNetwork> netOpt = registry.getNetworkById(networkId);
+        if (netOpt.isEmpty()) {
+            messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+            return;
+        }
+        final AetheryteNetwork network = netOpt.get();
+        if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), network)) {
+            messages.send(actor, MessageKey.ERROR_CANNOT_MANAGE_NETWORK);
+            return;
+        }
+        if (network.visibility() == targetVisibility) {
+            messages.send(actor, MessageKey.ERROR_VISIBILITY_UNCHANGED);
+            return;
+        }
+        final World world = Bukkit.getWorld(network.worldId());
+        if (world == null) {
+            messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+            return;
+        }
+        final @Nullable Aetheryte hub = network.hubAetheryteId() != null
+                ? registry.getById(network.hubAetheryteId()).orElse(null)
+                : null;
+        final String normalizedVar = hub != null ? Aetheryte.normalizeVariation(hub.variation()) : Aetheryte.DEFAULT_VARIATION;
+        final AetheryteVariation variation = variationRegistry.getOrDefault(normalizedVar);
+        final CostBundle placementCostBundle = new CostBundle(resolvePlacementCostEntries(variation, targetVisibility));
+        final EconomyProvider activeEconomy = this.economyProvider;
+        final boolean creative = actor.getGameMode() == GameMode.CREATIVE;
+        final boolean bypassCost = Permissions.canBypassPlaceCost(actor);
+
+        CostQuote chargedCost = CostQuote.FREE;
+        if (!creative && !bypassCost && !placementCostBundle.isEmpty()) {
+            final CostQuote targetQuote = computePlacementCostQuote(
+                    actor, network.ownerId(), normalizedVar, targetVisibility, activeEconomy);
+            if (!targetQuote.isFree()) {
+                if (!targetQuote.affordable()) {
+                    final Component reason = CostFormatter.formatMissingRequirements(
+                            actor, targetQuote, activeEconomy, messages);
+                    actor.sendMessage(messages.get(
+                            actor,
+                            MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT,
+                            Placeholder.component("reason", reason)
+                    ));
+                    soundService.playError(actor, normalizedVar);
+                    return;
+                }
+                final CostBundle.ChargeResult chargeResult = placementCostBundle.chargeWithResult(
+                        actor, targetQuote, activeEconomy);
+                if (!chargeResult.success()) {
+                    if (!chargeResult.unrefundedItems().isEmpty()) {
+                        recordPendingRefund(actor.getUniqueId(), chargeResult.unrefundedItems());
+                    }
+                    final Component reason = CostFormatter.formatMissingRequirements(
+                            actor, targetQuote, activeEconomy, messages);
+                    actor.sendMessage(messages.get(
+                            actor,
+                            MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT,
+                            Placeholder.component("reason", reason)
+                    ));
+                    soundService.playError(actor, normalizedVar);
+                    return;
+                }
+                chargedCost = chargeResult.chargedQuote();
+            }
+        }
+        final CostQuote finalChargedCost = chargedCost;
+        final Runnable rollbackCharge = () -> {
+            if (!finalChargedCost.isFree()) {
+                refundCostQuoteToPlayer(actor, placementCostBundle, finalChargedCost, activeEconomy);
+            }
+        };
+        final Location regionLocation = hub != null ? hub.blockLocation(world) : world.getSpawnLocation();
+        executeNetworkVisibilityChange(
+                actor,
+                network.id(),
+                network.visibility(),
+                targetVisibility,
+                world,
+                regionLocation,
+                finalChargedCost,
+                activeEconomy,
+                rollbackCharge
+        );
+    }
+
+    private void executeNetworkVisibilityChange(
+            final Player actor,
+            final UUID networkId,
+            final AetheryteVisibility expectedCurrent,
+            final AetheryteVisibility targetVisibility,
+            final World world,
+            final Location regionLocation,
+            final CostQuote chargedCost,
+            final EconomyProvider activeEconomy,
+            final Runnable rollbackCharge
+    ) {
+        executeNetworkUpdate(
+                actor,
+                networkId,
+                world,
+                regionLocation,
+                currentNet -> {
+                    if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), currentNet)) {
+                        return MessageKey.ERROR_CANNOT_MANAGE_NETWORK;
+                    }
+                    if (currentNet.visibility() != expectedCurrent) {
+                        return MessageKey.ERROR_VISIBILITY_UNCHANGED;
+                    }
+                    return null;
+                },
+                currentNet -> currentNet.withVisibility(targetVisibility),
+                (w, updatedNet) -> {
+                    refreshNetworkMemberHolograms(w, updatedNet.id());
+                    actor.sendMessage(messages.aetheryteVisibilityChanged(
+                            actor, updatedNet.name(), updatedNet.visibility()));
+                    if (!chargedCost.isFree()) {
+                        actor.sendMessage(messages.aetheryteVisibilityCostCharged(
+                                actor,
+                                CostFormatter.format(messages.locale(actor), chargedCost, activeEconomy, messages, false)
+                        ));
+                    }
+                },
+                rollbackCharge
+        );
+    }
+
+    /**
+     * Creates a new {@link AetheryteNetwork} attached to the specified {@code normal} Hub Aetheryte (#27).
+     */
+    public void createNetworkOnHub(
+            final Player actor,
+            final UUID hubId,
+            final String rawNetworkName,
+            final AetheryteVisibility initialVisibility
+    ) {
+        final Optional<Aetheryte> hubOpt = registry.getById(hubId);
+        if (hubOpt.isEmpty()) {
+            messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+            return;
+        }
+        final Aetheryte hub = hubOpt.get();
+        if (hub.networkId() != null) {
+            messages.send(actor, MessageKey.ERROR_HUB_NOT_ALLOWED);
+            soundService.playError(actor, hub.variation());
+            return;
+        }
+        final String hubVarId = Aetheryte.normalizeVariation(hub.variation());
+        final AetheryteVariation hubVar = variationRegistry.getOrDefault(hubVarId);
+        if (!hubVar.canBeNetworkHub()) {
+            messages.send(actor, MessageKey.ERROR_HUB_NOT_ALLOWED);
+            soundService.playError(actor, hubVarId);
+            return;
+        }
+        if (!Permissions.canManageHub(actor, actor.getUniqueId(), hub)) {
+            messages.send(actor, MessageKey.ERROR_CANNOT_MANAGE_HUB);
+            soundService.playError(actor, hubVarId);
+            return;
+        }
+        final Optional<String> validName = sanitizeName(rawNetworkName);
+        if (validName.isEmpty()) {
+            messages.send(actor, MessageKey.ERROR_INVALID_NAME);
+            return;
+        }
+        final World world = Bukkit.getWorld(hub.worldId());
+        if (world == null) {
+            messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+            return;
+        }
+
+        final UUID ownerId = actor.getUniqueId();
+        final boolean bypassLimit = Permissions.canBypassLimit(actor);
+        final int maxGlobal = bypassLimit ? -1 : maxNetworksPerPlayerSupplier.getAsInt();
+        final int maxVar = bypassLimit ? -1 : hubVar.network().limit().maxPerPlayerOrDefault();
+        if (maxGlobal >= 0 && registry.countNetworksByOwner(ownerId) >= maxGlobal) {
+            actor.sendMessage(messages.errorNetworkLimitGlobal(actor, maxGlobal));
+            soundService.playError(actor, hubVarId);
+            return;
+        }
+        if (maxVar >= 0 && registry.countNetworksByOwnerAndVariation(ownerId, hubVarId) >= maxVar) {
+            actor.sendMessage(messages.errorNetworkLimitVariation(actor, hubVar.displayName(), maxVar));
+            soundService.playError(actor, hubVarId);
+            return;
+        }
+
+        final CostBundle createBundle = new CostBundle(hubVar.network().cost().create());
+        final EconomyProvider activeEconomy = this.economyProvider;
+        final boolean creative = actor.getGameMode() == GameMode.CREATIVE;
+        final boolean bypassCost = Permissions.canBypassPlaceCost(actor);
+        CostQuote chargedCost = CostQuote.FREE;
+        if (!creative && !bypassCost && !createBundle.isEmpty()) {
+            final Map<String, Double> costVars = Map.of(
+                    "owned_count", (double) registry.countByOwner(ownerId),
+                    "variation_count", (double) registry.countByOwnerAndVariation(ownerId, hubVarId)
+            );
+            final CostQuote quoted = createBundle.quote(actor, costVars, activeEconomy);
+            if (!quoted.isFree()) {
+                if (!quoted.affordable()) {
+                    final Component reason = CostFormatter.formatMissingRequirements(actor, quoted, activeEconomy, messages);
+                    actor.sendMessage(messages.get(
+                            actor,
+                            MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT,
+                            Placeholder.component("reason", reason)
+                    ));
+                    soundService.playError(actor, hubVarId);
+                    return;
+                }
+                final CostBundle.ChargeResult chargeResult = createBundle.chargeWithResult(actor, quoted, activeEconomy);
+                if (!chargeResult.success()) {
+                    if (!chargeResult.unrefundedItems().isEmpty()) {
+                        recordPendingRefund(ownerId, chargeResult.unrefundedItems());
+                    }
+                    final Component reason = CostFormatter.formatMissingRequirements(actor, quoted, activeEconomy, messages);
+                    actor.sendMessage(messages.get(
+                            actor,
+                            MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT,
+                            Placeholder.component("reason", reason)
+                    ));
+                    soundService.playError(actor, hubVarId);
+                    return;
+                }
+                chargedCost = chargeResult.chargedQuote();
+            }
+        }
+        final CostQuote finalChargedCost = chargedCost;
+        final Runnable rollbackCharge = () -> {
+            if (!finalChargedCost.isFree()) {
+                refundCostQuoteToPlayer(actor, createBundle, finalChargedCost, activeEconomy);
+            }
+        };
+
+        final AetheryteVisibility visibility = initialVisibility != null ? initialVisibility : AetheryteVisibility.PUBLIC;
+        final AetheryteNetwork created = new AetheryteNetwork(
+                UUID.randomUUID(),
+                validName.get(),
+                world.getUID(),
+                world.getName(),
+                hub.ownerId(),
+                hub.ownerName() != null ? hub.ownerName() : actor.getName(),
+                System.currentTimeMillis(),
+                visibility,
+                Set.of(),
+                hub.id()
+        );
+        Bukkit.getRegionScheduler().execute(plugin, hub.blockLocation(world), () -> {
+            final Optional<Aetheryte> latestHubOpt = registry.getById(hub.id());
+            if (latestHubOpt.isEmpty()) {
+                rollbackCharge.run();
+                messages.send(actor, MessageKey.ERROR_NOT_FOUND);
+                return;
+            }
+            final Aetheryte latestHub = latestHubOpt.get();
+            final AetheryteVariation latestVar = variationRegistry.getOrDefault(latestHub.variation());
+            if (latestHub.networkId() != null || !latestVar.canBeNetworkHub()) {
+                rollbackCharge.run();
+                messages.send(actor, MessageKey.ERROR_HUB_NOT_ALLOWED);
+                return;
+            }
+            if (!Permissions.canManageHub(actor, actor.getUniqueId(), latestHub)) {
+                rollbackCharge.run();
+                messages.send(actor, MessageKey.ERROR_CANNOT_MANAGE_HUB);
+                return;
+            }
+            final RegistrationOutcome outcome = registry.tryCreateNetwork(world, created, maxGlobal, maxVar);
+            if (outcome != RegistrationOutcome.REGISTERED) {
+                rollbackCharge.run();
+                switch (outcome) {
+                    case GLOBAL_NETWORK_LIMIT_REACHED ->
+                            actor.sendMessage(messages.errorNetworkLimitGlobal(actor, maxGlobal));
+                    case VARIATION_NETWORK_LIMIT_REACHED ->
+                            actor.sendMessage(messages.errorNetworkLimitVariation(actor, latestVar.displayName(), maxVar));
+                    default -> messages.send(actor, MessageKey.ERROR_NETWORK_HUB_REQUIRED);
+                }
+                soundService.playError(actor, latestHub.variation());
+                return;
+            }
+            actor.sendMessage(messages.aetheryteNetworkCreated(actor, created, latestHub.name()));
+            if (!finalChargedCost.isFree()) {
+                actor.sendMessage(messages.get(
+                        actor,
+                        MessageKey.AETHERYTE_NETWORK_CREATE_COST_PAID,
+                        Placeholder.component("cost", CostFormatter.format(messages.locale(actor), finalChargedCost, activeEconomy, messages, false))
+                ));
+            }
+        });
+    }
+
+    /**
+     * Deletes an {@link AetheryteNetwork} by ID. Fails when child Aetherytes exist unless {@code allowCascade}
+     * is {@code true} and the actor has admin privileges (#27).
+     */
+    public void deleteNetworkById(final Player actor, final UUID networkId, final boolean allowCascade) {
+        final Optional<AetheryteNetwork> netOpt = registry.getNetworkById(networkId);
+        if (netOpt.isEmpty()) {
+            messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+            return;
+        }
+        final AetheryteNetwork network = netOpt.get();
+        if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), network)) {
+            messages.send(actor, MessageKey.ERROR_CANNOT_MANAGE_NETWORK);
+            return;
+        }
+        final World world = Bukkit.getWorld(network.worldId());
+        if (world == null) {
+            messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+            return;
+        }
+        final @Nullable Aetheryte hub = network.hubAetheryteId() != null
+                ? registry.getById(network.hubAetheryteId()).orElse(null)
+                : null;
+        final Location regionLoc = hub != null ? hub.blockLocation(world) : world.getSpawnLocation();
+        Bukkit.getRegionScheduler().execute(plugin, regionLoc, () -> {
+            final Optional<AetheryteNetwork> latestNetOpt = registry.getNetworkById(networkId);
+            if (latestNetOpt.isEmpty()) {
+                messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+                return;
+            }
+            final AetheryteNetwork latestNet = latestNetOpt.get();
+            if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), latestNet)) {
+                messages.send(actor, MessageKey.ERROR_CANNOT_MANAGE_NETWORK);
+                return;
+            }
+            final List<Aetheryte> children = registry.getChildAetherytesInNetwork(networkId);
+            if (!children.isEmpty() && (!allowCascade || !canAdmin(actor))) {
+                actor.sendMessage(messages.errorNetworkHasAetherytes(actor, latestNet.name(), children.size()));
+                soundService.playError(actor, hub != null ? hub.variation() : Aetheryte.DEFAULT_VARIATION);
+                return;
+            }
+            for (final Aetheryte child : children) {
+                if (registry.unregister(world, child.id()).isPresent()) {
+                    cleanupChildAetheryteInRegion(world, child);
+                }
+            }
+            registry.unregisterNetwork(world, networkId);
+            actor.sendMessage(messages.aetheryteNetworkDeleted(actor, latestNet));
+        });
+    }
+
+    /**
      * Renames the {@link AetheryteNetwork} containing {@code aetheryteId} (#27).
      */
     public void renameNetwork(final Player actor, final UUID aetheryteId, final String rawNetworkName) {
@@ -3146,12 +3546,24 @@ public final class AetheryteService {
             messages.send(actor, MessageKey.ERROR_NOT_FOUND);
             return;
         }
-        final Aetheryte target = targetOpt.get();
-        final @Nullable AetheryteNetwork network = networkFor(target);
+        final @Nullable AetheryteNetwork network = networkFor(targetOpt.get());
         if (network == null) {
             messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
             return;
         }
+        renameNetworkById(actor, network.id(), rawNetworkName);
+    }
+
+    /**
+     * Renames an {@link AetheryteNetwork} directly by its ID (#27).
+     */
+    public void renameNetworkById(final Player actor, final UUID networkId, final String rawNetworkName) {
+        final Optional<AetheryteNetwork> netOpt = registry.getNetworkById(networkId);
+        if (netOpt.isEmpty()) {
+            messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+            return;
+        }
+        final AetheryteNetwork network = netOpt.get();
         if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), network)) {
             messages.send(actor, MessageKey.ERROR_CANNOT_MANAGE_NETWORK);
             return;
@@ -3171,7 +3583,7 @@ public final class AetheryteService {
                 actor,
                 network.id(),
                 world,
-                target.blockLocation(world),
+                networkRegionLocation(world, network),
                 currentNet -> Permissions.canManageNetwork(actor, actor.getUniqueId(), currentNet)
                         ? null
                         : MessageKey.ERROR_CANNOT_MANAGE_NETWORK,
@@ -3196,11 +3608,10 @@ public final class AetheryteService {
         final Aetheryte target = targetOpt.get();
         final @Nullable AetheryteNetwork network = networkFor(target);
         if (network != null) {
-            if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), network)) {
-                messages.send(actor, MessageKey.ERROR_CANNOT_MANAGE_NETWORK);
-                return;
-            }
-        } else if (!canManageVisibility(actor, target)) {
+            addNetworkInviteeById(actor, network.id(), targetPlayerName);
+            return;
+        }
+        if (!canManageVisibility(actor, target)) {
             messages.send(actor, MessageKey.ERROR_NOT_OWNER);
             return;
         }
@@ -3209,47 +3620,12 @@ public final class AetheryteService {
             messages.send(actor, MessageKey.ERROR_PLAYER_NOT_FOUND, Placeholder.unparsed("player", targetPlayerName.strip()));
             return;
         }
-        final UUID ownerToCheck = network != null ? network.ownerId() : target.ownerId();
-        final Set<UUID> currentInvitees = network != null ? network.invitedPlayers() : target.invitedPlayers();
-        if (ownerToCheck.equals(resolved.id())) {
+        if (target.ownerId().equals(resolved.id())) {
             messages.send(actor, MessageKey.ERROR_INVITE_SELF);
             return;
         }
-        if (currentInvitees.contains(resolved.id())) {
+        if (target.invitedPlayers().contains(resolved.id())) {
             messages.send(actor, MessageKey.ERROR_ALREADY_INVITED, Placeholder.unparsed("player", resolved.name()));
-            return;
-        }
-
-        if (network != null) {
-            final World world = Bukkit.getWorld(network.worldId());
-            if (world == null) {
-                messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
-                return;
-            }
-            executeNetworkUpdate(
-                    actor,
-                    network.id(),
-                    world,
-                    target.blockLocation(world),
-                    currentNet -> {
-                        if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), currentNet)) {
-                            return MessageKey.ERROR_CANNOT_MANAGE_NETWORK;
-                        }
-                        if (currentNet.ownerId().equals(resolved.id())) {
-                            return MessageKey.ERROR_INVITE_SELF;
-                        }
-                        if (currentNet.invitedPlayers().contains(resolved.id())) {
-                            return MessageKey.ERROR_ALREADY_INVITED;
-                        }
-                        return null;
-                    },
-                    currentNet -> currentNet.addInvitee(resolved.id()),
-                    (w, updatedNet) -> {
-                        refreshNetworkMemberHolograms(w, updatedNet.id());
-                        actor.sendMessage(messages.aetheryteInviteeAdded(actor, updatedNet.name(), resolved.name()));
-                    },
-                    () -> {}
-            );
             return;
         }
 
@@ -3277,6 +3653,64 @@ public final class AetheryteService {
     }
 
     /**
+     * Adds an invited player directly to an {@link AetheryteNetwork} by its ID (#27).
+     */
+    public void addNetworkInviteeById(final Player actor, final UUID networkId, final String targetPlayerName) {
+        final Optional<AetheryteNetwork> netOpt = registry.getNetworkById(networkId);
+        if (netOpt.isEmpty()) {
+            messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+            return;
+        }
+        final AetheryteNetwork network = netOpt.get();
+        if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), network)) {
+            messages.send(actor, MessageKey.ERROR_CANNOT_MANAGE_NETWORK);
+            return;
+        }
+        final @Nullable ResolvedPlayer resolved = playerByNameLookup.apply(targetPlayerName.strip());
+        if (resolved == null) {
+            messages.send(actor, MessageKey.ERROR_PLAYER_NOT_FOUND, Placeholder.unparsed("player", targetPlayerName.strip()));
+            return;
+        }
+        if (network.ownerId().equals(resolved.id())) {
+            messages.send(actor, MessageKey.ERROR_INVITE_SELF);
+            return;
+        }
+        if (network.invitedPlayers().contains(resolved.id())) {
+            messages.send(actor, MessageKey.ERROR_ALREADY_INVITED, Placeholder.unparsed("player", resolved.name()));
+            return;
+        }
+        final World world = Bukkit.getWorld(network.worldId());
+        if (world == null) {
+            messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+            return;
+        }
+        executeNetworkUpdate(
+                actor,
+                network.id(),
+                world,
+                networkRegionLocation(world, network),
+                currentNet -> {
+                    if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), currentNet)) {
+                        return MessageKey.ERROR_CANNOT_MANAGE_NETWORK;
+                    }
+                    if (currentNet.ownerId().equals(resolved.id())) {
+                        return MessageKey.ERROR_INVITE_SELF;
+                    }
+                    if (currentNet.invitedPlayers().contains(resolved.id())) {
+                        return MessageKey.ERROR_ALREADY_INVITED;
+                    }
+                    return null;
+                },
+                currentNet -> currentNet.addInvitee(resolved.id()),
+                (w, updatedNet) -> {
+                    refreshNetworkMemberHolograms(w, updatedNet.id());
+                    actor.sendMessage(messages.aetheryteInviteeAdded(actor, updatedNet.name(), resolved.name()));
+                },
+                () -> {}
+        );
+    }
+
+    /**
      * Removes an invited player from an Aetheryte or its owning network (#24, #27).
      */
     public void removeInvitee(final Player actor, final UUID aetheryteId, final UUID inviteeId) {
@@ -3288,50 +3722,18 @@ public final class AetheryteService {
         final Aetheryte target = targetOpt.get();
         final @Nullable AetheryteNetwork network = networkFor(target);
         if (network != null) {
-            if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), network)) {
-                messages.send(actor, MessageKey.ERROR_CANNOT_MANAGE_NETWORK);
-                return;
-            }
-        } else if (!canManageVisibility(actor, target)) {
+            removeNetworkInviteeById(actor, network.id(), inviteeId);
+            return;
+        }
+        if (!canManageVisibility(actor, target)) {
             messages.send(actor, MessageKey.ERROR_NOT_OWNER);
             return;
         }
-        final Set<UUID> currentInvitees = network != null ? network.invitedPlayers() : target.invitedPlayers();
-        if (!currentInvitees.contains(inviteeId)) {
+        if (!target.invitedPlayers().contains(inviteeId)) {
             messages.send(actor, MessageKey.ERROR_NOT_INVITED);
             return;
         }
         final String inviteeName = resolvePlayerName(inviteeId, actor);
-
-        if (network != null) {
-            final World world = Bukkit.getWorld(network.worldId());
-            if (world == null) {
-                messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
-                return;
-            }
-            executeNetworkUpdate(
-                    actor,
-                    network.id(),
-                    world,
-                    target.blockLocation(world),
-                    currentNet -> {
-                        if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), currentNet)) {
-                            return MessageKey.ERROR_CANNOT_MANAGE_NETWORK;
-                        }
-                        if (!currentNet.invitedPlayers().contains(inviteeId)) {
-                            return MessageKey.ERROR_NOT_INVITED;
-                        }
-                        return null;
-                    },
-                    currentNet -> currentNet.removeInvitee(inviteeId),
-                    (w, updatedNet) -> {
-                        refreshNetworkMemberHolograms(w, updatedNet.id());
-                        actor.sendMessage(messages.aetheryteInviteeRemoved(actor, updatedNet.name(), inviteeName));
-                    },
-                    () -> {}
-            );
-            return;
-        }
 
         executeAetheryteUpdate(
                 actor,
@@ -3351,6 +3753,67 @@ public final class AetheryteService {
                     actor.sendMessage(messages.aetheryteInviteeRemoved(actor, updated, inviteeName));
                 }
         );
+    }
+
+    /**
+     * Removes an invited player directly from an {@link AetheryteNetwork} by its ID (#27).
+     */
+    public void removeNetworkInviteeById(final Player actor, final UUID networkId, final UUID inviteeId) {
+        final Optional<AetheryteNetwork> netOpt = registry.getNetworkById(networkId);
+        if (netOpt.isEmpty()) {
+            messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+            return;
+        }
+        final AetheryteNetwork network = netOpt.get();
+        if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), network)) {
+            messages.send(actor, MessageKey.ERROR_CANNOT_MANAGE_NETWORK);
+            return;
+        }
+        if (!network.invitedPlayers().contains(inviteeId)) {
+            messages.send(actor, MessageKey.ERROR_NOT_INVITED);
+            return;
+        }
+        final String inviteeName = resolvePlayerName(inviteeId, actor);
+        final World world = Bukkit.getWorld(network.worldId());
+        if (world == null) {
+            messages.send(actor, MessageKey.ERROR_NETWORK_NOT_FOUND);
+            return;
+        }
+        executeNetworkUpdate(
+                actor,
+                network.id(),
+                world,
+                networkRegionLocation(world, network),
+                currentNet -> {
+                    if (!Permissions.canManageNetwork(actor, actor.getUniqueId(), currentNet)) {
+                        return MessageKey.ERROR_CANNOT_MANAGE_NETWORK;
+                    }
+                    if (!currentNet.invitedPlayers().contains(inviteeId)) {
+                        return MessageKey.ERROR_NOT_INVITED;
+                    }
+                    return null;
+                },
+                currentNet -> currentNet.removeInvitee(inviteeId),
+                (w, updatedNet) -> {
+                    refreshNetworkMemberHolograms(w, updatedNet.id());
+                    actor.sendMessage(messages.aetheryteInviteeRemoved(actor, updatedNet.name(), inviteeName));
+                },
+                () -> {}
+        );
+    }
+
+    private Location networkRegionLocation(final World world, final AetheryteNetwork network) {
+        if (network.hubAetheryteId() != null) {
+            final Optional<Aetheryte> hub = registry.getById(network.hubAetheryteId());
+            if (hub.isPresent() && hub.get().worldId().equals(world.getUID())) {
+                return hub.get().blockLocation(world);
+            }
+        }
+        final List<Aetheryte> children = registry.getChildAetherytesInNetwork(network.id());
+        if (!children.isEmpty()) {
+            return children.getFirst().blockLocation(world);
+        }
+        return world.getSpawnLocation();
     }
 
     private void refundCostQuoteToPlayer(

@@ -35,8 +35,23 @@ public record AetheryteNetwork(
         @Nullable String ownerName,
         long createdAt,
         AetheryteVisibility visibility,
-        Set<UUID> invitedPlayers
+        Set<UUID> invitedPlayers,
+        @Nullable UUID hubAetheryteId
 ) {
+
+    public AetheryteNetwork(
+            final UUID id,
+            final String name,
+            final UUID worldId,
+            final String worldName,
+            final UUID ownerId,
+            @Nullable final String ownerName,
+            final long createdAt,
+            final AetheryteVisibility visibility,
+            final Set<UUID> invitedPlayers
+    ) {
+        this(id, name, worldId, worldName, ownerId, ownerName, createdAt, visibility, invitedPlayers, null);
+    }
 
     public AetheryteNetwork {
         Objects.requireNonNull(id, "id");
@@ -50,23 +65,27 @@ public record AetheryteNetwork(
     }
 
     public AetheryteNetwork withName(final String newName) {
-        return new AetheryteNetwork(id, newName, worldId, worldName, ownerId, ownerName, createdAt, visibility, invitedPlayers);
+        return new AetheryteNetwork(id, newName, worldId, worldName, ownerId, ownerName, createdAt, visibility, invitedPlayers, hubAetheryteId);
     }
 
     public AetheryteNetwork withOwner(final UUID newOwnerId, @Nullable final String newOwnerName) {
-        return new AetheryteNetwork(id, name, worldId, worldName, newOwnerId, newOwnerName, createdAt, visibility, invitedPlayers);
+        return new AetheryteNetwork(id, name, worldId, worldName, newOwnerId, newOwnerName, createdAt, visibility, invitedPlayers, hubAetheryteId);
     }
 
     public AetheryteNetwork withOwnerName(@Nullable final String newOwnerName) {
-        return new AetheryteNetwork(id, name, worldId, worldName, ownerId, newOwnerName, createdAt, visibility, invitedPlayers);
+        return new AetheryteNetwork(id, name, worldId, worldName, ownerId, newOwnerName, createdAt, visibility, invitedPlayers, hubAetheryteId);
     }
 
     public AetheryteNetwork withVisibility(final AetheryteVisibility newVisibility) {
-        return new AetheryteNetwork(id, name, worldId, worldName, ownerId, ownerName, createdAt, newVisibility, invitedPlayers);
+        return new AetheryteNetwork(id, name, worldId, worldName, ownerId, ownerName, createdAt, newVisibility, invitedPlayers, hubAetheryteId);
     }
 
     public AetheryteNetwork withInvitedPlayers(final Set<UUID> newInvitees) {
-        return new AetheryteNetwork(id, name, worldId, worldName, ownerId, ownerName, createdAt, visibility, newInvitees);
+        return new AetheryteNetwork(id, name, worldId, worldName, ownerId, ownerName, createdAt, visibility, newInvitees, hubAetheryteId);
+    }
+
+    public AetheryteNetwork withHubAetheryteId(@Nullable final UUID newHubAetheryteId) {
+        return new AetheryteNetwork(id, name, worldId, worldName, ownerId, ownerName, createdAt, visibility, invitedPlayers, newHubAetheryteId);
     }
 
     public AetheryteNetwork addInvitee(final UUID inviteeId) {

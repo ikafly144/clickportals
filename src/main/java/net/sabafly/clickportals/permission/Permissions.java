@@ -234,4 +234,11 @@ public final class Permissions {
     public static boolean canManageNetwork(final Permissible permissible, final UUID playerId, final AetheryteNetwork network) {
         return network.ownerId().equals(playerId) || canAdmin(permissible);
     }
+
+    /**
+     * Checks whether the given permissible with {@code playerId} can create/manage hosted networks on {@code hub} (#27).
+     */
+    public static boolean canManageHub(final Permissible permissible, final UUID playerId, final Aetheryte hub) {
+        return hub.ownerId().equals(playerId) || canAdmin(permissible);
+    }
 }

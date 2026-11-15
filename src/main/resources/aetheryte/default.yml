@@ -130,6 +130,8 @@ limit:
 
 # Network-type Aetheryte limits and costs (#27)
 network:
+  # Whether 'normal' Aetherytes using this variation may act as a network Hub
+  allow-hub: true
   limit:
     # Maximum networks of this variation a single player may own (-1 for unlimited)
     max-per-player: -1

@@ -1600,6 +1600,112 @@ public final class Messages {
     }
 
     /**
+     * Returns the notification sent when a Hub-hosted network is created (#27).
+     */
+    public Component aetheryteNetworkCreated(
+            final CommandSender viewer,
+            final AetheryteNetwork network,
+            final String hubName
+    ) {
+        return get(
+                viewer,
+                MessageKey.AETHERYTE_NETWORK_CREATED,
+                Placeholder.unparsed("name", network.name()),
+                Placeholder.unparsed("hub", hubName)
+        );
+    }
+
+    /**
+     * Returns the notification sent when a Hub-hosted network is deleted (#27).
+     */
+    public Component aetheryteNetworkDeleted(final CommandSender viewer, final AetheryteNetwork network) {
+        return get(viewer, MessageKey.AETHERYTE_NETWORK_DELETED, Placeholder.unparsed("name", network.name()));
+    }
+
+    /**
+     * Returns the notification sent when an admin cascade-removes a Hub together with its networks and children (#27).
+     */
+    public Component aetheryteHubCascadeRemoved(
+            final CommandSender viewer,
+            final String hubName,
+            final int networks,
+            final int children
+    ) {
+        return get(
+                viewer,
+                MessageKey.AETHERYTE_HUB_CASCADE_REMOVED,
+                Placeholder.unparsed("name", hubName),
+                Placeholder.unparsed("networks", Integer.toString(networks)),
+                Placeholder.unparsed("children", Integer.toString(children))
+        );
+    }
+
+    /**
+     * Returns the warning appended to the Hub removal dialog for admins when cascade removal applies (#27).
+     */
+    public Component removeHubCascadeWarning(final CommandSender viewer, final int networks, final int children) {
+        return get(
+                viewer,
+                MessageKey.DIALOG_REMOVE_HUB_CASCADE_WARNING,
+                Placeholder.unparsed("networks", Integer.toString(networks)),
+                Placeholder.unparsed("children", Integer.toString(children))
+        );
+    }
+
+    /**
+     * Returns the warning appended to the network deletion dialog for admins when connected children exist (#27).
+     */
+    public Component deleteNetworkCascadeWarning(final CommandSender viewer, final int members) {
+        return get(
+                viewer,
+                MessageKey.DIALOG_DELETE_NETWORK_CASCADE_WARNING,
+                Placeholder.unparsed("members", Integer.toString(members))
+        );
+    }
+
+    /**
+     * Returns the error sent when a non-admin tries to remove a Hub that still has child Aetherytes (#27).
+     */
+    public Component errorHubHasChildNetworks(
+            final CommandSender viewer,
+            final String hubName,
+            final int networks,
+            final int children
+    ) {
+        return get(
+                viewer,
+                MessageKey.ERROR_HUB_HAS_CHILD_NETWORKS,
+                Placeholder.unparsed("name", hubName),
+                Placeholder.unparsed("networks", Integer.toString(networks)),
+                Placeholder.unparsed("children", Integer.toString(children))
+        );
+    }
+
+    /**
+     * Returns the error sent when changing variation on a Hub that still hosts networks (#27).
+     */
+    public Component errorHubHasNetworks(final CommandSender viewer, final String hubName, final int networks) {
+        return get(
+                viewer,
+                MessageKey.ERROR_HUB_HAS_NETWORKS,
+                Placeholder.unparsed("name", hubName),
+                Placeholder.unparsed("networks", Integer.toString(networks))
+        );
+    }
+
+    /**
+     * Returns the error sent when deleting a network that still has connected child Aetherytes (#27).
+     */
+    public Component errorNetworkHasAetherytes(final CommandSender viewer, final String networkName, final int count) {
+        return get(
+                viewer,
+                MessageKey.ERROR_NETWORK_HAS_AETHERYTES,
+                Placeholder.unparsed("name", networkName),
+                Placeholder.unparsed("count", Integer.toString(count))
+        );
+    }
+
+    /**
      * Formats the button label for choosing a visibility tier (#24).
      */
     public Component visibilityOptionButtonLabel(

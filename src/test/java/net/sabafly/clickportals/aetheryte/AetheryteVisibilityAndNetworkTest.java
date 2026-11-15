@@ -337,33 +337,36 @@ class AetheryteVisibilityAndNetworkTest {
     }
 
     @Test
-    void registryTryRegisterInNetworkEnforcesLimitsDistanceAndDeletesEmptyNetworks() {
+    void registryTryRegisterInNetworkEnforcesLimitsDistanceAndPersistsHubNetworks() {
         final Map<NamespacedKey, Object> worldPdcStore = new HashMap<>();
         final World world = mockWorld(WORLD_ID, "world", worldPdcStore);
         final AetheryteRegistry registry = new AetheryteRegistry();
 
+        final Aetheryte hub = new Aetheryte(
+                UUID.randomUUID(), "Hub", WORLD_ID, "world", 0, 64, 0, OWNER_ID, 1L,
+                Aetheryte.DEFAULT_VARIATION, "Owner", AetheryteVisibility.PUBLIC, Set.of());
+        assertThat(registry.tryRegister(world, hub, -1, -1, 0.0)).isEqualTo(RegistrationOutcome.REGISTERED);
+
         final UUID net1Id = UUID.randomUUID();
         final AetheryteNetwork net1 = new AetheryteNetwork(
-                net1Id, "Net1", WORLD_ID, "world", OWNER_ID, "Owner", 1L, AetheryteVisibility.PUBLIC, Set.of());
-        final Aetheryte node1 = new Aetheryte(
-                UUID.randomUUID(), "Node1", WORLD_ID, "world", 0, 64, 0, OWNER_ID, 1L,
-                "net_var", "Owner", AetheryteVisibility.PUBLIC, Set.of(), net1Id);
-
-        assertThat(registry.tryRegisterInNetwork(world, node1, net1, -1, -1, 0.0, 1, 1, 2, 100.0))
-                .isEqualTo(RegistrationOutcome.REGISTERED);
+                net1Id, "Net1", WORLD_ID, "world", OWNER_ID, "Owner", 1L, AetheryteVisibility.PUBLIC, Set.of(), hub.id());
+        assertThat(registry.tryCreateNetwork(world, net1, 1, 1)).isEqualTo(RegistrationOutcome.REGISTERED);
         assertThat(registry.countNetworksByOwner(OWNER_ID)).isEqualTo(1);
-        assertThat(registry.countNetworksByOwnerAndVariation(OWNER_ID, "net_var")).isEqualTo(1);
+        assertThat(registry.countNetworksByOwnerAndVariation(OWNER_ID, Aetheryte.DEFAULT_VARIATION)).isEqualTo(1);
 
-        // Creating a second network fails global limit when maxGlobalNetworks = 1
+        final Aetheryte node1 = new Aetheryte(
+                UUID.randomUUID(), "Node1", WORLD_ID, "world", 10, 64, 0, OWNER_ID, 1L,
+                "net_var", "Owner", AetheryteVisibility.PUBLIC, Set.of(), net1Id);
+        assertThat(registry.tryRegisterInNetwork(world, node1, null, -1, -1, 0.0, 1, 1, 2, 100.0))
+                .isEqualTo(RegistrationOutcome.REGISTERED);
+
+        // Creating a second network fails global/variation limit when max = 1
         final UUID net2Id = UUID.randomUUID();
         final AetheryteNetwork net2 = new AetheryteNetwork(
-                net2Id, "Net2", WORLD_ID, "world", OWNER_ID, "Owner", 2L, AetheryteVisibility.PUBLIC, Set.of());
-        final Aetheryte otherPlayerNode = new Aetheryte(
-                UUID.randomUUID(), "Other", WORLD_ID, "world", 200, 64, 0, OWNER_ID, 2L,
-                "net_var", "Owner", AetheryteVisibility.PUBLIC, Set.of(), net2Id);
-        assertThat(registry.tryRegisterInNetwork(world, otherPlayerNode, net2, -1, -1, 0.0, 1, -1, 2, 100.0))
+                net2Id, "Net2", WORLD_ID, "world", OWNER_ID, "Owner", 2L, AetheryteVisibility.PUBLIC, Set.of(), hub.id());
+        assertThat(registry.tryCreateNetwork(world, net2, 1, -1))
                 .isEqualTo(RegistrationOutcome.GLOBAL_NETWORK_LIMIT_REACHED);
-        assertThat(registry.tryRegisterInNetwork(world, otherPlayerNode, net2, -1, -1, 0.0, -1, 1, 2, 100.0))
+        assertThat(registry.tryCreateNetwork(world, net2, -1, 1))
                 .isEqualTo(RegistrationOutcome.VARIATION_NETWORK_LIMIT_REACHED);
 
         // Joining beyond max-distance fails with NETWORK_TOO_FAR
@@ -386,12 +389,24 @@ class AetheryteVisibilityAndNetworkTest {
         assertThat(registry.tryRegisterInNetwork(world, node3, null, -1, -1, 0.0, 5, 5, 2, 100.0))
                 .isEqualTo(RegistrationOutcome.NETWORK_AETHERYTE_LIMIT_REACHED);
 
-        // Unregistering 1st node keeps network alive; unregistering last node auto-deletes empty network
+        // Unregistering all child nodes preserves the Hub-backed network; unregistering the empty Hub cleans it up
         registry.unregister(world, node1.id());
-        assertThat(registry.getNetworkById(net1Id)).isPresent();
         registry.unregister(world, node2.id());
+        assertThat(registry.getNetworkById(net1Id)).isPresent();
+        registry.unregister(world, hub.id());
         assertThat(registry.getNetworkById(net1Id)).isEmpty();
         assertThat(registry.countNetworksByOwner(OWNER_ID)).isZero();
+
+        // Joining a hubless legacy network fails with NETWORK_HUB_REQUIRED
+        final UUID orphanNetId = UUID.randomUUID();
+        final AetheryteNetwork orphanNet = new AetheryteNetwork(
+                orphanNetId, "Orphan", WORLD_ID, "world", OWNER_ID, "Owner", 10L, AetheryteVisibility.PUBLIC, Set.of());
+        registry.registerNetwork(world, orphanNet);
+        final Aetheryte orphanChild = new Aetheryte(
+                UUID.randomUUID(), "OrphanChild", WORLD_ID, "world", 20, 64, 0, OWNER_ID, 11L,
+                "net_var", "Owner", AetheryteVisibility.PUBLIC, Set.of(), orphanNetId);
+        assertThat(registry.tryRegisterInNetwork(world, orphanChild, null, -1, -1, 0.0, 5, 5, 5, 100.0))
+                .isEqualTo(RegistrationOutcome.NETWORK_HUB_REQUIRED);
     }
 
     @Test
@@ -482,6 +497,84 @@ class AetheryteVisibilityAndNetworkTest {
         final String savedUrban = Files.readString(varDir.resolve("urban.yml"));
         assertThat(savedUrban).doesNotContain(VisibilityCostSection.NULL_SENTINEL);
         assertThat(savedUrban).contains("type: network");
+    }
+
+    @Test
+    void hubAndChildBidirectionalRoutingAndCascadeRemovalWorkCleanly() {
+        final Map<NamespacedKey, Object> worldPdcStore = new HashMap<>();
+        final World world = mockWorld(WORLD_ID, "world", worldPdcStore);
+        final AetheryteRegistry registry = new AetheryteRegistry();
+
+        final Aetheryte hub = new Aetheryte(
+                UUID.randomUUID(), "MainHub", WORLD_ID, "world", 0, 64, 0, OWNER_ID, 1L,
+                Aetheryte.DEFAULT_VARIATION, "Owner", AetheryteVisibility.PUBLIC, Set.of());
+        final Aetheryte otherNormal = new Aetheryte(
+                UUID.randomUUID(), "OtherNormal", WORLD_ID, "world", 200, 64, 0, OWNER_ID, 2L,
+                Aetheryte.DEFAULT_VARIATION, "Owner", AetheryteVisibility.PUBLIC, Set.of());
+        assertThat(registry.tryRegister(world, hub, -1, -1, 0.0)).isEqualTo(RegistrationOutcome.REGISTERED);
+        assertThat(registry.tryRegister(world, otherNormal, -1, -1, 0.0)).isEqualTo(RegistrationOutcome.REGISTERED);
+
+        final UUID netId = UUID.randomUUID();
+        final AetheryteNetwork netWithoutHub = new AetheryteNetwork(
+                netId, "OrphanNet", WORLD_ID, "world", OWNER_ID, "Owner", 1L, AetheryteVisibility.PUBLIC, Set.of());
+        assertThat(registry.tryCreateNetwork(world, netWithoutHub, -1, -1))
+                .isEqualTo(RegistrationOutcome.NETWORK_HUB_REQUIRED);
+
+        final AetheryteNetwork hubNet = netWithoutHub.withHubAetheryteId(hub.id()).withName("GuildHubNet");
+        assertThat(registry.tryCreateNetwork(world, hubNet, 1, 1))
+                .isEqualTo(RegistrationOutcome.REGISTERED);
+        assertThat(registry.getNetworksByHub(hub.id())).containsExactly(hubNet);
+        // Empty Hub-hosted network counts against global and Hub variation limits
+        assertThat(registry.countNetworksByOwner(OWNER_ID)).isEqualTo(1);
+        assertThat(registry.countNetworksByOwnerAndVariation(OWNER_ID, Aetheryte.DEFAULT_VARIATION)).isEqualTo(1);
+
+        final Aetheryte farChild = new Aetheryte(
+                UUID.randomUUID(), "FarChild", WORLD_ID, "world", 300, 64, 0, OWNER_ID, 3L,
+                "net_var", "Owner", AetheryteVisibility.PUBLIC, Set.of(), netId);
+        // Distance to Hub (at 0,64,0) is checked even when network has 0 child members
+        assertThat(registry.tryRegisterInNetwork(world, farChild, null, -1, -1, 0.0, -1, -1, 5, 100.0))
+                .isEqualTo(RegistrationOutcome.NETWORK_TOO_FAR);
+
+        final Aetheryte child1 = new Aetheryte(
+                UUID.randomUUID(), "Child1", WORLD_ID, "world", 40, 64, 0, OWNER_ID, 4L,
+                "net_var", "Owner", AetheryteVisibility.PUBLIC, Set.of(), netId);
+        final Aetheryte child2 = new Aetheryte(
+                UUID.randomUUID(), "Child2", WORLD_ID, "world", 80, 64, 0, OWNER_ID, 5L,
+                "net_var", "Owner", AetheryteVisibility.PUBLIC, Set.of(), netId);
+        assertThat(registry.tryRegisterInNetwork(world, child1, null, -1, -1, 0.0, -1, -1, 5, 100.0))
+                .isEqualTo(RegistrationOutcome.REGISTERED);
+        assertThat(registry.tryRegisterInNetwork(world, child2, null, -1, -1, 0.0, -1, -1, 5, 100.0))
+                .isEqualTo(RegistrationOutcome.REGISTERED);
+
+        final java.util.function.Function<UUID, @Nullable AetheryteNetwork> lookup =
+                id -> registry.getNetworkById(id).orElse(null);
+        // Bidirectional routing: Hub <-> Normal, Hub <-> Child, Child <-> Child, NOT OtherNormal <-> Child
+        assertThat(WarpDestinationQuery.canRouteBetweenAetherytes(hub, otherNormal, lookup)).isTrue();
+        assertThat(WarpDestinationQuery.canRouteBetweenAetherytes(hub, child1, lookup)).isTrue();
+        assertThat(WarpDestinationQuery.canRouteBetweenAetherytes(child1, hub, lookup)).isTrue();
+        assertThat(WarpDestinationQuery.canRouteBetweenAetherytes(child1, child2, lookup)).isTrue();
+        assertThat(WarpDestinationQuery.canRouteBetweenAetherytes(otherNormal, child1, lookup)).isFalse();
+        assertThat(WarpDestinationQuery.canRouteBetweenAetherytes(child1, otherNormal, lookup)).isFalse();
+
+        // Removing a child preserves Hub-backed network even when 0 children remain
+        registry.unregister(world, child1.id());
+        registry.unregister(world, child2.id());
+        assertThat(registry.getNetworkById(netId)).isPresent();
+        assertThat(registry.countChildAetherytesByHub(hub.id())).isZero();
+
+        // Re-add a child and test admin cascade removal
+        assertThat(registry.tryRegisterInNetwork(world, child1, null, -1, -1, 0.0, -1, -1, 5, 100.0))
+                .isEqualTo(RegistrationOutcome.REGISTERED);
+        assertThat(registry.countChildAetherytesByHub(hub.id())).isEqualTo(1);
+        final AetheryteRegistry.HubCascadeRemoval cascade = registry.unregisterHubCascade(world, hub.id()).orElseThrow();
+        assertThat(cascade.hub().id()).isEqualTo(hub.id());
+        assertThat(cascade.removedNetworks()).containsExactly(hubNet);
+        assertThat(cascade.removedChildren()).containsExactly(child1);
+        assertThat(registry.getById(hub.id())).isEmpty();
+        assertThat(registry.getById(child1.id())).isEmpty();
+        assertThat(registry.getNetworkById(netId)).isEmpty();
+        assertThat(registry.getNetworksByHub(hub.id())).isEmpty();
+        assertThat(registry.getById(otherNormal.id())).isPresent();
     }
 
     private static World mockWorld(final UUID id, final String name, final Map<NamespacedKey, Object> pdcStore) {

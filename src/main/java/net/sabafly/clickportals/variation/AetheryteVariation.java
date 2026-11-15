@@ -167,6 +167,13 @@ public record AetheryteVariation(
     }
 
     /**
+     * Returns whether a {@code type: normal} Aetheryte of this variation may host player networks (#27).
+     */
+    public boolean canBeNetworkHub() {
+        return !isNetwork() && network.allowHubOrDefault();
+    }
+
+    /**
      * Maximum allowed vertical height for placement clearance.
      */
     public static final int MAX_CLEARANCE_HEIGHT = 16;
@@ -671,7 +678,7 @@ public record AetheryteVariation(
     }
 
     /**
-     * Network limits and costs applied to {@code type: network} variations (#27).
+     * Network limits, hub capability, and costs applied to {@code type: network} and Hub variations (#27).
      */
     @ConfigSerializable
     public record NetworkSection(
@@ -681,15 +688,28 @@ public record AetheryteVariation(
 
             @Setting("cost")
             @Comment("Additional costs charged when creating or joining a network (#27)")
-            NetworkCostSection cost
+            NetworkCostSection cost,
+
+            @Setting("allow-hub")
+            @Comment("Whether 'normal' Aetherytes using this variation may act as a network Hub (#27)")
+            @Nullable Boolean allowHub
     ) {
+        public NetworkSection(final NetworkLimitSection limit, final NetworkCostSection cost) {
+            this(limit, cost, Boolean.TRUE);
+        }
+
         public NetworkSection {
             limit = limit == null ? NetworkLimitSection.defaults() : limit;
             cost = cost == null ? NetworkCostSection.defaults() : cost;
+            allowHub = allowHub == null ? Boolean.TRUE : allowHub;
+        }
+
+        public boolean allowHubOrDefault() {
+            return !Boolean.FALSE.equals(allowHub);
         }
 
         public static NetworkSection defaults() {
-            return new NetworkSection(NetworkLimitSection.defaults(), NetworkCostSection.defaults());
+            return new NetworkSection(NetworkLimitSection.defaults(), NetworkCostSection.defaults(), Boolean.TRUE);
         }
     }
 
@@ -1365,7 +1385,8 @@ public record AetheryteVariation(
         validateNetworkCostEntries(rawNetCost.join(), "network.cost.join", cleanId, logger);
         final NetworkSection validatedNetwork = new NetworkSection(
                 new NetworkLimitSection(validNetMaxPerPlayer, validNetMaxAetheryte, validNetMaxDist),
-                new NetworkCostSection(rawNetCost.create(), rawNetCost.join())
+                new NetworkCostSection(rawNetCost.create(), rawNetCost.join()),
+                network.allowHubOrDefault()
         );
 
         // 9. Validate BetterModel section (#46)

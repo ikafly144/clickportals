@@ -23,13 +23,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.OptionalDouble;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.aetheryte.AetheryteNetwork;
 import org.bukkit.World;
 import org.jspecify.annotations.Nullable;
 
@@ -55,10 +55,42 @@ public final class WarpDestinationQuery {
             final @Nullable Aetheryte source,
             final Aetheryte destination
     ) {
+        return canRouteBetweenAetherytes(source, destination, id -> null);
+    }
+
+    /**
+     * Checks whether warps can route between {@code source} and {@code destination} with Hub-child awareness (#27):
+     * <ul>
+     *   <li>{@code normal <-> normal}: always routable (cross-dimension rules apply separately)</li>
+     *   <li>{@code normal} Hub {@code <->} child in a network hosted by that Hub: routable</li>
+     *   <li>child {@code <->} child in the same {@code networkId}: routable</li>
+     * </ul>
+     */
+    public static boolean canRouteBetweenAetherytes(
+            final @Nullable Aetheryte source,
+            final Aetheryte destination,
+            final Function<UUID, @Nullable AetheryteNetwork> networkLookup
+    ) {
         if (source == null) {
             return true;
         }
-        return Objects.equals(source.networkId(), destination.networkId());
+        final @Nullable UUID srcNetId = source.networkId();
+        final @Nullable UUID dstNetId = destination.networkId();
+        if (srcNetId == null && dstNetId == null) {
+            return true;
+        }
+        if (srcNetId != null && dstNetId != null) {
+            return srcNetId.equals(dstNetId);
+        }
+        if (dstNetId != null) {
+            final AetheryteNetwork dstNet = networkLookup.apply(dstNetId);
+            return dstNet != null && source.id().equals(dstNet.hubAetheryteId());
+        }
+        if (srcNetId == null) {
+            return false;
+        }
+        final AetheryteNetwork srcNet = networkLookup.apply(srcNetId);
+        return srcNet != null && destination.id().equals(srcNet.hubAetheryteId());
     }
 
     /**

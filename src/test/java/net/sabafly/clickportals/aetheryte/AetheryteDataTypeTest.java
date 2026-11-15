@@ -157,6 +157,7 @@ class AetheryteDataTypeTest {
         assertThat(restoredAetheryte).isEqualTo(withNetwork);
         assertThat(restoredAetheryte.networkId()).isEqualTo(networkId);
 
+        final UUID hubId = UUID.fromString("eeeeeeee-1111-2222-3333-444444444444");
         final AetheryteNetwork network = new AetheryteNetwork(
                 networkId,
                 "Guild Net",
@@ -166,11 +167,13 @@ class AetheryteDataTypeTest {
                 "ikafly144",
                 1_700_000_000_000L,
                 AetheryteVisibility.INVITE_ONLY,
-                Set.of(invitee)
+                Set.of(invitee),
+                hubId
         );
         final PersistentDataContainer netPdc = AetheryteNetworkDataType.INSTANCE.toPrimitive(network, context);
         final AetheryteNetwork restoredNet = AetheryteNetworkDataType.INSTANCE.fromPrimitive(netPdc, context);
         assertThat(restoredNet).isEqualTo(network);
+        assertThat(restoredNet.hubAetheryteId()).isEqualTo(hubId);
     }
 
     @SuppressWarnings("unchecked")

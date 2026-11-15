@@ -42,6 +42,7 @@ dialog:
     network-option-create: "<green>+ 新しいネットワークを作成</green>"
     network-option-join: "<aqua>参加: </aqua><white><name></white> <dark_gray>(</dark_gray><visibility><dark_gray>)</dark_gray>"
     network-cost: "<gray>ネットワーク費用 — 新規作成: </gray><create_cost> <dark_gray>|</dark_gray> <gray>参加: </gray><join_cost>"
+    network-info: "<gray>子エーテライトの公開設定は選択したネットワークの設定を引き継ぎます。</gray>"
   button:
     confirm-create: "<green><bold>設置する</bold></green>"
     cancel: "<gray>キャンセル</gray>"
@@ -63,6 +64,11 @@ dialog:
     confirm-rename: "<green><bold>変更する</bold></green>"
     rename-network: "<aqua>✏ ネットワーク名を変更</aqua>"
     rename-network-tooltip: "<gray>このエーテライトが属するネットワーク名を変更します</gray>"
+    manage-networks: "<aqua>🌐 ネットワーク管理</aqua> <dark_gray>(</dark_gray><white><count></white><dark_gray>)</dark_gray>"
+    manage-networks-tooltip: "<gray>このハブエーテライトでホストするネットワークの作成・管理を行います</gray>"
+    create-network: "<green>+ ネットワークを作成</green>"
+    delete-network: "<red>🗑 ネットワークを削除</red>"
+    confirm-delete-network: "<red><bold>ネットワークを削除</bold></red>"
     admin-force-remove: "<dark_red>🗑 [Admin] アイテム返却なしで削除</dark_red>"
     admin-force-remove-tooltip: "<gray>アイテムを返却せずにこのエーテライトを強制削除します</gray>"
     confirm-force-remove: "<dark_red><bold>強制削除する</bold></dark_red>"
@@ -131,6 +137,7 @@ dialog:
   remove:
     title: "<red><bold>エーテライトの撤去確認: </bold></red><white><name></white>"
     body: "<gray>本当に「</gray><white><name></white><gray>」を撤去しますか？</gray><newline><yellow>撤去するとエーテライトアイテムが返却されます。</yellow>"
+    hub-cascade-warning: "<newline><red><bold>管理者カスケード警告:</bold></red> <red>このハブを撤去すると、紐づく <white><networks></white> 個のネットワークと <white><children></white> 基の子エーテライトもすべて同時に撤去されます（子エーテライトのアイテムは返却されません）。</red>"
   operations:
     title: "<aqua>⚙ エーテライト操作: </aqua><white><bold><name></bold></white>"
     body: "<gray>名前: </gray><white><name></white><newline><gray>持ち主: </gray><aqua><owner></aqua><newline><gray>ワールド: </gray><gold><world></gold> <white>(<x>, <y>, <z>)</white><newline><gray>種類: </gray><variation><newline><gray>公開設定: </gray><visibility> <dark_gray>|</dark_gray> <gray>ネットワーク: </gray><white><network></white><newline><gray>招待中プレイヤー: </gray><white><invited></white>"
@@ -167,6 +174,23 @@ dialog:
     body: "<gray>「</gray><white><name></white><gray>」の招待リストから削除するプレイヤーを選択してください。</gray>"
   invite:
     empty: "<gray>現在このエーテライトに招待されているプレイヤーはいません。</gray>"
+  hub-networks:
+    title: "<aqua>🌐 ネットワーク一覧: </aqua><white><bold><name></bold></white>"
+    body: "<gray>ハブ「</gray><white><name></white><gray>」がホスト中のネットワーク数: </gray><white><count></white>"
+    empty: "<gray>このハブにはまだネットワークが作成されていません。</gray>"
+    entry: "<aqua>✦ </aqua><white><name></white> <dark_gray>(</dark_gray><visibility> <dark_gray>|</dark_gray> <white><members></white><dark_gray>)</dark_gray>"
+    create-cost: "<newline><gray>ネットワーク作成費用: </gray><cost>"
+  create-network:
+    title: "<green><bold>ネットワークを作成</bold></green>"
+    body: "<gray>ハブ「</gray><white><name></white><gray>」に新しいネットワークを作成します。</gray>"
+    name-label: "<aqua>ネットワーク名</aqua>"
+  manage-network:
+    title: "<aqua>⚙ ネットワーク管理: </aqua><white><bold><name></bold></white>"
+    body: "<gray>ネットワーク名: </gray><white><name></white><newline><gray>所有者: </gray><aqua><owner></aqua><newline><gray>ハブ: </gray><white><hub></white><newline><gray>公開設定: </gray><visibility><newline><gray>接続中の子エーテライト: </gray><white><members></white><newline><gray>招待中プレイヤー: </gray><white><invited></white>"
+  delete-network:
+    title: "<red><bold>ネットワークの削除確認: </bold></red><white><name></white>"
+    body: "<gray>本当にネットワーク「</gray><white><name></white><gray>」を削除しますか？</gray><newline><gray>接続中の子エーテライト数: </gray><white><members></white>"
+    cascade-warning: "<newline><red><bold>管理者カスケード警告:</bold></red> <red>このネットワークを削除すると、接続中の <white><members></white> 基の子エーテライトもすべて同時に撤去されます（アイテムは返却されません）。</red>"
 
 visibility:
   public: "<green>全体公開</green>"
@@ -181,6 +205,10 @@ aetheryte:
   visibility-changed: "<prefix><green>「</green><white><name></white><green>」の公開設定を </green><visibility><green> に変更しました。</green>"
   visibility-cost-charged: "<prefix><yellow>公開設定変更のコストを支払いました: </yellow><cost>"
   network-renamed: "<prefix><green>ネットワーク名を「</green><white><bold><name></bold></white><green>」に変更しました。</green>"
+  network-created: "<prefix><green>ハブ「</green><white><hub></white><green>」にネットワーク「</green><white><bold><name></bold></white><green>」を作成しました。</green>"
+  network-deleted: "<prefix><yellow>ネットワーク「</yellow><white><bold><name></bold></white><yellow>」を削除しました。</yellow>"
+  network-create-cost-paid: "<prefix><gray>ネットワーク作成費用として <cost> を支払いました。</gray>"
+  hub-cascade-removed: "<prefix><yellow>ハブ「</yellow><white><bold><name></bold></white><yellow>」および関連する <white><networks></white> 個のネットワークと <white><children></white> 基の子エーテライトをすべて撤去しました。</yellow>"
   invitee-added: "<prefix><aqua><player></aqua><green> を「</green><white><name></white><green>」へ招待しました。</green>"
   invitee-removed: "<prefix><aqua><player></aqua><yellow> を「</yellow><white><name></white><yellow>」の招待リストから削除しました。</yellow>"
   removed: "<prefix><yellow>エーテライト「</yellow><white><bold><name></bold></white><yellow>」を撤去しました。</yellow>"
@@ -249,6 +277,14 @@ error:
   not-invited: "<prefix><red>そのプレイヤーは招待リストに含まれていません。</red>"
   network-not-found: "<prefix><red>選択したネットワークはこのワールドに存在しません。</red>"
   network-not-joinable: "<prefix><red>そのネットワークにエーテライトを追加する権限がありません。</red>"
+  no-joinable-networks: "<prefix><red>このワールドには参加可能なエーテライトネットワークがありません。先にノーマル（ハブ）エーテライトの所有者からネットワークを作成・招待してもらってください。</red>"
+  network-hub-required: "<prefix><red>そのネットワークにはこのワールド内の有効なハブエーテライトが設定されていません。</red>"
+  hub-not-allowed: "<prefix><red>このエーテライトのバリエーションはネットワークのハブとして利用できません。</red>"
+  cannot-manage-hub: "<prefix><red>このハブでネットワークを作成・管理できるのはハブの所有者または管理者のみです。</red>"
+  hub-has-child-networks: "<prefix><red>ハブ「<white><name></white>」には <white><networks></white> 個のネットワークに計 <white><children></white> 基の子エーテライトが設置されているため撤去できません。</red>"
+  hub-has-networks: "<prefix><red>ハブ「<white><name></white>」には <white><networks></white> 個のネットワークが紐付いているため種類を変更できません。</red>"
+  network-has-aetherytes: "<prefix><red>ネットワーク「<white><name></white>」にはまだ <white><count></white> 基の子エーテライトが接続されているため削除できません。</red>"
+  variation-requires-hub-network: "<prefix><red>ハブのネットワークに所属していないノーマルエーテライトをネットワーク種別へ変更することはできません。</red>"
   network-limit-global: "<prefix><red>所有できるネットワークの総数上限（<max> 件）に達しています。</red>"
   network-limit-variation: "<prefix><red><variation> のネットワーク作成上限（<max> 件）に達しています。</red>"
   network-aetheryte-limit: "<prefix><red>そのネットワークのエーテライト登録上限（<max> 基）に達しています。</red>"
