@@ -17,6 +17,7 @@
  */
 package net.sabafly.clickportals.service;
 
+import io.papermc.paper.entity.Leashable;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -53,6 +54,7 @@ import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry.RegistrationOutcome;
 import net.sabafly.clickportals.aetheryte.AetheryteVisibility;
 import net.sabafly.clickportals.config.CastSection;
+import net.sabafly.clickportals.config.PetsWarpSection;
 import net.sabafly.clickportals.cost.CostBundle;
 import net.sabafly.clickportals.cost.CostEntry;
 import net.sabafly.clickportals.cost.CostFormatter;
@@ -169,6 +171,7 @@ public final class AetheryteService {
             DIMENSION_DISABLED,
             VISIBILITY_DENIED,
             NETWORK_MISMATCH,
+            TOO_MANY_PETS,
             OTHER
         }
 
@@ -295,6 +298,7 @@ public final class AetheryteService {
     private final Set<UUID> inFlightWarps = ConcurrentHashMap.newKeySet();
     private final Map<UUID, ActiveCastSession> activeCasts = new ConcurrentHashMap<>();
     private volatile Supplier<CastSection> globalCastSupplier = CastSection::defaults;
+    private volatile Supplier<PetsWarpSection> globalPetsWarpSupplier = PetsWarpSection::defaults;
     private volatile IntSupplier maxNetworksPerPlayerSupplier = () -> -1;
     private volatile CastImmobilizeService castImmobilizeService = NoopCastImmobilizeService.INSTANCE;
     private volatile BooleanSupplier delayedVisualRefreshSupplier = () -> false;
@@ -638,6 +642,23 @@ public final class AetheryteService {
         this.maxNetworksPerPlayerSupplier = maxNetworksPerPlayerSupplier != null
                 ? maxNetworksPerPlayerSupplier
                 : () -> -1;
+    }
+
+    /**
+     * Updates the supplier providing global leashed entity (pet) warping settings (#22).
+     */
+    public void setGlobalPetsWarpSupplier(final Supplier<PetsWarpSection> globalPetsWarpSupplier) {
+        this.globalPetsWarpSupplier = globalPetsWarpSupplier != null
+                ? globalPetsWarpSupplier
+                : PetsWarpSection::defaults;
+    }
+
+    private PetsWarpSection.Resolved resolveEffectivePetsSettings(final @Nullable Aetheryte source) {
+        final PetsWarpSection global = globalPetsWarpSupplier.get();
+        if (source != null) {
+            return variationRegistry.getOrDefault(source.variation()).warp().pets().resolve(global);
+        }
+        return global.resolveGlobal();
     }
 
     /**
@@ -4331,6 +4352,25 @@ public final class AetheryteService {
                 return;
             }
 
+            final PetsWarpSection.Resolved resolvedPets = resolveEffectivePetsSettings(source);
+            final List<Leashable> leashedPets = resolvedPets.enabled()
+                    ? PetWarpHelper.findLeashedEntities(player)
+                    : List.of();
+            if (resolvedPets.enabled()
+                    && !leashedPets.isEmpty()
+                    && resolvedPets.maxEntities() >= 0
+                    && leashedPets.size() > resolvedPets.maxEntities()) {
+                if (playerId != null) {
+                    inFlightWarps.remove(playerId);
+                }
+                player.sendMessage(messages.errorWarpDenied(
+                        player,
+                        messages.errorTooManyPets(player, resolvedPets.maxEntities())
+                ));
+                soundService.playError(player, source != null ? source.variation() : destination.variation());
+                return;
+            }
+
             if (!bypassCost) {
                 paid = activeEvaluator.charge(player, source, destination);
                 if (!paid) {
@@ -4370,7 +4410,102 @@ public final class AetheryteService {
                     soundService.playAtLocation(departLoc, SoundEventType.WARP_DEPART, departVariation);
                 }
             }
-            final CompletableFuture<Void> unused = player.teleportAsync(destinationLoc).thenAccept(success -> {
+            final CompletableFuture<List<Leashable>> detachFuture = PetWarpHelper.detachLeashedEntities(
+                    plugin,
+                    player,
+                    leashedPets
+            );
+            if (detachFuture.isDone()) {
+                final List<Leashable> detachedPets = detachFuture.getNow(List.of());
+                dispatchWarpTeleport(
+                        player,
+                        playerId,
+                        source,
+                        destination,
+                        targetWorld,
+                        destinationLoc,
+                        castSettings,
+                        activeEvaluator,
+                        bypassCost,
+                        warpBypassReasons,
+                        detachedPets
+                );
+            } else {
+                final boolean paidFlag = paid;
+                final var _ =
+                        detachFuture.whenComplete((detachedPets, detachEx) -> {
+                    final List<Leashable> safePets = (detachEx == null && detachedPets != null)
+                            ? detachedPets
+                            : List.of();
+                    final ScheduledTask scheduled = player.getScheduler().run(plugin, task -> dispatchWarpTeleport(
+                            player,
+                            playerId,
+                            source,
+                            destination,
+                            targetWorld,
+                            destinationLoc,
+                            castSettings,
+                            activeEvaluator,
+                            bypassCost,
+                            warpBypassReasons,
+                            safePets
+                    ), () -> {
+                        if (playerId != null) {
+                            inFlightWarps.remove(playerId);
+                        }
+                        PetWarpHelper.scheduleReattachAll(plugin, safePets, player);
+                        if (paidFlag) {
+                            handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
+                        }
+                    });
+                    if (scheduled == null) {
+                        if (playerId != null) {
+                            inFlightWarps.remove(playerId);
+                        }
+                        PetWarpHelper.scheduleReattachAll(plugin, safePets, player);
+                        if (paidFlag) {
+                            handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
+                        }
+                    }
+                });
+            }
+        } catch (final Throwable t) {
+            if (playerId != null) {
+                inFlightWarps.remove(playerId);
+            }
+            plugin.getSLF4JLogger().error(
+                    "Unexpected error during warp charge or execution for player {} to {}",
+                    player.getName(),
+                    destination.id(),
+                    t
+            );
+            if (paid) {
+                handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
+            } else {
+                messages.send(player, MessageKey.ERROR_NOT_FOUND);
+            }
+        }
+    }
+
+    private void dispatchWarpTeleport(
+            final Player player,
+            final @Nullable UUID playerId,
+            final @Nullable Aetheryte source,
+            final Aetheryte destination,
+            final World targetWorld,
+            final Location destinationLoc,
+            final CastSection.Resolved castSettings,
+            final WarpCostEvaluator activeEvaluator,
+            final boolean bypassCost,
+            final List<Component> warpBypassReasons,
+            final List<Leashable> detachedPets
+    ) {
+        boolean petsDispatched = false;
+        try {
+            final CompletableFuture<Boolean> playerTeleportFuture = player.teleportAsync(destinationLoc);
+            PetWarpHelper.teleportAndReattachPets(plugin, player, destinationLoc, detachedPets, playerTeleportFuture);
+            petsDispatched = true;
+            final CompletableFuture<Void> unused = playerTeleportFuture.thenAccept(success -> {
                 if (playerId != null) {
                     inFlightWarps.remove(playerId);
                 }
@@ -4428,17 +4563,16 @@ public final class AetheryteService {
             if (playerId != null) {
                 inFlightWarps.remove(playerId);
             }
+            if (!petsDispatched && !detachedPets.isEmpty()) {
+                PetWarpHelper.scheduleReattachAll(plugin, detachedPets, player);
+            }
             plugin.getSLF4JLogger().error(
-                    "Unexpected error during warp charge or execution for player {} to {}",
+                    "Unexpected error during warp teleport for player {} to {}",
                     player.getName(),
                     destination.id(),
                     t
             );
-            if (paid) {
-                handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
-            } else {
-                messages.send(player, MessageKey.ERROR_NOT_FOUND);
-            }
+            handleWarpFailure(player, source, destination, activeEvaluator, bypassCost, MessageKey.ERROR_NOT_FOUND);
         }
     }
 

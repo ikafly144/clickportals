@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
+import net.sabafly.clickportals.config.PetsWarpSection;
 import net.sabafly.clickportals.config.VisibilityCostSection;
 import net.sabafly.clickportals.config.YamlSchemaSync;
 import net.sabafly.clickportals.variation.AetheryteVariation.HitboxSection;
@@ -303,6 +304,10 @@ public final class VariationLoader {
         warpVisCostNode.comment("Cost overrides per destination visibility mode (null = use warp.cost/global, [] = free) (#25)");
         VisibilityCostSection.applyNullSentinels(warpVisCostNode, variation.warp().visibilityCost());
 
+        final CommentedConfigurationNode warpPetsNode = dumpRoot.node("warp", "pets");
+        warpPetsNode.comment("Optional leashed entity warping overrides for warps originating from this variation (#22)");
+        PetsWarpSection.applyNullSentinels(warpPetsNode, variation.warp().pets());
+
         final StringWriter stringWriter = new StringWriter();
         final YamlConfigurationLoader stringLoader = YamlConfigurationLoader.builder()
                 .sink(() -> new BufferedWriter(stringWriter))
@@ -357,6 +362,7 @@ public final class VariationLoader {
         final ConfigurationOptions withSerializers = opts.serializers(s -> s
                 .register(AetheryteVariation.VariationType.class, AetheryteVariation.VariationTypeSerializer.INSTANCE)
                 .register(VisibilityCostSection.class, VisibilityCostSection.Serializer.INSTANCE)
+                .register(PetsWarpSection.class, PetsWarpSection.Serializer.INSTANCE)
                 .register(AetheryteVariation.WarpOverrideSection.class, AetheryteVariation.WarpOverrideSectionSerializer.INSTANCE)
         );
         return header != null ? withSerializers.header(header) : withSerializers;

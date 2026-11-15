@@ -120,6 +120,11 @@ warp:
     public: null
     invite-only: null
     owner-only: null
+  # Leashed entity warping overrides (#22; null to inherit global, -1 max-entities to inherit global, [] cost for free)
+  pets:
+    enabled: null
+    max-entities: null
+    cost: null
 
 # Per-player placement limit and cooldown for this variation
 limit:

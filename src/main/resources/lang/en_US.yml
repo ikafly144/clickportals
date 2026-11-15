@@ -261,6 +261,7 @@ error:
   insufficient-cost: "<red>Insufficient cost</red>"
   too-close: "<red>Destination is too close</red>"
   too-far: "<red>Destination is too far</red>"
+  too-many-pets: "<red>Too many leashed entities (max <max>)</red>"
   no-route: "<red>No route connects to this dimension</red>"
   dimension-place-disabled: "<prefix><red>You cannot place Aetherytes in <world>.</red>"
   dimension-use-disabled: "<red>Aetheryte usage is disabled in this dimension (<world>)</red>"

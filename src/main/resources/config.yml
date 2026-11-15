@@ -68,6 +68,14 @@ warp:
     public: null
     invite-only: null
     owner-only: null
+  # Leashed entity warping settings (#22)
+  pets:
+    # Whether entities leashed to the warping player teleport along with them
+    enabled: true
+    # Maximum leashed entities allowed to warp together (-1 for unlimited, 0 to disable)
+    max-entities: 5
+    # Additional warp cost specifications when warping with leashed entities ($pet_count available)
+    cost: []
 
 # Cross-dimension warping routes, distance origins, and dimension pricing (#9)
 dimensions:
