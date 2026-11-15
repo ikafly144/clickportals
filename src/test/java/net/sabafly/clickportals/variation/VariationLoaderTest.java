@@ -326,4 +326,28 @@ class VariationLoaderTest {
                 .contains("min-radius: 1")
                 .contains("max-radius: 1");
     }
+
+    @Test
+    void customVariationSoundsOverridePreservesNullInheritance() throws IOException {
+        final Path aetheryteDir = tempDir.resolve("variation_sounds");
+        Files.createDirectories(aetheryteDir);
+        Files.writeString(aetheryteDir.resolve("arcane.yml"), """
+                display-name: "<light_purple>Arcane</light_purple>"
+                sounds:
+                  place:
+                    sound: "custom:arcane_place"
+                    pitch: 1.7
+                  ambient:
+                    range: 18.0
+                """, StandardCharsets.UTF_8);
+
+        final VariationRegistry registry = VariationRegistry.load(aetheryteDir, mock(Logger.class), false);
+        final AetheryteVariation arcane = registry.getOrDefault("arcane");
+        assertThat(arcane.sounds().place().sound()).isEqualTo("custom:arcane_place");
+        assertThat(arcane.sounds().place().volume()).isNull();
+        assertThat(arcane.sounds().place().pitch()).isEqualTo(1.7f);
+        assertThat(arcane.sounds().interact().sound()).isNull();
+        assertThat(arcane.sounds().ambient().range()).isEqualTo(18.0);
+        assertThat(arcane.sounds().ambient().enabled()).isNull();
+    }
 }

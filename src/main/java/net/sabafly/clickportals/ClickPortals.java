@@ -41,6 +41,7 @@ import net.sabafly.clickportals.model.BetterModelAetheryteModelService;
 import net.sabafly.clickportals.route.DimensionRouter;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.ConfiguredWarpCostEvaluator;
+import net.sabafly.clickportals.sound.SoundService;
 import net.sabafly.clickportals.update.UpdateChecker;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.VariationRegistry;
@@ -73,6 +74,7 @@ public final class ClickPortals extends JavaPlugin {
     private @Nullable AetheryteService aetheryteService;
     private @Nullable AetheryteDialogFactory dialogFactory;
     private @Nullable AetheryteListener aetheryteListener;
+    private @Nullable SoundService soundService;
     private @Nullable UpdateChecker updateChecker;
     private volatile EconomyProvider economyProvider = NoopEconomyProvider.INSTANCE;
     private volatile DimensionRouter dimensionRouter = new DimensionRouter(net.sabafly.clickportals.route.DimensionRoutesConfig.defaults());
@@ -155,6 +157,15 @@ public final class ClickPortals extends JavaPlugin {
         service.setDimensionConfigSupplier(() -> cfgManager.config().dimensions());
         service.setDelayedVisualRefreshSupplier(() -> cfgManager.config().hologramDelayedRefreshFallback());
         service.setCastImmobilizeService(immobilizeService);
+        final SoundService activeSoundService = new SoundService(
+                this,
+                () -> cfgManager.config().sounds(),
+                variations,
+                aetheryteRegistry
+        );
+        this.soundService = activeSoundService;
+        service.setSoundService(activeSoundService);
+        activeSoundService.startAmbientTask();
         this.aetheryteService = service;
         final AetheryteDialogFactory dialogs = new AetheryteDialogFactory(service, msgService);
         this.dialogFactory = dialogs;
@@ -221,6 +232,10 @@ public final class ClickPortals extends JavaPlugin {
         if (updateChecker != null) {
             updateChecker.stop();
             updateChecker = null;
+        }
+        if (soundService != null) {
+            soundService.stopAmbientTask();
+            soundService = null;
         }
         if (modelService != null) {
             modelService.destroyAll();
@@ -332,6 +347,10 @@ public final class ClickPortals extends JavaPlugin {
             ));
 
             syncAllAetheryteModels();
+            if (this.soundService != null) {
+                this.soundService.reload();
+                this.soundService.startAmbientTask();
+            }
             if (this.updateChecker != null) {
                 this.updateChecker.reload();
             }

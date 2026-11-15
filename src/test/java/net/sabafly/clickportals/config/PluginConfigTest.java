@@ -684,4 +684,30 @@ class PluginConfigTest {
         assertThat(loaded.updateChecker().checkIntervalMinutesOrDefault()).isZero();
         assertThat(Files.readString(configFile, StandardCharsets.UTF_8)).doesNotContain("project-id");
     }
+
+    @Test
+    void soundsConfigLoadsValidatesAndAppliesPartialDefaults() throws IOException {
+        final Path configFile = tempDir.resolve("sounds_config.yml");
+        Files.writeString(configFile, """
+                sounds:
+                  place:
+                    sound: "custom:place"
+                    volume: 0.75
+                  destroy:
+                    sound: "none"
+                  ambient:
+                    enabled: false
+                    interval-ticks: -5
+                """, StandardCharsets.UTF_8);
+
+        final ConfigManager manager = new ConfigManager(configFile, mock(Logger.class));
+        final PluginConfig loaded = manager.load();
+
+        assertThat(loaded.sounds().place().sound()).isEqualTo("custom:place");
+        assertThat(loaded.sounds().place().volume()).isEqualTo(0.75f);
+        assertThat(loaded.sounds().place().pitch()).isEqualTo(1.2f);
+        assertThat(loaded.sounds().destroy().sound()).isEqualTo("none");
+        assertThat(loaded.sounds().ambient().enabled()).isFalse();
+        assertThat(loaded.sounds().ambient().intervalTicks()).isEqualTo(80);
+    }
 }

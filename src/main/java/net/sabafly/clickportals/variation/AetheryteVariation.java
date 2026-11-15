@@ -28,6 +28,7 @@ import net.sabafly.clickportals.config.DistanceSection;
 import net.sabafly.clickportals.cost.CostEntry;
 import net.sabafly.clickportals.cost.expr.ExpressionException;
 import net.sabafly.clickportals.cost.expr.ExpressionParser;
+import net.sabafly.clickportals.sound.SoundsConfig.SoundsSection;
 import org.bukkit.Color;
 import org.bukkit.Material;
 import org.jspecify.annotations.Nullable;
@@ -83,7 +84,11 @@ public record AetheryteVariation(
 
         @Setting("bettermodel")
         @Comment("BetterModel animated 3D model engine settings (#46)")
-        BetterModelSection bettermodel
+        BetterModelSection bettermodel,
+
+        @Setting("sounds")
+        @Comment("Optional per-variation event and ambient sound overrides (null fields inherit global config.yml) (#77)")
+        SoundsSection sounds
 ) {
 
     /**
@@ -706,7 +711,19 @@ public record AetheryteVariation(
             @Nullable final PlacementSection placement,
             @Nullable final LimitSection limit
     ) {
-        this(displayName, item, recipe, model, hitbox, teleport, placement, limit, null, BetterModelSection.disabled());
+        this(
+                displayName,
+                item,
+                recipe,
+                model,
+                hitbox,
+                teleport,
+                placement,
+                limit,
+                null,
+                BetterModelSection.disabled(),
+                SoundsSection.inherit()
+        );
     }
 
     /**
@@ -723,7 +740,19 @@ public record AetheryteVariation(
             @Nullable final LimitSection limit,
             @Nullable final BetterModelSection bettermodel
     ) {
-        this(displayName, item, recipe, model, hitbox, teleport, placement, limit, null, bettermodel);
+        this(
+                displayName,
+                item,
+                recipe,
+                model,
+                hitbox,
+                teleport,
+                placement,
+                limit,
+                null,
+                bettermodel,
+                SoundsSection.inherit()
+        );
     }
 
     /**
@@ -740,7 +769,49 @@ public record AetheryteVariation(
             @Nullable final LimitSection limit,
             @Nullable final WarpOverrideSection warp
     ) {
-        this(displayName, item, recipe, model, hitbox, teleport, placement, limit, warp, BetterModelSection.disabled());
+        this(
+                displayName,
+                item,
+                recipe,
+                model,
+                hitbox,
+                teleport,
+                placement,
+                limit,
+                warp,
+                BetterModelSection.disabled(),
+                SoundsSection.inherit()
+        );
+    }
+
+    /**
+     * Convenience constructor preserving backward compatibility for 10-argument invocations without sounds (#77).
+     */
+    public AetheryteVariation(
+            @Nullable final String displayName,
+            @Nullable final ItemSection item,
+            @Nullable final RecipeSection recipe,
+            @Nullable final ModelSection model,
+            @Nullable final HitboxSection hitbox,
+            @Nullable final TeleportSection teleport,
+            @Nullable final PlacementSection placement,
+            @Nullable final LimitSection limit,
+            @Nullable final WarpOverrideSection warp,
+            @Nullable final BetterModelSection bettermodel
+    ) {
+        this(
+                displayName,
+                item,
+                recipe,
+                model,
+                hitbox,
+                teleport,
+                placement,
+                limit,
+                warp,
+                bettermodel,
+                SoundsSection.inherit()
+        );
     }
 
     /**
@@ -756,7 +827,8 @@ public record AetheryteVariation(
             @Nullable final PlacementSection placement,
             @Nullable final LimitSection limit,
             @Nullable final WarpOverrideSection warp,
-            @Nullable final BetterModelSection bettermodel
+            @Nullable final BetterModelSection bettermodel,
+            @Nullable final SoundsSection sounds
     ) {
         this.displayName = (displayName == null || displayName.isBlank()) ? "<aqua>Aetheryte</aqua>" : displayName;
         this.item = item == null ? ItemSection.defaults() : item;
@@ -768,6 +840,7 @@ public record AetheryteVariation(
         this.limit = limit == null ? LimitSection.defaults() : limit;
         this.warp = warp == null ? WarpOverrideSection.defaults() : warp;
         this.bettermodel = bettermodel == null ? BetterModelSection.disabled() : bettermodel;
+        this.sounds = sounds == null ? SoundsSection.inherit() : sounds;
     }
 
     /**
@@ -784,7 +857,8 @@ public record AetheryteVariation(
                 PlacementSection.defaults(),
                 LimitSection.defaults(),
                 WarpOverrideSection.defaults(),
-                BetterModelSection.disabled()
+                BetterModelSection.disabled(),
+                SoundsSection.inherit()
         );
     }
 
@@ -1043,6 +1117,8 @@ public record AetheryteVariation(
                 new AnimationSection(idleAnim, onInteract, onWarpDepart, onWarpArrive)
         );
 
+        final SoundsSection validatedSounds = sounds.validatedOverride(cleanId, logger);
+
         return new AetheryteVariation(
                 validDisplayName,
                 validatedItem,
@@ -1053,7 +1129,8 @@ public record AetheryteVariation(
                 validatedPlacement,
                 validatedLimit,
                 validatedWarp,
-                validatedBetterModel
+                validatedBetterModel,
+                validatedSounds
         );
     }
 

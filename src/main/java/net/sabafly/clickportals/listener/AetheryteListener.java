@@ -35,6 +35,8 @@ import net.sabafly.clickportals.model.AetheryteModelService;
 import net.sabafly.clickportals.model.ModelAnimationTrigger;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.ClearanceChecker;
+import net.sabafly.clickportals.sound.SoundEventType;
+import net.sabafly.clickportals.sound.SoundService;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.visual.HologramService;
 import org.bukkit.Bukkit;
@@ -247,11 +249,13 @@ public final class AetheryteListener implements Listener {
         event.setCancelled(true);
         if (!AetheryteService.canPlace(player)) {
             messages.send(player, MessageKey.ERROR_NO_PERMISSION);
+            playErrorSound(service, player, variationId);
             return;
         }
         final var dimensionPlaceError = service.checkPlacementDimension(player, clicked.getWorld());
         if (dimensionPlaceError.isPresent()) {
             player.sendMessage(dimensionPlaceError.get());
+            playErrorSound(service, player, variationId);
             return;
         }
 
@@ -261,18 +265,21 @@ public final class AetheryteListener implements Listener {
 
         if (registry.getByPosition(world, targetBlock.getX(), targetBlock.getY(), targetBlock.getZ()).isPresent()) {
             messages.send(player, MessageKey.ERROR_ALREADY_EXISTS);
+            playErrorSound(service, player, variationId);
             return;
         }
 
         final Optional<Component> limitError = service.checkPlacementLimit(player, variationId);
         if (limitError.isPresent()) {
             player.sendMessage(limitError.get());
+            playErrorSound(service, player, variationId);
             return;
         }
 
         final Optional<Component> cooldownError = service.checkPlacementCooldown(player, variationId);
         if (cooldownError.isPresent()) {
             player.sendMessage(cooldownError.get());
+            playErrorSound(service, player, variationId);
             return;
         }
 
@@ -286,6 +293,7 @@ public final class AetheryteListener implements Listener {
         );
         if (distanceError.isPresent()) {
             player.sendMessage(distanceError.get());
+            playErrorSound(service, player, variationId);
             return;
         }
 
@@ -298,6 +306,7 @@ public final class AetheryteListener implements Listener {
                 variation
         )) {
             service.sendClearanceError(player, variation);
+            playErrorSound(service, player, variationId);
             return;
         }
 
@@ -329,7 +338,22 @@ public final class AetheryteListener implements Listener {
         if (modelService != null) {
             modelService.triggerAnimation(aetheryte.id(), ModelAnimationTrigger.ON_INTERACT);
         }
+        final SoundService sounds = service.soundService();
+        if (sounds != null) {
+            sounds.playToPlayer(player, SoundEventType.INTERACT, aetheryte.variation());
+        }
         dialogFactory.openWarpDialog(player, aetheryte);
+    }
+
+    private static void playErrorSound(
+            final AetheryteService service,
+            final Player player,
+            final String variationId
+    ) {
+        final SoundService sounds = service.soundService();
+        if (sounds != null) {
+            sounds.playError(player, variationId);
+        }
     }
 
     /**
@@ -354,9 +378,11 @@ public final class AetheryteListener implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockBreak(final BlockBreakEvent event) {
         final Block block = event.getBlock();
-        if (registry.getByPosition(block.getWorld(), block.getX(), block.getY(), block.getZ()).isPresent()) {
+        final Optional<Aetheryte> protectedTarget = registry.getByPosition(block.getWorld(), block.getX(), block.getY(), block.getZ());
+        if (protectedTarget.isPresent()) {
             event.setCancelled(true);
             messages.send(event.getPlayer(), MessageKey.ERROR_PROTECTED_BREAK);
+            playErrorSound(service, event.getPlayer(), protectedTarget.get().variation());
         }
     }
 

@@ -142,7 +142,8 @@ public final class VariationLoader {
                                     parsed.placement(),
                                     parsed.limit(),
                                     parsed.warp(),
-                                    parsed.bettermodel()
+                                    parsed.bettermodel(),
+                                    parsed.sounds()
                             );
                         } else {
                             effectiveParsed = parsed;
