@@ -202,3 +202,7 @@ command:
   unknown-variation: "<prefix><red>不明なエーテライト種類です: <variation></red>"
   reloaded: "<prefix><green>ClickPortals の設定と翻訳ファイルを再読み込みしました。</green>"
   reload-failed: "<prefix><red>エラーのため設定の再読み込みに失敗しました。コンソールログを確認してください。</red>"
+
+update:
+  available-console: "<prefix><yellow>新しいバージョンが公開されています！ 現在: v<current> / 最新: v<latest> (<url>)</yellow>"
+  available-player: "<prefix><yellow>ClickPortals <green>v<latest></green> が利用可能です（現在: <white>v<current></white>）。<aqua><click:open_url:'<url>'><hover:show_text:'<gray>クリックして Modrinth を開く</gray>'>[Modrinth を開く]</hover></click></aqua></yellow>"

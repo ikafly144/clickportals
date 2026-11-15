@@ -104,3 +104,14 @@ dimensions:
       cost-override:
         world_the_end:
           amount: "$default + 300"
+
+# Automatic update check settings using the Modrinth API (#76)
+update-checker:
+  # Whether to automatically check Modrinth for newer ClickPortals releases
+  enabled: true
+  # Whether alpha and beta prereleases trigger update notifications
+  include-prerelease: false
+  # Notify players with clickportals.notify.update permission when they join if an update is available
+  notify-on-join: true
+  # How often in minutes to re-check Modrinth for updates (0 to check on startup/reload only)
+  check-interval-minutes: 360

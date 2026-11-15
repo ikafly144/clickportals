@@ -206,7 +206,10 @@ public enum MessageKey {
     COMMAND_CONSOLE_SPECIFY_PLAYER("command.console-specify-player"),
     COMMAND_UNKNOWN_VARIATION("command.unknown-variation"),
     COMMAND_RELOADED("command.reloaded"),
-    COMMAND_RELOAD_FAILED("command.reload-failed");
+    COMMAND_RELOAD_FAILED("command.reload-failed"),
+
+    UPDATE_AVAILABLE_CONSOLE("update.available-console"),
+    UPDATE_AVAILABLE_PLAYER("update.available-player");
 
     private final String path;
     private final boolean listValue;

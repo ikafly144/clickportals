@@ -82,6 +82,11 @@ public final class Permissions {
     public static final String BYPASS_DIMENSION = "clickportals.bypass.dimension";
 
     /**
+     * Allows receiving in-game update notifications when a new ClickPortals release is available on Modrinth (default: {@code op}) (#76).
+     */
+    public static final String NOTIFY_UPDATE = "clickportals.notify.update";
+
+    /**
      * Grants all ClickPortals administrative and user permissions (default: {@code op}).
      */
     public static final String ADMIN = "clickportals.admin";
@@ -180,5 +185,12 @@ public final class Permissions {
      */
     public static boolean canBypassDimension(final Permissible permissible) {
         return permissible.hasPermission(BYPASS_DIMENSION);
+    }
+
+    /**
+     * Checks whether the given permissible should receive update notifications (#76).
+     */
+    public static boolean canNotifyUpdate(final Permissible permissible) {
+        return permissible.hasPermission(NOTIFY_UPDATE);
     }
 }

@@ -33,6 +33,7 @@ import net.sabafly.clickportals.economy.NoopEconomyProvider;
 import net.sabafly.clickportals.economy.VaultEconomyProvider;
 import net.sabafly.clickportals.item.AetheryteItemFactory;
 import net.sabafly.clickportals.listener.AetheryteListener;
+import net.sabafly.clickportals.listener.UpdateNotifyListener;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.model.AetheryteModelService;
@@ -40,6 +41,7 @@ import net.sabafly.clickportals.model.BetterModelAetheryteModelService;
 import net.sabafly.clickportals.route.DimensionRouter;
 import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.service.ConfiguredWarpCostEvaluator;
+import net.sabafly.clickportals.update.UpdateChecker;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.VariationRegistry;
 import net.sabafly.clickportals.visual.CastImmobilizeService;
@@ -71,6 +73,7 @@ public final class ClickPortals extends JavaPlugin {
     private @Nullable AetheryteService aetheryteService;
     private @Nullable AetheryteDialogFactory dialogFactory;
     private @Nullable AetheryteListener aetheryteListener;
+    private @Nullable UpdateChecker updateChecker;
     private volatile EconomyProvider economyProvider = NoopEconomyProvider.INSTANCE;
     private volatile DimensionRouter dimensionRouter = new DimensionRouter(net.sabafly.clickportals.route.DimensionRoutesConfig.defaults());
 
@@ -171,6 +174,15 @@ public final class ClickPortals extends JavaPlugin {
         this.aetheryteListener = listener;
         Bukkit.getPluginManager().registerEvents(listener, this);
 
+        final UpdateChecker checker = new UpdateChecker(
+                this,
+                () -> cfgManager.config().updateChecker(),
+                msgService
+        );
+        this.updateChecker = checker;
+        Bukkit.getPluginManager().registerEvents(new UpdateNotifyListener(this, checker), this);
+        checker.start();
+
         BetterModel.platform().addReloadEndHandler(result -> {
             if (isEnabled()) {
                 try {
@@ -206,6 +218,10 @@ public final class ClickPortals extends JavaPlugin {
     @Override
     public void onDisable() {
         AetheryteItemFactory.unregisterRecipes();
+        if (updateChecker != null) {
+            updateChecker.stop();
+            updateChecker = null;
+        }
         if (modelService != null) {
             modelService.destroyAll();
             modelService = null;
@@ -316,6 +332,9 @@ public final class ClickPortals extends JavaPlugin {
             ));
 
             syncAllAetheryteModels();
+            if (this.updateChecker != null) {
+                this.updateChecker.reload();
+            }
             msgService.send(sender, MessageKey.COMMAND_RELOADED);
             getComponentLogger().info(
                     "ClickPortals configuration, translations, and {} variations reloaded.",

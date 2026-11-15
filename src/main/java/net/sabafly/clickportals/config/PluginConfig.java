@@ -61,8 +61,88 @@ public record PluginConfig(
 
         @Setting("dimensions")
         @Comment("Cross-dimension warping routes and dimension pricing (#9)")
-        DimensionRoutesConfig dimensions
+        DimensionRoutesConfig dimensions,
+
+        @Setting("update-checker")
+        @Comment("Automatic update check settings using the Modrinth API (#76)")
+        UpdateCheckerSection updateChecker
 ) {
+
+    /**
+     * Modrinth update checker configuration section (#76).
+     */
+    @ConfigSerializable
+    public record UpdateCheckerSection(
+            @Setting("enabled")
+            @Comment("Whether to automatically check Modrinth for newer ClickPortals releases")
+            @Nullable Boolean enabled,
+
+            @Setting("include-prerelease")
+            @Comment("Whether alpha and beta prereleases trigger update notifications")
+            @Nullable Boolean includePrerelease,
+
+            @Setting("notify-on-join")
+            @Comment("Notify players with clickportals.notify.update permission when they join if an update is available")
+            @Nullable Boolean notifyOnJoin,
+
+            @Setting("check-interval-minutes")
+            @Comment("How often in minutes to re-check Modrinth for updates (0 to check on startup/reload only)")
+            @Nullable Integer checkIntervalMinutes
+    ) {
+        public static final int DEFAULT_CHECK_INTERVAL_MINUTES = 360;
+
+        public UpdateCheckerSection {
+            if (enabled == null) {
+                enabled = true;
+            }
+            if (includePrerelease == null) {
+                includePrerelease = false;
+            }
+            if (notifyOnJoin == null) {
+                notifyOnJoin = true;
+            }
+            if (checkIntervalMinutes == null) {
+                checkIntervalMinutes = DEFAULT_CHECK_INTERVAL_MINUTES;
+            }
+        }
+
+        public UpdateCheckerSection(
+                final boolean enabled,
+                final boolean includePrerelease,
+                final boolean notifyOnJoin,
+                final int checkIntervalMinutes
+        ) {
+            this(
+                    Boolean.valueOf(enabled),
+                    Boolean.valueOf(includePrerelease),
+                    Boolean.valueOf(notifyOnJoin),
+                    Integer.valueOf(checkIntervalMinutes)
+            );
+        }
+
+        public boolean isEnabled() {
+            return Boolean.TRUE.equals(enabled);
+        }
+
+        public boolean shouldIncludePrerelease() {
+            return Boolean.TRUE.equals(includePrerelease);
+        }
+
+        public boolean shouldNotifyOnJoin() {
+            return Boolean.TRUE.equals(notifyOnJoin);
+        }
+
+        public int checkIntervalMinutesOrDefault() {
+            return checkIntervalMinutes != null ? checkIntervalMinutes : DEFAULT_CHECK_INTERVAL_MINUTES;
+        }
+
+        /**
+         * Returns the default update checker section.
+         */
+        public static UpdateCheckerSection defaults() {
+            return new UpdateCheckerSection(true, false, true, DEFAULT_CHECK_INTERVAL_MINUTES);
+        }
+    }
 
     /**
      * Localization configuration section (#19).
@@ -244,6 +324,22 @@ public record PluginConfig(
         if (dimensions == null) {
             dimensions = DimensionRoutesConfig.defaults();
         }
+        if (updateChecker == null) {
+            updateChecker = UpdateCheckerSection.defaults();
+        }
+    }
+
+    /**
+     * Backward-compatible constructor defaulting {@code updateChecker} (#76).
+     */
+    public PluginConfig(
+            final LanguageSection language,
+            final HologramSection hologram,
+            final LimitsSection limits,
+            final WarpSection warp,
+            final DimensionRoutesConfig dimensions
+    ) {
+        this(language, hologram, limits, warp, dimensions, UpdateCheckerSection.defaults());
     }
 
     /**
@@ -255,7 +351,8 @@ public record PluginConfig(
                 HologramSection.defaults(),
                 LimitsSection.defaults(),
                 WarpSection.defaults(),
-                DimensionRoutesConfig.defaults()
+                DimensionRoutesConfig.defaults(),
+                UpdateCheckerSection.defaults()
         );
     }
 
@@ -403,6 +500,22 @@ public record PluginConfig(
             validDimensions = validateDimensions(dimensions, logger);
         }
 
+        final UpdateCheckerSection rawUpdateChecker = updateChecker != null ? updateChecker : UpdateCheckerSection.defaults();
+        final int rawCheckInterval = rawUpdateChecker.checkIntervalMinutesOrDefault();
+        final int validCheckInterval;
+        if (rawCheckInterval < 0) {
+            logger.warn("Invalid update-checker.check-interval-minutes {} (must be >= 0); falling back to 0", rawCheckInterval);
+            validCheckInterval = 0;
+        } else {
+            validCheckInterval = rawCheckInterval;
+        }
+        final UpdateCheckerSection validUpdateChecker = new UpdateCheckerSection(
+                rawUpdateChecker.isEnabled(),
+                rawUpdateChecker.shouldIncludePrerelease(),
+                rawUpdateChecker.shouldNotifyOnJoin(),
+                validCheckInterval
+        );
+
         return new PluginConfig(
                 new LanguageSection(
                         validDefaultLocale,
@@ -415,7 +528,8 @@ public record PluginConfig(
                 ),
                 new LimitsSection(validMaxPerPlayer, validCooldownTicks, validMinDistBetween, validMaxFavorites),
                 validWarp,
-                validDimensions
+                validDimensions,
+                validUpdateChecker
         );
     }
 

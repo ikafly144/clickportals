@@ -202,3 +202,7 @@ command:
   unknown-variation: "<prefix><red>Unknown Aetheryte variation: <variation></red>"
   reloaded: "<prefix><green>Reloaded ClickPortals configuration and translations.</green>"
   reload-failed: "<prefix><red>Failed to reload configuration due to errors. Check console logs.</red>"
+
+update:
+  available-console: "<prefix><yellow>A new version is available! Current: v<current>, Latest: v<latest> (<url>)</yellow>"
+  available-player: "<prefix><yellow>ClickPortals <green>v<latest></green> is available (current: <white>v<current></white>). <aqua><click:open_url:'<url>'><hover:show_text:'<gray>Click to open Modrinth</gray>'>[Open Modrinth]</hover></click></aqua></yellow>"

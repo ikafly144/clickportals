@@ -663,4 +663,25 @@ class PluginConfigTest {
         final ConfigManager reloaded = new ConfigManager(configFile, mock(Logger.class));
         assertThat(reloaded.load().hologramDelayedRefreshFallback()).isTrue();
     }
+
+    @Test
+    void updateCheckerConfigLoadsValidatesAndAppliesPartialDefaults() throws IOException {
+        final Path configFile = tempDir.resolve("update_checker.yml");
+        Files.writeString(configFile, """
+                update-checker:
+                  enabled: true
+                  include-prerelease: true
+                  check-interval-minutes: -10
+                """, StandardCharsets.UTF_8);
+
+        final Logger logger = mock(Logger.class);
+        final ConfigManager manager = new ConfigManager(configFile, logger);
+        final PluginConfig loaded = manager.load();
+
+        assertThat(loaded.updateChecker().isEnabled()).isTrue();
+        assertThat(loaded.updateChecker().shouldIncludePrerelease()).isTrue();
+        assertThat(loaded.updateChecker().shouldNotifyOnJoin()).isTrue();
+        assertThat(loaded.updateChecker().checkIntervalMinutesOrDefault()).isZero();
+        assertThat(Files.readString(configFile, StandardCharsets.UTF_8)).doesNotContain("project-id");
+    }
 }
