@@ -20,6 +20,7 @@ package net.sabafly.clickportals.command;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
@@ -35,6 +36,7 @@ import net.sabafly.clickportals.item.AetheryteItemFactory;
 import net.sabafly.clickportals.message.MessageKey;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.permission.Permissions;
+import net.sabafly.clickportals.service.AetheryteService;
 import net.sabafly.clickportals.variation.AetheryteVariation;
 import net.sabafly.clickportals.variation.VariationRegistry;
 import org.bukkit.Location;
@@ -43,6 +45,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Brigadier command tree for {@code /clickportals} (#17, #18, #19, #37, #38).
@@ -61,7 +64,19 @@ public final class ClickPortalsCommand {
             final VariationRegistry variationRegistry,
             final Messages messages
     ) {
-        return Commands.literal("clickportals")
+        return createCommand(plugin, variationRegistry, messages, null);
+    }
+
+    /**
+     * Builds the {@code /clickportals} Brigadier command node with optional {@code aetheryte} admin subcommands (#74).
+     */
+    public static LiteralCommandNode<CommandSourceStack> createCommand(
+            final ClickPortals plugin,
+            final VariationRegistry variationRegistry,
+            final Messages messages,
+            final @Nullable AetheryteService aetheryteService
+    ) {
+        final LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("clickportals")
                 .requires(source -> Permissions.canUseCommand(source.getSender()))
                 .then(Commands.literal("give")
                         .requires(source -> Permissions.canGive(source.getSender()))
@@ -153,8 +168,11 @@ public final class ClickPortalsCommand {
                             plugin.reloadPlugin(sender);
                             return Command.SINGLE_SUCCESS;
                         })
-                )
-                .build();
+                );
+        if (aetheryteService != null) {
+            root.then(AetheryteAdminCommand.createNode(variationRegistry, messages, aetheryteService));
+        }
+        return root.build();
     }
 
     /**

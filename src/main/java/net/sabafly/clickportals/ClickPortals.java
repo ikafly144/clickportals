@@ -210,7 +210,7 @@ public final class ClickPortals extends JavaPlugin {
 
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event -> {
             event.registrar().register(
-                    ClickPortalsCommand.createCommand(this, variations, msgService),
+                    ClickPortalsCommand.createCommand(this, variations, msgService, service),
                     "ClickPortals management command",
                     List.of("cp")
             );

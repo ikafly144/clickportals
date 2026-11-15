@@ -58,6 +58,11 @@ public final class Permissions {
     public static final String COMMAND_RELOAD = "clickportals.command.reload";
 
     /**
+     * Allows using {@code /clickportals aetheryte} (default: {@code op}) (#74).
+     */
+    public static final String COMMAND_AETHERYTE = "clickportals.command.aetheryte";
+
+    /**
      * Allows bypassing per-player Aetheryte placement limits and placement cooldowns (default: {@code op}).
      */
     public static final String BYPASS_LIMIT = "clickportals.bypass.limit";
@@ -152,10 +157,17 @@ public final class Permissions {
     }
 
     /**
+     * Checks whether the given permissible is allowed to execute {@code /clickportals aetheryte} (#74).
+     */
+    public static boolean canManageAetherytes(final Permissible permissible) {
+        return permissible.hasPermission(COMMAND_AETHERYTE);
+    }
+
+    /**
      * Checks whether the given permissible has access to any {@code /clickportals} subcommand.
      */
     public static boolean canUseCommand(final Permissible permissible) {
-        return canGive(permissible) || canReload(permissible);
+        return canGive(permissible) || canReload(permissible) || canManageAetherytes(permissible);
     }
 
     /**
