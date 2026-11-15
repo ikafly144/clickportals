@@ -22,6 +22,8 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
+      version_type: ${{ steps.meta.outputs.version_type }}
+      minecraft_version: ${{ steps.meta.outputs.minecraft_version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,9 +46,15 @@ jobs:
 
           TAG_VERSION="${TAG_NAME#v}"
           PLUGIN_VERSION="$(sed -nE 's/^pluginVersion[[:space:]]*=[[:space:]]*([^[:space:]#]+).*/\1/p' gradle.properties | head -n 1 | tr -d '\r')"
+          MC_VERSION="$(sed -nE 's/^minecraftVersion[[:space:]]*=[[:space:]]*([^[:space:]#]+).*/\1/p' gradle.properties | head -n 1 | tr -d '\r')"
 
           if [[ -z "$PLUGIN_VERSION" ]]; then
             echo "::error::Could not read pluginVersion from gradle.properties."
+            exit 1
+          fi
+
+          if [[ -z "$MC_VERSION" ]]; then
+            echo "::error::Could not read minecraftVersion from gradle.properties."
             exit 1
           fi
 
@@ -56,12 +64,21 @@ jobs:
           fi
 
           PRERELEASE="false"
+          VERSION_TYPE="release"
           if [[ "$TAG_VERSION" == *-* ]]; then
             PRERELEASE="true"
+            PRE_TAG="${TAG_VERSION#*-}"
+            if [[ "${PRE_TAG,,}" == alpha* || "${PRE_TAG,,}" == *alpha* ]]; then
+              VERSION_TYPE="alpha"
+            else
+              VERSION_TYPE="beta"
+            fi
           fi
 
           echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "version_type=$VERSION_TYPE" >> "$GITHUB_OUTPUT"
+          echo "minecraft_version=$MC_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Set up JDK 25
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
@@ -143,3 +160,124 @@ jobs:
             ARGS+=(--prerelease)
           fi
           gh release create "${ARGS[@]}"
+
+  modrinth:
+    name: Publish to Modrinth
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Verify SHA-256 checksum
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c "ClickPortals-${VERSION}.jar.sha256")
+
+      - name: Extract GitHub Release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --json body --jq '.body // ""' > release_notes.md
+
+      - name: Upload version to Modrinth
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          MODRINTH_PROJECT_SLUG: ${{ vars.MODRINTH_PROJECT_ID || 'clickportals' }}
+          VERSION: ${{ needs.build.outputs.version }}
+          VERSION_TYPE: ${{ needs.build.outputs.version_type }}
+          IS_PRERELEASE: ${{ needs.build.outputs.prerelease }}
+          MC_VERSION: ${{ needs.build.outputs.minecraft_version }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${MODRINTH_TOKEN}" ]]; then
+            echo "::error::Secret MODRINTH_TOKEN is not configured."
+            exit 1
+          fi
+
+          USER_AGENT="ikafly144/clickportals/${VERSION} (https://github.com/${GITHUB_REPOSITORY})"
+          JAR_FILE="dist/ClickPortals-${VERSION}.jar"
+
+          PROJECT_ID="$(curl -fsSL -H "User-Agent: ${USER_AGENT}" "https://api.modrinth.com/v2/project/${MODRINTH_PROJECT_SLUG}" | jq -er '.id')"
+
+          resolve_dependency() {
+            local slug="$1"
+            local dep_type="$2"
+            local resp
+            if resp="$(curl -fsSL -H "User-Agent: ${USER_AGENT}" "https://api.modrinth.com/v2/project/${slug}" 2>/dev/null)"; then
+              local dep_id
+              dep_id="$(printf '%s' "$resp" | jq -er '.id // empty')"
+              if [[ -n "$dep_id" ]]; then
+                jq -cn --arg id "$dep_id" --arg type "$dep_type" '{project_id: $id, dependency_type: $type}'
+                return 0
+              fi
+            fi
+            echo "::warning::Could not resolve Modrinth project for dependency '${slug}'; skipping dependency entry." >&2
+          }
+
+          DEPS_JSON="[]"
+          add_dep() {
+            local dep_json="$1"
+            if [[ -n "$dep_json" ]]; then
+              DEPS_JSON="$(jq -cn --argjson arr "$DEPS_JSON" --argjson item "$dep_json" '$arr + [$item]')"
+            fi
+          }
+
+          add_dep "$(resolve_dependency "packetevents" "required")"
+          add_dep "$(resolve_dependency "bettermodel" "required")"
+          # Vault / VaultUnlocked optional integration
+          VAULT_DEP="$(resolve_dependency "vault" "optional")"
+          if [[ -z "$VAULT_DEP" ]]; then
+            VAULT_DEP="$(resolve_dependency "vaultunlocked" "optional")"
+          fi
+          add_dep "$VAULT_DEP"
+
+          FEATURED="true"
+          if [[ "${IS_PRERELEASE}" == "true" ]]; then
+            FEATURED="false"
+          fi
+
+          CHANGELOG="$(cat release_notes.md)"
+          if [[ -z "$CHANGELOG" ]]; then
+            CHANGELOG="Release ${VERSION}"
+          fi
+
+          PAYLOAD="$(jq -cn \
+            --arg name "ClickPortals ${VERSION}" \
+            --arg version_number "${VERSION}" \
+            --arg changelog "${CHANGELOG}" \
+            --argjson dependencies "${DEPS_JSON}" \
+            --arg mc_version "${MC_VERSION}" \
+            --arg version_type "${VERSION_TYPE}" \
+            --argjson featured "${FEATURED}" \
+            --arg project_id "${PROJECT_ID}" \
+            '{
+              name: $name,
+              version_number: $version_number,
+              changelog: $changelog,
+              dependencies: $dependencies,
+              game_versions: [$mc_version],
+              version_type: $version_type,
+              loaders: ["paper", "folia"],
+              featured: $featured,
+              status: "listed",
+              project_id: $project_id,
+              file_parts: ["file"],
+              primary_file: "file"
+            }')"
+
+          curl --fail-with-body -sSL -X POST "https://api.modrinth.com/v2/version" \
+            -H "Authorization: ${MODRINTH_TOKEN}" \
+            -H "User-Agent: ${USER_AGENT}" \
+            -F "data=${PAYLOAD}" \
+            -F "file=@${JAR_FILE}"
