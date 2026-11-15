@@ -217,7 +217,7 @@ public final class SoundsConfig {
             @Nullable Float pitch,
 
             @Setting("range")
-            @Comment("Audible radius in blocks around an Aetheryte (0.0 - 64.0; null in variation to inherit)")
+            @Comment("Recipient selection radius in blocks around an Aetheryte (0.0 - 64.0; client attenuation distance scales with volume, null in variation to inherit)")
             @Nullable Double range,
 
             @Setting("interval-ticks")
