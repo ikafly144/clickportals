@@ -7,7 +7,7 @@ Welcome to the official documentation for **ClickPortals** — a **Paper** and *
 - **Folia & Paper Safe**: Uses `RegionScheduler`, `EntityScheduler`, and `teleportAsync` (`folia-supported: true`).
 - **Zero-Entity World Footprint**: Client-side visuals rendered with PacketEvents (`BLOCK_DISPLAY`, `TEXT_DISPLAY`, `INTERACTION`) and backed by non-ticking Marker / World PDC storage.
 - **Customizable Variations (`aetheryte/*.yml`)**: Custom creation items, recipes, block or BetterModel 3D models, hitbox bounds, clearance checks, landing rings, placement/warp costs, and casting times.
-- **Networks & Access Control**: Choose between standalone `normal` Aetherytes or player-owned world-scoped `network` Aetherytes, with `PUBLIC`, `INVITE_ONLY`, and `OWNER_ONLY` visibility plus invitee management.
+- **Hub-Based Networks & Access Control**: Choose between `normal` Aetherytes (which can also serve as Network Hubs) and child `type: network` Aetherytes linked bidirectionally to their Hub within the same world, with `PUBLIC`, `INVITE_ONLY`, and `OWNER_ONLY` visibility plus invitee management.
 - **Formula Cost Engine**: Charge Vault money, XP points, XP levels, or food using expressions (`$block_distance`, `$pet_count`, `$owned_count`, `$dimension_cost`, etc.) with mandatory/optional rules and per-visibility `visibility-cost` overrides.
 - **Leashed Pet Warping**: Teleport entities leashed to the warping player along with them, with configurable caps and `$pet_count` surcharges.
 - **Sound Effects & Per-Player i18n**: Global and per-variation sound overrides (`ambient` loops + event cues) and automatic client locale translation (`en_US`, `ja_JP`).

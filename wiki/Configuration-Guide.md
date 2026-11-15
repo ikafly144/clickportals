@@ -218,4 +218,4 @@ sounds:
     interval-ticks: 80
 ```
 
-Set `sound: ""` or `volume: 0.0` to silence a specific event sound, or `ambient.enabled: false` to disable ambient sounds. Every field can also be overridden selectively per variation in `aetheryte/<type>.yml`.
+Set `sound: ""` or `volume: 0.0` to silence a specific event sound, or `ambient.enabled: false` to disable ambient sounds (`ambient.range` is clamped between `0.0` and `64.0` blocks). Every field can also be overridden selectively per variation in `aetheryte/<type>.yml`.

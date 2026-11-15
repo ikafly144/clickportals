@@ -106,24 +106,32 @@ warp:
 
 ---
 
-## World-Scoped Networks (`type: "network"`)
+## Hub & Child World-Scoped Networks (`type: "network"`)
 
-When a variation sets `type: "network"`, its Aetherytes connect exclusively within **world-scoped player-owned networks** (`AetheryteNetwork`):
-- **Strict Routing**: Network Aetherytes only connect to other Aetherytes belonging to the **same network ID** (and `normal` Aetherytes only route to other `normal` Aetherytes).
-- **World Scoped**: Networks belong to a single world and cannot span dimensions.
-- **Shared Access Control**: Visibility (`PUBLIC`, `INVITE_ONLY`, `OWNER_ONLY`) and invitees are managed per network; joining or inviting applies across all Aetherytes in that network.
-- **Automatic Cleanup**: Deleting the last remaining Aetheryte in a network automatically removes that network.
+ClickPortals implements an **FFXIV-style Hub + Child Network** model:
+- **Hub Aetherytes (`type: "normal"`)**: Any placed `normal` Aetheryte whose variation allows `network.allow-hub: true` (the default) can host one or more world-scoped networks (`AetheryteNetwork`). Network creation and management (rename, visibility, invites, deletion) are accessed from the Hub Aetheryte's **Operations -> Manage Networks** dialog.
+- **Child Aetherytes (`type: "network"`)**: Placing a `type: "network"` Aetheryte attaches it to an existing joinable Hub network in the same world. Placement fails if no joinable Hub network exists in that world.
+- **Bidirectional Routing**:
+  - `normal` <-> `normal` (across reachable dimensions)
+  - Hub `normal` <-> any child Aetheryte in a network hosted by that Hub
+  - Child <-> child within the **same network ID** (only accessible while its Hub still exists in that world)
+- **World Scoped & Shared Access**: Networks belong to a single world. Visibility (`PUBLIC`, `INVITE_ONLY`, `OWNER_ONLY`) and invitees are configured per network on its Hub and apply across all children in that network.
+- **Hub Removal Guard & Admin Cascade**:
+  - Regular players cannot remove a Hub Aetheryte while any child Aetherytes exist in its hosted networks.
+  - Admins (`clickportals.admin`) receive a cascade warning and can remove the Hub along with all hosted networks and child Aetherytes in one action (no child item refunds), or manage networks via `/cp aetheryte network`.
+  - Removing a Hub that only has empty networks automatically cleans up those empty networks.
 
 ### `network` Configuration Section
 ```yaml
 network:
+  allow-hub: true # For type: normal variations: allow hosting Aetheryte networks (default true)
   limit:
     max-per-player: -1  # Max networks of this variation per player (-1 = unlimited)
-    max-aetheryte: -1   # Max Aetherytes inside a single network (-1 = unlimited)
-    max-distance: -1.0  # Max Euclidean distance from existing members when joining (-1.0 disables)
+    max-aetheryte: -1   # Max child Aetherytes inside a single network (-1 = unlimited)
+    max-distance: -1.0  # Max Euclidean distance from Hub / existing members when joining (-1.0 disables)
   cost:
-    create: [] # Extra cost entries charged in addition to placement cost when creating a new network
-    join: []   # Extra cost entries charged when joining an existing network
+    create: [] # Cost entries charged when creating a network from this Hub
+    join: []   # Extra cost entries charged when placing a child Aetheryte into an existing network
 ```
 
 ---

@@ -10,8 +10,8 @@
 
 - **Paper & Folia Native**: Engineered for region-threaded Folia servers as well as standard Paper servers without main-thread stalls or orphaned entities.
 - **Native Dialog UI**: Interactive in-game dialogs for naming new Aetherytes, choosing initial visibility or networks, filtering/sorting warp destinations, managing favorites, and editing settings.
-- **Variations & World Networks**: Define custom Aetheryte types (`plugins/ClickPortals/aetheryte/*.yml`) with custom items, crafting recipes, `BLOCK_DISPLAY` / BetterModel visuals, landing rings, casting times, and player-owned world-scoped networks (`type: network`).
-- **Visibility & Invite Lists**: Control access per Aetheryte or per network with `PUBLIC`, `INVITE_ONLY`, and `OWNER_ONLY` visibility modes and invite management.
+- **Variations & Hub-Based World Networks**: Define custom Aetheryte types (`plugins/ClickPortals/aetheryte/*.yml`) with custom items, crafting recipes, `BLOCK_DISPLAY` / BetterModel visuals, landing rings, casting times, and Hub-hosted world networks (`type: normal` Hubs + `type: network` child Aetherytes).
+- **Visibility & Invite Lists**: Control access per Aetheryte or per network with `PUBLIC`, `INVITE_ONLY`, and `OWNER_ONLY` visibility modes, Hub Network Management UI, and invite management.
 - **Flexible Cost & Formula Engine**: Charge Vault currency, experience points, experience levels, or hunger using math expressions, optional vs. required entries, and per-visibility cost lists (`visibility-cost`).
 - **Cross-Dimension Routes & Leashed Pets**: Configure shortest-path dimension links, coordinate scaling (e.g. Nether `8:1`), per-dimension enable flags, and optional teleportation of leashed entities (`warp.pets`) with `$pet_count` pricing.
 - **Audio, Localization & Update Notifications**: Configure event and ambient sounds globally or per variation, adapt messages/holograms automatically to each player's client locale (`en_US`, `ja_JP`), and receive Modrinth update alerts.
