@@ -2671,6 +2671,7 @@ public final class AetheryteService {
                 inFlightWarps.remove(playerId);
             }
             messages.send(player, MessageKey.ERROR_TOO_FAR);
+            soundService.playError(player, source.variation());
             return;
         }
 
@@ -2683,6 +2684,7 @@ public final class AetheryteService {
                     ? evaluation.denyReason()
                     : messages.get(player, MessageKey.ERROR_WARP_REQUIREMENTS_NOT_MET);
             player.sendMessage(messages.errorWarpDenied(player, reason));
+            soundService.playError(player, source != null ? source.variation() : destination.variation());
             return;
         }
 
@@ -2723,6 +2725,7 @@ public final class AetheryteService {
                         inFlightWarps.remove(playerId);
                     }
                     messages.send(player, MessageKey.ERROR_DESTINATION_UNSAFE);
+                    soundService.playError(player, source != null ? source.variation() : destination.variation());
                     return;
                 }
                 final Location destinationLoc = safeLanding.get();
@@ -2790,6 +2793,7 @@ public final class AetheryteService {
                 inFlightWarps.remove(playerId);
             }
             messages.send(player, MessageKey.ERROR_TOO_FAR);
+            soundService.playError(player, source.variation());
             return;
         }
 
@@ -2950,6 +2954,7 @@ public final class AetheryteService {
                     inFlightWarps.remove(playerId);
                 }
                 messages.send(player, MessageKey.ERROR_TOO_FAR);
+                soundService.playError(player, source.variation());
                 return;
             }
 
@@ -2963,6 +2968,7 @@ public final class AetheryteService {
                         ? finalEval.denyReason()
                         : messages.get(player, MessageKey.ERROR_INSUFFICIENT_COST);
                 player.sendMessage(messages.errorWarpDenied(player, reason));
+                soundService.playError(player, source != null ? source.variation() : destination.variation());
                 return;
             }
 

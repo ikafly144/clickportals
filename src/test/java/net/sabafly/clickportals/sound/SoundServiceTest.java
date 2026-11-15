@@ -160,4 +160,74 @@ class SoundServiceTest {
         assertThat(SoundService.shouldPlayAmbient(50L, 10L, 80, 16.0, 12.0)).isFalse();
         assertThat(SoundService.shouldPlayAmbient(90L, 10L, 80, 16.0, 12.0)).isTrue();
     }
+
+    @Test
+    void ambientRangeOver64IsClampedAndWarned() {
+        final Logger logger = mock(Logger.class);
+        final SoundsSection oversized = new SoundsSection(
+                SoundEntry.inherit(),
+                SoundEntry.inherit(),
+                SoundEntry.inherit(),
+                SoundEntry.inherit(),
+                SoundEntry.inherit(),
+                SoundEntry.inherit(),
+                SoundEntry.inherit(),
+                SoundEntry.inherit(),
+                new AmbientSoundSection(true, AmbientSoundSection.DEFAULT_SOUND, 0.6f, 1.0f, 80.0, 80)
+        );
+
+        final SoundsSection validated = oversized.validatedGlobal(logger);
+        assertThat(validated.ambient().range()).isEqualTo(AmbientSoundSection.MAX_RANGE);
+        assertThat(oversized.ambient().resolve(AmbientSoundSection.defaults()).range())
+                .isEqualTo(AmbientSoundSection.MAX_RANGE);
+        verify(logger).warn(
+                "Ambient sound range {} at {}.range exceeds maximum {}; clamping to {}",
+                80.0,
+                "sounds.ambient",
+                AmbientSoundSection.MAX_RANGE,
+                AmbientSoundSection.MAX_RANGE
+        );
+    }
+
+    @Test
+    void pruneAmbientCooldownsRemovesOfflineDeletedAndExpiredEntriesOnly() {
+        final AetheryteRegistry registry = new AetheryteRegistry();
+        final java.util.UUID worldId = java.util.UUID.randomUUID();
+        final java.util.UUID ownerId = java.util.UUID.randomUUID();
+        final org.bukkit.World world = mock(org.bukkit.World.class);
+        org.mockito.Mockito.when(world.getUID()).thenReturn(worldId);
+        org.mockito.Mockito.when(world.getPersistentDataContainer())
+                .thenReturn(mock(org.bukkit.persistence.PersistentDataContainer.class));
+        final Aetheryte activeAetheryte = new Aetheryte(
+                java.util.UUID.randomUUID(), "Active", worldId, "world", 0, 64, 0, ownerId, 1L);
+        registry.register(world, activeAetheryte);
+
+        final SoundService service = new SoundService(
+                null,
+                SoundsSection::defaults,
+                VariationRegistry.defaults(),
+                registry,
+                mock(Logger.class),
+                false
+        );
+
+        final java.util.UUID onlinePlayer = java.util.UUID.randomUUID();
+        final java.util.UUID offlinePlayer = java.util.UUID.randomUUID();
+        final java.util.UUID deletedAetheryte = java.util.UUID.randomUUID();
+
+        // Still within intervalTicks (80) at currentTick=200 -> retained
+        service.recordAmbientCooldownForTest(onlinePlayer, activeAetheryte.id(), 160L);
+        // Expired (200 - 100 >= 80) -> pruned
+        final java.util.UUID expiredOnlinePlayer = java.util.UUID.randomUUID();
+        service.recordAmbientCooldownForTest(expiredOnlinePlayer, activeAetheryte.id(), 100L);
+        // Offline player -> pruned even if recent
+        service.recordAmbientCooldownForTest(offlinePlayer, activeAetheryte.id(), 195L);
+        // Deleted Aetheryte -> pruned even if recent
+        service.recordAmbientCooldownForTest(onlinePlayer, deletedAetheryte, 195L);
+
+        service.pruneAmbientCooldowns(200L, id -> id.equals(onlinePlayer) || id.equals(expiredOnlinePlayer));
+
+        assertThat(service.ambientCooldownCacheSize()).isEqualTo(1);
+        assertThat(service.hasAmbientCooldownEntry(onlinePlayer, activeAetheryte.id())).isTrue();
+    }
 }

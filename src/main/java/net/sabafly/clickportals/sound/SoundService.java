@@ -55,9 +55,9 @@ public final class SoundService {
 
     private static final long AMBIENT_POLL_TICKS = 5L;
     private static final long AMBIENT_POLL_MILLIS = AMBIENT_POLL_TICKS * 50L;
-    private static final double MAX_AMBIENT_SCAN_RANGE = 64.0;
+    private static final double MAX_AMBIENT_SCAN_RANGE = SoundsConfig.AmbientSoundSection.MAX_RANGE;
 
-    private record AmbientCooldownKey(UUID playerId, UUID aetheryteId) {
+    record AmbientCooldownKey(UUID playerId, UUID aetheryteId) {
     }
 
     private final @Nullable Plugin plugin;
@@ -69,6 +69,7 @@ public final class SoundService {
     private final Set<String> warnedInvalidKeys = ConcurrentHashMap.newKeySet();
     private final Map<AmbientCooldownKey, Long> lastAmbientPlayTick = new ConcurrentHashMap<>();
     private final AtomicLong tickCounter = new AtomicLong(0L);
+    private final AtomicLong taskGeneration = new AtomicLong(0L);
     private final AtomicReference<@Nullable ScheduledTask> ambientTaskRef = new AtomicReference<>();
 
     /**
@@ -197,10 +198,11 @@ public final class SoundService {
         if (!playbackEnabled || plugin == null) {
             return;
         }
+        final long generation = taskGeneration.incrementAndGet();
         tickCounter.set(0L);
         final ScheduledTask task = plugin.getServer().getAsyncScheduler().runAtFixedRate(
                 plugin,
-                scheduled -> tickAmbient(),
+                scheduled -> tickAmbient(generation),
                 AMBIENT_POLL_MILLIS,
                 AMBIENT_POLL_MILLIS,
                 TimeUnit.MILLISECONDS
@@ -212,6 +214,7 @@ public final class SoundService {
      * Stops the periodic ambient sound scanner task and clears ambient cooldown state.
      */
     public void stopAmbientTask() {
+        taskGeneration.incrementAndGet();
         final ScheduledTask existing = ambientTaskRef.getAndSet(null);
         if (existing != null) {
             existing.cancel();
@@ -227,33 +230,48 @@ public final class SoundService {
         lastAmbientPlayTick.clear();
     }
 
-    private void tickAmbient() {
-        if (!playbackEnabled || plugin == null) {
+    private void tickAmbient(final long generation) {
+        if (!playbackEnabled || plugin == null || taskGeneration.get() != generation) {
             return;
         }
+        final long currentTick = tickCounter.addAndGet(AMBIENT_POLL_TICKS);
+        final boolean shouldPrune = currentTick % 200L == 0L;
         if (registry.getAll().isEmpty()) {
+            if (shouldPrune) {
+                pruneAmbientCooldowns(currentTick, SoundService::isPlayerOnline);
+            }
             return;
         }
         final double maxRange = maxConfiguredAmbientRange();
         if (maxRange <= 0.0) {
+            if (shouldPrune) {
+                pruneAmbientCooldowns(currentTick, SoundService::isPlayerOnline);
+            }
             return;
         }
-        final long currentTick = tickCounter.addAndGet(AMBIENT_POLL_TICKS);
         final int chunkRadius = computeChunkRadius(maxRange);
 
         for (final Player player : Bukkit.getOnlinePlayers()) {
+            if (taskGeneration.get() != generation) {
+                return;
+            }
             if (!player.isOnline()) {
                 continue;
             }
-            player.getScheduler().run(plugin, scheduled -> playAmbientForPlayer(player, chunkRadius, currentTick), null);
+            player.getScheduler().run(plugin, scheduled -> playAmbientForPlayer(player, chunkRadius, currentTick, generation), null);
         }
-        if (currentTick % 200L == 0L) {
-            pruneOfflineCooldowns();
+        if (shouldPrune) {
+            pruneAmbientCooldowns(currentTick, SoundService::isPlayerOnline);
         }
     }
 
-    private void playAmbientForPlayer(final Player player, final int chunkRadius, final long currentTick) {
-        if (!player.isOnline() || !player.isValid()) {
+    private void playAmbientForPlayer(
+            final Player player,
+            final int chunkRadius,
+            final long currentTick,
+            final long generation
+    ) {
+        if (taskGeneration.get() != generation || !player.isOnline() || !player.isValid()) {
             return;
         }
         final Location playerLoc = player.getLocation();
@@ -276,6 +294,9 @@ public final class SoundService {
                     continue;
                 }
                 for (final Aetheryte aetheryte : chunkEntries) {
+                    if (taskGeneration.get() != generation) {
+                        return;
+                    }
                     final ResolvedAmbient ambient = resolveAmbientSound(aetheryte.variation());
                     if (!ambient.isPlayable()) {
                         continue;
@@ -298,6 +319,9 @@ public final class SoundService {
                     if (key == null) {
                         continue;
                     }
+                    if (taskGeneration.get() != generation) {
+                        return;
+                    }
                     lastAmbientPlayTick.put(cooldownKey, currentTick);
                     final Sound sound = Sound.sound(key, Sound.Source.BLOCK, ambient.volume(), ambient.pitch());
                     playSafely(() -> player.playSound(sound, ax, ay, az));
@@ -306,8 +330,46 @@ public final class SoundService {
         }
     }
 
-    private void pruneOfflineCooldowns() {
-        lastAmbientPlayTick.keySet().removeIf(key -> Bukkit.getPlayer(key.playerId()) == null);
+    private static boolean isPlayerOnline(final UUID playerId) {
+        final Player player = Bukkit.getPlayer(playerId);
+        return player != null && player.isOnline();
+    }
+
+    void recordAmbientCooldownForTest(final UUID playerId, final UUID aetheryteId, final long tick) {
+        lastAmbientPlayTick.put(new AmbientCooldownKey(playerId, aetheryteId), tick);
+    }
+
+    int ambientCooldownCacheSize() {
+        return lastAmbientPlayTick.size();
+    }
+
+    boolean hasAmbientCooldownEntry(final UUID playerId, final UUID aetheryteId) {
+        return lastAmbientPlayTick.containsKey(new AmbientCooldownKey(playerId, aetheryteId));
+    }
+
+    void pruneAmbientCooldowns(
+            final long currentTick,
+            final java.util.function.Predicate<UUID> onlineChecker
+    ) {
+        if (lastAmbientPlayTick.isEmpty()) {
+            return;
+        }
+        lastAmbientPlayTick.entrySet().removeIf(entry -> {
+            final AmbientCooldownKey key = entry.getKey();
+            if (!onlineChecker.test(key.playerId())) {
+                return true;
+            }
+            final var aetheryteOpt = registry.getById(key.aetheryteId());
+            if (aetheryteOpt.isEmpty()) {
+                return true;
+            }
+            final ResolvedAmbient resolved = resolveAmbientSound(aetheryteOpt.get().variation());
+            if (!resolved.isPlayable()) {
+                return true;
+            }
+            final long lastTick = entry.getValue();
+            return currentTick - lastTick >= resolved.intervalTicks();
+        });
     }
 
     double maxConfiguredAmbientRange() {

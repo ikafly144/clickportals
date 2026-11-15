@@ -217,7 +217,7 @@ public final class SoundsConfig {
             @Nullable Float pitch,
 
             @Setting("range")
-            @Comment("Audible radius in blocks around an Aetheryte (null in variation to inherit)")
+            @Comment("Audible radius in blocks around an Aetheryte (0.0 - 64.0; null in variation to inherit)")
             @Nullable Double range,
 
             @Setting("interval-ticks")
@@ -228,6 +228,7 @@ public final class SoundsConfig {
         public static final float DEFAULT_VOLUME = 0.6f;
         public static final float DEFAULT_PITCH = 1.2f;
         public static final double DEFAULT_RANGE = 12.0;
+        public static final double MAX_RANGE = 64.0;
         public static final int DEFAULT_INTERVAL_TICKS = 80;
 
         public static AmbientSoundSection defaults() {
@@ -283,6 +284,10 @@ public final class SoundsConfig {
                 logger.warn("Invalid ambient sound range {} at {}.range (must be >= 0.0); falling back to {}",
                         validRange, prefix, fbRange != null ? fbRange : DEFAULT_RANGE);
                 validRange = fbRange != null ? fbRange : Double.valueOf(DEFAULT_RANGE);
+            } else if (validRange != null && validRange > MAX_RANGE) {
+                logger.warn("Ambient sound range {} at {}.range exceeds maximum {}; clamping to {}",
+                        validRange, prefix, MAX_RANGE, MAX_RANGE);
+                validRange = Double.valueOf(MAX_RANGE);
             }
             Integer validInterval = intervalTicks != null ? intervalTicks : fbInterval;
             if (validInterval != null && validInterval <= 0) {
@@ -307,7 +312,7 @@ public final class SoundsConfig {
                     resSound,
                     Float.isFinite(rawVol) ? Math.max(0.0f, rawVol) : DEFAULT_VOLUME,
                     (Float.isFinite(rawPitch) && rawPitch > 0.0f) ? Math.clamp(rawPitch, 0.5f, 2.0f) : DEFAULT_PITCH,
-                    Double.isFinite(rawRange) ? Math.max(0.0, rawRange) : DEFAULT_RANGE,
+                    Double.isFinite(rawRange) ? Math.clamp(rawRange, 0.0, MAX_RANGE) : DEFAULT_RANGE,
                     rawInterval > 0 ? rawInterval : DEFAULT_INTERVAL_TICKS
             );
         }
