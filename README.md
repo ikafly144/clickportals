@@ -2,45 +2,69 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-**ClickPortals** is a warp utility plugin for **Paper** and **Folia** servers that provides **Aetheryte** warp points managed through Paper's native **Dialog UI** and client-side **PacketEvents** visual entities.
+**ClickPortals** is a modern **Aetheryte warp portal plugin** for **Paper** and **Folia** servers. Players craft, place, and organize customizable teleportation hubs using Minecraft's native **Dialog UI**, client-side **PacketEvents** visuals, and optional **BetterModel** 3D animations.
 
-## Features
+---
 
-- **Folia & Paper Compatible**: Built from the ground up using `RegionScheduler`, `EntityScheduler`, and `teleportAsync` (`folia-supported: true`).
-- **Clean World Persistence**: Aetheryte entities use non-ticking `Marker` entities and World `PersistentDataContainer` (`clickportals:aetherytes`) backed by an $O(1)$ in-memory cache (`AetheryteRegistry`).
-- **Client-Side Visuals & Interaction**: Uses [PacketEvents](https://github.com/retrooper/packetevents) to render client-only `BLOCK_DISPLAY`, `TEXT_DISPLAY` holograms, and `INTERACTION` hitboxes—leaving zero orphaned display entities if the plugin is removed.
-- **Paper Dialog UI**: Native Dialog screens for naming new Aetherytes, selecting warp destinations (with cost and availability indicators), and confirming removal.
-- **Type-Safe Configuration**: Powered by [SpongePowered Configurate 4](https://github.com/SpongePowered/Configurate) (`configurate-yaml`) with comment preservation.
-- **Per-Player Localization (i18n)**: MiniMessage YAML translation files (`lang/en_US.yml`, `lang/ja_JP.yml`) that automatically adapt chat messages, Dialog UIs, and client-side holograms to each player's client language.
-- **Aetheryte Variations**: Define multiple Aetheryte types (`aetheryte/<type>.yml`) with custom creation items (`item_model` & `custom_model_data`), crafting recipes, `BLOCK_DISPLAY` visual block models, configurable interaction hitboxes, ring-shaped surrounding landing spread (`min-radius` / `max-radius`), placement clearance checks, per-player placement limits, and placement cooldowns.
-- **Costs & Economy System**: Powerful mathematical formula engine supporting Vault currency, total experience points, experience levels, and hunger—with support for combined costs, all-or-nothing rollback guarantees, and mandatory vs optional payments.
-- **Distance Limitations & Cross-Dimension Routes**: Configure minimum and maximum warp distance boundaries, coordinate scaling origins (e.g. Nether 8:1 ratio, world spawn, fixed coordinates), and shortest-path dimension route networks.
-- **Granular Permissions**: Fine-grained permission nodes for warp usage, placement, removal, warp & placement cost bypass, limit & cooldown bypass, and administrative commands (`/cp give`, `/cp reload`).
+## Highlights
 
-## Documentation
+- **Paper & Folia Native**: Engineered for region-threaded Folia servers as well as standard Paper servers without main-thread stalls or orphaned entities.
+- **Native Dialog UI**: Interactive in-game dialogs for naming new Aetherytes, choosing initial visibility or networks, filtering/sorting warp destinations, managing favorites, and editing settings.
+- **Variations & Hub-Based World Networks**: Define custom Aetheryte types (`plugins/ClickPortals/aetheryte/*.yml`) with custom items, crafting recipes, `BLOCK_DISPLAY` / BetterModel visuals, landing rings, casting times, and Hub-hosted world networks (`type: normal` Hubs + `type: network` child Aetherytes).
+- **Visibility & Invite Lists**: Control access per Aetheryte or per network with `PUBLIC`, `INVITE_ONLY`, and `OWNER_ONLY` visibility modes, Hub Network Management UI, and invite management.
+- **Flexible Cost & Formula Engine**: Charge Vault currency, experience points, experience levels, or hunger using math expressions, optional vs. required entries, and per-visibility cost lists (`visibility-cost`).
+- **Cross-Dimension Routes & Leashed Pets**: Configure shortest-path dimension links, coordinate scaling (e.g. Nether `8:1`), per-dimension enable flags, and optional teleportation of leashed entities (`warp.pets`) with `$pet_count` pricing.
+- **Audio, Localization & Update Notifications**: Configure event and ambient sounds globally or per variation, adapt messages/holograms automatically to each player's client locale (`en_US`, `ja_JP`), and receive Modrinth update alerts.
 
-- [Permissions & Commands Reference](docs/permissions.md)
-- [Localization & Message Formatting (i18n)](docs/i18n.md)
-- [Aetheryte Variations Reference](docs/variations.md)
-- [Costs & Economy Guide](docs/costs.md)
+---
 
 ## Requirements
 
-- **Java**: 25+
-- **Server**: Paper or Folia `26.3`+
-- **Dependencies**:
-  - [PacketEvents](https://modrinth.com/plugin/packetevents) (required for client-side Aetheryte visuals and interaction)
-  - [BetterModel](https://github.com/toxicity188/BetterModel) (required for 3D animated Aetheryte models and warp casting player animations)
-  - [Vault](https://www.spigotmc.org/resources/vault.34315/) (optional, required only if using currency-based costs)
+| Component | Requirement | Notes |
+|---|---|---|
+| **Java** | **25+** | |
+| **Server** | **Paper** or **Folia** `26.3`+ | Full Folia region/entity scheduler support |
+| **PacketEvents** | Required | Client-side displays, holograms, hitboxes, cast immobilization |
+| **BetterModel** | Required | 3D animated Aetheryte models & player cast animations |
+| **Vault** | Optional | Required only if using `type: vault` economy costs |
 
-## Building
+---
+
+## Quick Start
+
+1. Download **ClickPortals**, **PacketEvents**, and **BetterModel** (plus **Vault** and an economy plugin if desired) and place them in `plugins/`.
+2. Start or restart the server to generate `plugins/ClickPortals/config.yml`, `plugins/ClickPortals/aetheryte/default.yml`, and `plugins/ClickPortals/lang/*.yml`.
+3. Obtain an Aetheryte item by crafting the default recipe (8 Chiseled Stone Bricks surrounding 1 Amethyst Shard) or running `/cp give <player>`.
+4. Right-click a block with the Aetheryte item, enter a name, select visibility, and confirm placement.
+5. Right-click a placed Aetheryte to warp to reachable destinations or manage your Aetheryte settings.
+
+---
+
+## Documentation (Wiki)
+
+Browse the documentation in [`wiki/`](wiki/Home.md) or on the [GitHub Wiki](https://github.com/ikafly144/clickportals/wiki):
+
+- [Home](wiki/Home.md) — Overview & documentation index
+- [Installation & Setup](wiki/Installation-and-Setup.md) — Requirements, dependencies, file layout, troubleshooting
+- [Usage & Commands](wiki/Usage-and-Commands.md) — Player guide and `/cp` / `/cp aetheryte` commands
+- [Permissions](wiki/Permissions.md) — Permission nodes, defaults, and `clickportals.admin` inheritance
+- [Configuration Guide](wiki/Configuration-Guide.md) — Complete `config.yml` reference
+- [Aetheryte Variations & Networks](wiki/Aetheryte-Variations-and-Networks.md) — Custom variations, world networks, BetterModel, and cost formulas
+
+---
+
+## Development & Building
+
+Build the shaded plugin jar and run all checks/unit tests from source:
 
 ```sh
-./gradlew build
+./gradlew check shadowJar
 ```
 
-The shaded plugin jar is generated at `build/libs/ClickPortals-<version>.jar`.
+The output jar is written to `build/libs/ClickPortals-<version>.jar`.
+
+Internal contributor reference notes are kept in [`docs/`](docs/variations.md) ([Variations](docs/variations.md), [Costs](docs/costs.md), [Permissions](docs/permissions.md), [i18n](docs/i18n.md)).
 
 ## License
 
-This project is licensed under the **GNU General Public License v3.0 or later (`GPL-3.0-or-later`)** — see the [LICENSE](LICENSE) file for details.
+Licensed under the **GNU General Public License v3.0 or later (`GPL-3.0-or-later`)** — see [LICENSE](LICENSE).
