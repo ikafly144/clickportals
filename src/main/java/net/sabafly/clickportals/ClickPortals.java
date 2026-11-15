@@ -157,6 +157,7 @@ public final class ClickPortals extends JavaPlugin {
         service.setMaxFavoritesPerPlayerSupplier(() -> cfgManager.config().maxFavoritesPerPlayer());
         service.setMaxNetworksPerPlayerSupplier(() -> cfgManager.config().limits().maxNetworksPerPlayer());
         service.setGlobalCastSupplier(() -> cfgManager.config().warp().cast());
+        service.setGlobalHubToNetworkCastSupplier(() -> cfgManager.config().warp().hubToNetworkCast());
         service.setGlobalPetsWarpSupplier(() -> cfgManager.config().warp().pets());
         service.setDimensionConfigSupplier(() -> cfgManager.config().dimensions());
         service.setDelayedVisualRefreshSupplier(() -> cfgManager.config().hologramDelayedRefreshFallback());
@@ -342,6 +343,7 @@ public final class ClickPortals extends JavaPlugin {
             this.dimensionRouter = new DimensionRouter(reloadedConfig.dimensions());
             service.setEconomyProvider(this.economyProvider);
             service.setGlobalCastSupplier(() -> cfgManager.config().warp().cast());
+            service.setGlobalHubToNetworkCastSupplier(() -> cfgManager.config().warp().hubToNetworkCast());
             service.setGlobalPetsWarpSupplier(() -> cfgManager.config().warp().pets());
             service.setMaxNetworksPerPlayerSupplier(() -> cfgManager.config().limits().maxNetworksPerPlayer());
             service.setCostEvaluator(new ConfiguredWarpCostEvaluator(

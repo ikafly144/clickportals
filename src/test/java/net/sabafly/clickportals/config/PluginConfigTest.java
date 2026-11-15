@@ -27,6 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
+import java.util.Objects;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.Logger;
@@ -709,5 +710,48 @@ class PluginConfigTest {
         assertThat(loaded.sounds().destroy().sound()).isEqualTo("none");
         assertThat(loaded.sounds().ambient().enabled()).isFalse();
         assertThat(loaded.sounds().ambient().intervalTicks()).isEqualTo(80);
+    }
+
+    @Test
+    void hubToNetworkCastLoadsPartialOverridesAndPreservesInheritAcrossReload() throws IOException {
+        final Path configFile = tempDir.resolve("hub_to_network_cast.yml");
+        Files.writeString(configFile, """
+                warp:
+                  cast:
+                    ticks: 60
+                  hub-to-network-cast:
+                    ticks: 15
+                    player-model: "  hub_caster  "
+                    cast-animation: ""
+                    cancel:
+                      on-damage: false
+                """, StandardCharsets.UTF_8);
+
+        final ConfigManager manager = new ConfigManager(configFile, mock(Logger.class));
+        final PluginConfig loaded = manager.load();
+
+        assertThat(manager.lastLoadSuccessful()).isTrue();
+        final CastSection hubCast = loaded.warp().hubToNetworkCast();
+        assertThat(hubCast.ticks()).isEqualTo(15);
+        assertThat(hubCast.playerModel()).isEqualTo("hub_caster");
+        assertThat(hubCast.castAnimation()).isEmpty();
+        assertThat(hubCast.arriveAnimation()).isNull();
+        assertThat(hubCast.immobilize()).isNull();
+        final CastSection.CastCancelSection cancel = Objects.requireNonNull(hubCast.cancel());
+        assertThat(cancel.onMove()).isNull();
+        assertThat(cancel.onDamage()).isFalse();
+        assertThat(cancel.onInteract()).isNull();
+
+        // Clean any backup created during initial missing-key schema sync, then reload to verify idempotency
+        Files.deleteIfExists(configFile.resolveSibling("config.yml.bak"));
+        Files.deleteIfExists(configFile.resolveSibling("hub_to_network_cast.yml.bak"));
+        final ConfigManager reloaded = new ConfigManager(configFile, mock(Logger.class));
+        final PluginConfig secondLoad = reloaded.load();
+        assertThat(reloaded.lastLoadSuccessful()).isTrue();
+        assertThat(secondLoad.warp().hubToNetworkCast()).isEqualTo(hubCast);
+        try (var stream = Files.list(tempDir)) {
+            assertThat(stream.map(p -> p.getFileName().toString()))
+                    .noneMatch(name -> name.endsWith(".bak"));
+        }
     }
 }

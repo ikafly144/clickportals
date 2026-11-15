@@ -94,6 +94,16 @@ public final class WarpDestinationQuery {
     }
 
     /**
+     * Summary of a Hub-hosted network category containing reachable child urban Aetherytes (#87).
+     */
+    public record NetworkGroup(
+            UUID networkId,
+            String networkName,
+            int destinationCount
+    ) {
+    }
+
+    /**
      * Summary of a reachable destination world shown on the root menu (#54).
      */
     public record WorldGroup(
@@ -145,6 +155,54 @@ public final class WarpDestinationQuery {
     }
 
     /**
+     * Extracts Hub-hosted network categories when {@code current} is a Hub hosting networks with at least one
+     * reachable child Aetheryte (#87). Returns an empty list for non-Hub Aetherytes or when 0 children are reachable.
+     */
+    public static List<NetworkGroup> groupHostedNetworks(
+            final Aetheryte current,
+            final List<Aetheryte> destinations,
+            final List<AetheryteNetwork> hostedNetworks,
+            final Predicate<Aetheryte> reachablePredicate
+    ) {
+        if (current.networkId() != null || hostedNetworks.isEmpty()) {
+            return List.of();
+        }
+        final Map<UUID, AetheryteNetwork> networksById = new LinkedHashMap<>(hostedNetworks.size());
+        final Map<UUID, Integer> countsByNetwork = new LinkedHashMap<>();
+        for (final AetheryteNetwork net : hostedNetworks) {
+            if (current.id().equals(net.hubAetheryteId())) {
+                networksById.put(net.id(), net);
+            }
+        }
+        if (networksById.isEmpty()) {
+            return List.of();
+        }
+        for (final Aetheryte dest : destinations) {
+            final @Nullable UUID destNetId = dest.networkId();
+            if (destNetId == null || dest.id().equals(current.id()) || !networksById.containsKey(destNetId)) {
+                continue;
+            }
+            if (reachablePredicate.test(dest)) {
+                countsByNetwork.merge(destNetId, 1, Integer::sum);
+            }
+        }
+        if (countsByNetwork.isEmpty()) {
+            return List.of();
+        }
+        final List<NetworkGroup> groups = new ArrayList<>(countsByNetwork.size());
+        for (final Map.Entry<UUID, Integer> entry : countsByNetwork.entrySet()) {
+            final AetheryteNetwork net = networksById.get(entry.getKey());
+            if (net != null && entry.getValue() > 0) {
+                groups.add(new NetworkGroup(net.id(), net.name(), entry.getValue()));
+            }
+        }
+        groups.sort(Comparator
+                .comparing(NetworkGroup::networkName, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(NetworkGroup::networkId));
+        return List.copyOf(groups);
+    }
+
+    /**
      * Groups reachable destinations by world, putting the current world first, then ordering by environment and name (#54).
      */
     public static List<WorldGroup> groupReachableWorlds(
@@ -153,7 +211,7 @@ public final class WarpDestinationQuery {
             final Predicate<Aetheryte> reachablePredicate,
             final Function<UUID, World.@Nullable Environment> environmentLookup
     ) {
-        return groupReachableWorlds(current, destinations, reachablePredicate, environmentLookup, Function.identity());
+        return groupReachableWorlds(current, destinations, reachablePredicate, environmentLookup, Function.identity(), Set.of());
     }
 
     public static List<WorldGroup> groupReachableWorlds(
@@ -163,10 +221,31 @@ public final class WarpDestinationQuery {
             final Function<UUID, World.@Nullable Environment> environmentLookup,
             final Function<String, String> worldDisplayNameResolver
     ) {
+        return groupReachableWorlds(current, destinations, reachablePredicate, environmentLookup, worldDisplayNameResolver, Set.of());
+    }
+
+    /**
+     * Groups reachable destinations by world while excluding any {@code excludedNetworkIds} already separated into
+     * dedicated Hub network categories (#54, #87).
+     */
+    public static List<WorldGroup> groupReachableWorlds(
+            final Aetheryte current,
+            final List<Aetheryte> destinations,
+            final Predicate<Aetheryte> reachablePredicate,
+            final Function<UUID, World.@Nullable Environment> environmentLookup,
+            final Function<String, String> worldDisplayNameResolver,
+            final Set<UUID> excludedNetworkIds
+    ) {
         final Map<UUID, String> namesByWorld = new LinkedHashMap<>();
         final Map<UUID, Integer> countsByWorld = new LinkedHashMap<>();
         for (final Aetheryte dest : destinations) {
-            if (dest.id().equals(current.id()) || !reachablePredicate.test(dest)) {
+            if (dest.id().equals(current.id())) {
+                continue;
+            }
+            if (dest.networkId() != null && excludedNetworkIds.contains(dest.networkId())) {
+                continue;
+            }
+            if (!reachablePredicate.test(dest)) {
                 continue;
             }
             namesByWorld.putIfAbsent(dest.worldId(), dest.worldName());
@@ -239,13 +318,51 @@ public final class WarpDestinationQuery {
             final Function<Aetheryte, String> ownerNameResolver,
             final Function<String, String> worldDisplayNameResolver
     ) {
+        return queryCandidates(
+                current,
+                viewerId,
+                allDestinations,
+                state,
+                favorites,
+                reachablePredicate,
+                ownerNameResolver,
+                worldDisplayNameResolver,
+                Set.of()
+        );
+    }
+
+    /**
+     * Filters and sorts warp destination candidates while separating Hub-hosted {@code excludedNetworkIds}
+     * from {@link WarpDialogState.ViewMode#WORLD} and {@link WarpDialogState.ViewMode#ALL} (#54, #55, #56, #87).
+     */
+    public static List<Candidate> queryCandidates(
+            final Aetheryte current,
+            final UUID viewerId,
+            final List<Aetheryte> allDestinations,
+            final WarpDialogState state,
+            final Set<UUID> favorites,
+            final Predicate<Aetheryte> reachablePredicate,
+            final Function<Aetheryte, String> ownerNameResolver,
+            final Function<String, String> worldDisplayNameResolver,
+            final Set<UUID> excludedNetworkIds
+    ) {
         final String normalizedQuery = state.searchQuery().toLowerCase(Locale.ROOT);
         final boolean hasQuery = !normalizedQuery.isEmpty();
-        final boolean includeWorldInSearch = state.mode() != WarpDialogState.ViewMode.WORLD;
+        final boolean includeWorldInSearch = state.mode() != WarpDialogState.ViewMode.WORLD
+                && state.mode() != WarpDialogState.ViewMode.NETWORK;
 
         final List<Candidate> filtered = new ArrayList<>();
         for (final Aetheryte dest : allDestinations) {
             if (dest.id().equals(current.id())) {
+                continue;
+            }
+            if (state.mode() == WarpDialogState.ViewMode.NETWORK
+                    && (state.targetNetworkId() == null || !state.targetNetworkId().equals(dest.networkId()))) {
+                continue;
+            }
+            if ((state.mode() == WarpDialogState.ViewMode.WORLD || state.mode() == WarpDialogState.ViewMode.ALL)
+                    && dest.networkId() != null
+                    && excludedNetworkIds.contains(dest.networkId())) {
                 continue;
             }
             if (state.mode() == WarpDialogState.ViewMode.WORLD
