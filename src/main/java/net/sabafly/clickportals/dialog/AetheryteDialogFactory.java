@@ -38,6 +38,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickCallback;
@@ -404,12 +405,34 @@ public final class AetheryteDialogFactory {
     ) {
     }
 
+    sealed interface RootButtonSpec {
+        record NetworkCategory(NetworkGroup group) implements RootButtonSpec {}
+
+        record FavoritesCategory(int reachableFavoritesCount) implements RootButtonSpec {}
+
+        record WorldCategory(WorldGroup group) implements RootButtonSpec {}
+
+        record AllWorldsCategory(int normalReachableCount) implements RootButtonSpec {}
+
+        record Operations() implements RootButtonSpec {}
+    }
+
     RootMenuPlan planRootMenu(
             final Player player,
             final Aetheryte current,
             final List<Aetheryte> allAetherytes
     ) {
         final Map<UUID, Boolean> worldRouteCache = new HashMap<>();
+        final Map<UUID, Boolean> selectableCache = new HashMap<>();
+        final Predicate<Aetheryte> selectable = dest -> {
+            final Boolean cached = selectableCache.get(dest.id());
+            if (cached != null) {
+                return cached;
+            }
+            final boolean result = isDestinationSelectable(player, current, dest, worldRouteCache);
+            selectableCache.put(dest.id(), result);
+            return result;
+        };
         final Set<UUID> favorites = service.getFavorites(player);
 
         final List<AetheryteNetwork> hostedNetworks = current.networkId() == null
@@ -422,12 +445,12 @@ public final class AetheryteDialogFactory {
                         current,
                         allAetherytes,
                         hostedNetworks,
-                        dest -> isDestinationSelectable(player, current, dest, worldRouteCache)
+                        selectable
                 );
         final List<WorldGroup> worldGroups = WarpDestinationQuery.groupReachableWorlds(
                 current,
                 allAetherytes,
-                dest -> isDestinationSelectable(player, current, dest, worldRouteCache),
+                selectable,
                 AetheryteDialogFactory::resolveWorldEnvironment,
                 service::resolveDimensionPlainName,
                 excludedNetworkIds
@@ -446,7 +469,7 @@ public final class AetheryteDialogFactory {
         final List<Aetheryte> reachableDestinations = totalReachableCount > 0 ? new ArrayList<>(totalReachableCount) : List.of();
         if (totalReachableCount > 0) {
             for (final Aetheryte dest : allAetherytes) {
-                if (!dest.id().equals(current.id()) && isDestinationSelectable(player, current, dest, worldRouteCache)) {
+                if (!dest.id().equals(current.id()) && selectable.test(dest)) {
                     reachableDestinations.add(dest);
                     if (favorites.contains(dest.id())) {
                         reachableFavoritesCount++;
@@ -464,74 +487,87 @@ public final class AetheryteDialogFactory {
         );
     }
 
+    static List<RootButtonSpec> planRootButtons(final RootMenuPlan plan) {
+        final List<RootButtonSpec> specs = new ArrayList<>(plan.networkGroups().size() + plan.worldGroups().size() + 3);
+        for (final NetworkGroup group : plan.networkGroups()) {
+            specs.add(new RootButtonSpec.NetworkCategory(group));
+        }
+        specs.add(new RootButtonSpec.FavoritesCategory(plan.reachableFavoritesCount()));
+        for (final WorldGroup group : plan.worldGroups()) {
+            specs.add(new RootButtonSpec.WorldCategory(group));
+        }
+        if (plan.normalReachableCount() > 0) {
+            specs.add(new RootButtonSpec.AllWorldsCategory(plan.normalReachableCount()));
+        }
+        specs.add(new RootButtonSpec.Operations());
+        return List.copyOf(specs);
+    }
+
     private List<ActionButton> buildRootButtons(
             final Player player,
             final Aetheryte current,
             final WarpDialogState state,
             final RootMenuPlan plan
     ) {
-        final List<ActionButton> buttons = new ArrayList<>(plan.networkGroups().size() + plan.worldGroups().size() + 3);
-        for (final NetworkGroup group : plan.networkGroups()) {
-            buttons.add(ActionButton.builder(
-                            messages.warpNetworkCategoryLabel(player, group.networkName(), group.destinationCount()))
-                    .tooltip(messages.warpNetworkCategoryTooltip(player, group.networkName(), group.destinationCount()))
-                    .width(BUTTON_WIDTH_PRIMARY)
-                    .action(DialogAction.customClick((view, audience) -> {
-                        if (audience instanceof Player clicker) {
-                            openWarpDialog(clicker, current, state.toNetwork(group.networkId()));
-                        }
-                    }, SINGLE_USE_CALLBACK))
-                    .build());
+        final List<RootButtonSpec> specs = planRootButtons(plan);
+        final List<ActionButton> buttons = new ArrayList<>(specs.size());
+        for (final RootButtonSpec spec : specs) {
+            buttons.add(switch (spec) {
+                case RootButtonSpec.NetworkCategory(final NetworkGroup group) -> ActionButton.builder(
+                                messages.warpNetworkCategoryLabel(player, group.networkName(), group.destinationCount()))
+                        .tooltip(messages.warpNetworkCategoryTooltip(player, group.networkName(), group.destinationCount()))
+                        .width(BUTTON_WIDTH_PRIMARY)
+                        .action(DialogAction.customClick((view, audience) -> {
+                            if (audience instanceof Player clicker) {
+                                openWarpDialog(clicker, current, state.toNetwork(group.networkId()));
+                            }
+                        }, SINGLE_USE_CALLBACK))
+                        .build();
+                case RootButtonSpec.FavoritesCategory(final int favCount) -> ActionButton.builder(
+                                messages.get(player, MessageKey.DIALOG_WARP_CATEGORY_FAVORITES,
+                                        Placeholder.unparsed("count", Integer.toString(favCount))))
+                        .tooltip(messages.get(player, MessageKey.DIALOG_WARP_CATEGORY_FAVORITES_TOOLTIP))
+                        .width(BUTTON_WIDTH_PRIMARY)
+                        .action(DialogAction.customClick((view, audience) -> {
+                            if (audience instanceof Player clicker) {
+                                openWarpDialog(clicker, current, state.toFavorites());
+                            }
+                        }, SINGLE_USE_CALLBACK))
+                        .build();
+                case RootButtonSpec.WorldCategory(final WorldGroup group) -> {
+                    final Component worldDisplay = service.resolveDimensionDisplayComponent(group.worldName());
+                    final Component label = messages.warpWorldCategoryLabel(
+                            player,
+                            group.environment(),
+                            worldDisplay,
+                            group.destinationCount(),
+                            group.currentWorld()
+                    );
+                    final Component tooltip = buildWorldCategoryTooltip(player, worldDisplay, group);
+                    yield ActionButton.builder(label)
+                            .tooltip(tooltip)
+                            .width(BUTTON_WIDTH_PRIMARY)
+                            .action(DialogAction.customClick((view, audience) -> {
+                                if (audience instanceof Player clicker) {
+                                    openWarpDialog(clicker, current, state.toWorld(group.worldId()));
+                                }
+                            }, SINGLE_USE_CALLBACK))
+                            .build();
+                }
+                case RootButtonSpec.AllWorldsCategory(final int allCount) -> ActionButton.builder(
+                                messages.get(player, MessageKey.DIALOG_WARP_CATEGORY_ALL,
+                                        Placeholder.unparsed("count", Integer.toString(allCount))))
+                        .tooltip(messages.get(player, MessageKey.DIALOG_WARP_CATEGORY_ALL_TOOLTIP))
+                        .width(BUTTON_WIDTH_PRIMARY)
+                        .action(DialogAction.customClick((view, audience) -> {
+                            if (audience instanceof Player clicker) {
+                                openWarpDialog(clicker, current, state.toAll());
+                            }
+                        }, SINGLE_USE_CALLBACK))
+                        .build();
+                case RootButtonSpec.Operations() -> createOperationsButton(player, current, state);
+            });
         }
-
-        buttons.add(ActionButton.builder(
-                        messages.get(player, MessageKey.DIALOG_WARP_CATEGORY_FAVORITES,
-                                Placeholder.unparsed("count", Integer.toString(plan.reachableFavoritesCount()))))
-                .tooltip(messages.get(player, MessageKey.DIALOG_WARP_CATEGORY_FAVORITES_TOOLTIP))
-                .width(BUTTON_WIDTH_PRIMARY)
-                .action(DialogAction.customClick((view, audience) -> {
-                    if (audience instanceof Player clicker) {
-                        openWarpDialog(clicker, current, state.toFavorites());
-                    }
-                }, SINGLE_USE_CALLBACK))
-                .build());
-
-        for (final WorldGroup group : plan.worldGroups()) {
-            final Component worldDisplay = service.resolveDimensionDisplayComponent(group.worldName());
-            final Component label = messages.warpWorldCategoryLabel(
-                    player,
-                    group.environment(),
-                    worldDisplay,
-                    group.destinationCount(),
-                    group.currentWorld()
-            );
-            final Component tooltip = buildWorldCategoryTooltip(player, worldDisplay, group);
-            buttons.add(ActionButton.builder(label)
-                    .tooltip(tooltip)
-                    .width(BUTTON_WIDTH_PRIMARY)
-                    .action(DialogAction.customClick((view, audience) -> {
-                        if (audience instanceof Player clicker) {
-                            openWarpDialog(clicker, current, state.toWorld(group.worldId()));
-                        }
-                    }, SINGLE_USE_CALLBACK))
-                    .build());
-        }
-
-        if (plan.normalReachableCount() > 0) {
-            buttons.add(ActionButton.builder(
-                            messages.get(player, MessageKey.DIALOG_WARP_CATEGORY_ALL,
-                                    Placeholder.unparsed("count", Integer.toString(plan.normalReachableCount()))))
-                    .tooltip(messages.get(player, MessageKey.DIALOG_WARP_CATEGORY_ALL_TOOLTIP))
-                    .width(BUTTON_WIDTH_PRIMARY)
-                    .action(DialogAction.customClick((view, audience) -> {
-                        if (audience instanceof Player clicker) {
-                            openWarpDialog(clicker, current, state.toAll());
-                        }
-                    }, SINGLE_USE_CALLBACK))
-                    .build());
-        }
-
-        buttons.add(createOperationsButton(player, current, state));
         return buttons;
     }
 
@@ -2188,6 +2224,7 @@ public final class AetheryteDialogFactory {
                 }
                 final String networkName = service.registry().getNetworkById(targetNetworkId)
                         .map(AetheryteNetwork::name)
+                        .filter(name -> !name.isBlank())
                         .orElseGet(targetNetworkId::toString);
                 yield messages.warpNetworkScopeLabel(player, networkName);
             }

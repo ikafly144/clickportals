@@ -409,6 +409,120 @@ class AetheryteDialogFactoryBypassTest {
             // Non-Hub child Aetheryte must never expose hosted network categories even with hub lookup
             final AetheryteDialogFactory.RootMenuPlan childPlan = factory.planRootMenu(viewer, childAccessible, all);
             assertThat(childPlan.networkGroups()).isEmpty();
+
+            // Root button ordering: Hosted Network -> Favorites -> Worlds -> All Worlds -> Operations
+            final List<AetheryteDialogFactory.RootButtonSpec> rootButtons = AetheryteDialogFactory.planRootButtons(hubPlan);
+            assertThat(rootButtons).containsExactly(
+                    new AetheryteDialogFactory.RootButtonSpec.NetworkCategory(new NetworkGroup(net1Id, "Capital Transit", 1)),
+                    new AetheryteDialogFactory.RootButtonSpec.FavoritesCategory(0),
+                    new AetheryteDialogFactory.RootButtonSpec.WorldCategory(hubPlan.worldGroups().get(0)),
+                    new AetheryteDialogFactory.RootButtonSpec.AllWorldsCategory(1),
+                    new AetheryteDialogFactory.RootButtonSpec.Operations()
+            );
+        } finally {
+            serverField.set(null, null);
+        }
+    }
+
+    @Test
+    void rootButtonPlanHandlesMultipleNetworksPartialAccessBlankNameAndAllWorldsSuppression() throws Exception {
+        final Field serverField = Bukkit.class.getDeclaredField("server");
+        serverField.setAccessible(true);
+        try {
+            final Server server = mock(Server.class);
+            final World world = mock(World.class);
+            when(world.getUID()).thenReturn(SOURCE_WORLD_ID);
+            when(world.getName()).thenReturn("world");
+            when(world.getEnvironment()).thenReturn(World.Environment.NORMAL);
+            when(world.getPersistentDataContainer()).thenReturn(mock(PersistentDataContainer.class));
+            when(server.getWorld(SOURCE_WORLD_ID)).thenReturn(world);
+            serverField.set(null, server);
+
+            final ClickPortals plugin = mock(ClickPortals.class);
+            final AetheryteRegistry registry = new AetheryteRegistry();
+            final Messages messages = Messages.defaults();
+            final AetheryteService service = new AetheryteService(
+                    plugin,
+                    registry,
+                    VariationRegistry.defaults(),
+                    NoopHologramService.INSTANCE,
+                    messages,
+                    () -> -1,
+                    (p, s, d) -> WarpEvaluation.permitted(Component.text("Free"))
+            );
+            final AetheryteDialogFactory factory = new AetheryteDialogFactory(service, messages);
+
+            final UUID ownerId = UUID.randomUUID();
+            final UUID otherId = UUID.randomUUID();
+            final UUID betaNetId = UUID.randomUUID();
+            final UUID alphaNetId = UUID.randomUUID();
+            final UUID blankNetId = UUID.randomUUID();
+
+            final Aetheryte hub = new Aetheryte(
+                    UUID.randomUUID(), "CentralHub", SOURCE_WORLD_ID, "world", 0, 64, 0, ownerId, 1L
+            );
+            final Aetheryte betaPublic = new Aetheryte(
+                    UUID.randomUUID(), "BetaPublic", SOURCE_WORLD_ID, "world", 10, 64, 0, otherId, 2L,
+                    Aetheryte.DEFAULT_VARIATION, "Bob", AetheryteVisibility.PUBLIC, Set.of(), betaNetId
+            );
+            final Aetheryte betaPrivate = new Aetheryte(
+                    UUID.randomUUID(), "BetaPrivate", SOURCE_WORLD_ID, "world", 20, 64, 0, otherId, 3L,
+                    Aetheryte.DEFAULT_VARIATION, "Bob", AetheryteVisibility.OWNER_ONLY, Set.of(), blankNetId
+            );
+            final Aetheryte alphaPublic = new Aetheryte(
+                    UUID.randomUUID(), "AlphaPublic", SOURCE_WORLD_ID, "world", 30, 64, 0, ownerId, 4L,
+                    Aetheryte.DEFAULT_VARIATION, "Alice", AetheryteVisibility.PUBLIC, Set.of(), alphaNetId
+            );
+            // Alpha & Beta networks are PUBLIC while blankNet is OWNER_ONLY for otherId,
+            // so blankNet's child is excluded and normalReachableCount stays 0.
+            final AetheryteNetwork betaNet = new AetheryteNetwork(
+                    betaNetId, "Beta Line", SOURCE_WORLD_ID, "world", ownerId, "Alice", 1L,
+                    AetheryteVisibility.PUBLIC, Set.of(), hub.id()
+            );
+            final AetheryteNetwork alphaNet = new AetheryteNetwork(
+                    alphaNetId, "Alpha Line", SOURCE_WORLD_ID, "world", ownerId, "Alice", 2L,
+                    AetheryteVisibility.PUBLIC, Set.of(), hub.id()
+            );
+            final AetheryteNetwork blankNet = new AetheryteNetwork(
+                    blankNetId, "   ", SOURCE_WORLD_ID, "world", otherId, "Bob", 3L,
+                    AetheryteVisibility.OWNER_ONLY, Set.of(), hub.id()
+            );
+
+            registry.register(world, hub);
+            registry.register(world, betaPublic);
+            registry.register(world, betaPrivate);
+            registry.register(world, alphaPublic);
+            registry.registerNetwork(world, betaNet);
+            registry.registerNetwork(world, alphaNet);
+            registry.registerNetwork(world, blankNet);
+
+            final Player viewer = mock(Player.class);
+            when(viewer.getUniqueId()).thenReturn(ownerId);
+            when(viewer.locale()).thenReturn(Locale.US);
+            when(viewer.hasPermission(Permissions.USE)).thenReturn(true);
+
+            final List<Aetheryte> all = registry.getAll();
+            final AetheryteDialogFactory.RootMenuPlan plan = factory.planRootMenu(viewer, hub, all);
+            assertThat(plan.networkGroups()).containsExactly(
+                    new NetworkGroup(alphaNetId, "Alpha Line", 1),
+                    new NetworkGroup(betaNetId, "Beta Line", 1)
+            );
+            assertThat(plan.normalReachableCount()).isZero();
+            assertThat(plan.totalReachableCount()).isEqualTo(2);
+
+            final List<AetheryteDialogFactory.RootButtonSpec> buttons = AetheryteDialogFactory.planRootButtons(plan);
+            assertThat(buttons).containsExactly(
+                    new AetheryteDialogFactory.RootButtonSpec.NetworkCategory(new NetworkGroup(alphaNetId, "Alpha Line", 1)),
+                    new AetheryteDialogFactory.RootButtonSpec.NetworkCategory(new NetworkGroup(betaNetId, "Beta Line", 1)),
+                    new AetheryteDialogFactory.RootButtonSpec.FavoritesCategory(0),
+                    new AetheryteDialogFactory.RootButtonSpec.Operations()
+            );
+
+            // Blank network name falls back to UUID string in scope label
+            final Component blankScope = factory.resolveScopeLabel(
+                    viewer, WarpDialogState.root(WarpSortOrder.NAME).toNetwork(blankNetId), all
+            );
+            assertThat(PLAIN.serialize(blankScope)).contains(blankNetId.toString());
         } finally {
             serverField.set(null, null);
         }
