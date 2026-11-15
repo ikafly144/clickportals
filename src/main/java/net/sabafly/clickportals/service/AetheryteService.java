@@ -3095,55 +3095,18 @@ public final class AetheryteService {
             return;
         }
 
-        final String normalizedVar = Aetheryte.normalizeVariation(initial.variation());
-        final AetheryteVariation variation = variationRegistry.getOrDefault(normalizedVar);
-        final CostBundle placementCostBundle = new CostBundle(resolvePlacementCostEntries(variation, targetVisibility));
-        final EconomyProvider activeEconomy = this.economyProvider;
-        final boolean creative = actor.getGameMode() == GameMode.CREATIVE;
-        final boolean bypassCost = Permissions.canBypassPlaceCost(actor);
-
-        CostQuote chargedCost = CostQuote.FREE;
-        if (!creative && !bypassCost && !placementCostBundle.isEmpty()) {
-            final CostQuote targetQuote = computePlacementCostQuote(
-                    actor, initial.ownerId(), normalizedVar, targetVisibility, activeEconomy);
-            if (!targetQuote.isFree()) {
-                if (!targetQuote.affordable()) {
-                    final Component reason = CostFormatter.formatMissingRequirements(
-                            actor, targetQuote, activeEconomy, messages);
-                    actor.sendMessage(messages.get(
-                            actor,
-                            MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT,
-                            Placeholder.component("reason", reason)
-                    ));
-                    soundService.playError(actor, normalizedVar);
-                    return;
-                }
-                final CostBundle.ChargeResult chargeResult = placementCostBundle.chargeWithResult(
-                        actor, targetQuote, activeEconomy);
-                if (!chargeResult.success()) {
-                    if (!chargeResult.unrefundedItems().isEmpty()) {
-                        recordPendingRefund(actor.getUniqueId(), chargeResult.unrefundedItems());
-                    }
-                    final Component reason = CostFormatter.formatMissingRequirements(
-                            actor, targetQuote, activeEconomy, messages);
-                    actor.sendMessage(messages.get(
-                            actor,
-                            MessageKey.ERROR_PLACEMENT_COST_INSUFFICIENT,
-                            Placeholder.component("reason", reason)
-                    ));
-                    soundService.playError(actor, normalizedVar);
-                    return;
-                }
-                chargedCost = chargeResult.chargedQuote();
-            }
+        final String normalizedVar = network != null
+                ? resolveNetworkVisibilityVariationId(network, initial.variation())
+                : Aetheryte.normalizeVariation(initial.variation());
+        final UUID costOwnerId = network != null ? network.ownerId() : initial.ownerId();
+        final @Nullable VisibilityChargeContext chargeContext =
+                chargeVisibilityChange(actor, costOwnerId, normalizedVar, targetVisibility);
+        if (chargeContext == null) {
+            return;
         }
-
-        final CostQuote finalChargedCost = chargedCost;
-        final Runnable rollbackCharge = () -> {
-            if (!finalChargedCost.isFree()) {
-                refundCostQuoteToPlayer(actor, placementCostBundle, finalChargedCost, activeEconomy);
-            }
-        };
+        final CostQuote finalChargedCost = chargeContext.chargedCost();
+        final EconomyProvider activeEconomy = chargeContext.economy();
+        final Runnable rollbackCharge = chargeContext.rollback();
 
         if (network != null) {
             final World world = Bukkit.getWorld(network.worldId());
@@ -3194,6 +3157,22 @@ public final class AetheryteService {
     }
 
     /**
+     * Resolves the variation id used for network visibility costs (preferring the network's Hub variation) (#27).
+     */
+    public String resolveNetworkVisibilityVariationId(
+            final AetheryteNetwork network,
+            final String fallbackVariation
+    ) {
+        if (network.hubAetheryteId() != null) {
+            final @Nullable Aetheryte hub = registry.getById(network.hubAetheryteId()).orElse(null);
+            if (hub != null) {
+                return Aetheryte.normalizeVariation(hub.variation());
+            }
+        }
+        return Aetheryte.normalizeVariation(fallbackVariation);
+    }
+
+    /**
      * Changes the visibility of an {@link AetheryteNetwork} directly by its ID from a Hub management dialog (#27).
      */
     public void changeNetworkVisibilityById(
@@ -3223,7 +3202,39 @@ public final class AetheryteService {
         final @Nullable Aetheryte hub = network.hubAetheryteId() != null
                 ? registry.getById(network.hubAetheryteId()).orElse(null)
                 : null;
-        final String normalizedVar = hub != null ? Aetheryte.normalizeVariation(hub.variation()) : Aetheryte.DEFAULT_VARIATION;
+        final String normalizedVar = resolveNetworkVisibilityVariationId(network, Aetheryte.DEFAULT_VARIATION);
+        final @Nullable VisibilityChargeContext chargeContext =
+                chargeVisibilityChange(actor, network.ownerId(), normalizedVar, targetVisibility);
+        if (chargeContext == null) {
+            return;
+        }
+        final Location regionLocation = hub != null ? hub.blockLocation(world) : world.getSpawnLocation();
+        executeNetworkVisibilityChange(
+                actor,
+                network.id(),
+                network.visibility(),
+                targetVisibility,
+                world,
+                regionLocation,
+                chargeContext.chargedCost(),
+                chargeContext.economy(),
+                chargeContext.rollback()
+        );
+    }
+
+    private record VisibilityChargeContext(
+            CostQuote chargedCost,
+            EconomyProvider economy,
+            Runnable rollback
+    ) {
+    }
+
+    private @Nullable VisibilityChargeContext chargeVisibilityChange(
+            final Player actor,
+            final UUID ownerId,
+            final String normalizedVar,
+            final AetheryteVisibility targetVisibility
+    ) {
         final AetheryteVariation variation = variationRegistry.getOrDefault(normalizedVar);
         final CostBundle placementCostBundle = new CostBundle(resolvePlacementCostEntries(variation, targetVisibility));
         final EconomyProvider activeEconomy = this.economyProvider;
@@ -3233,7 +3244,7 @@ public final class AetheryteService {
         CostQuote chargedCost = CostQuote.FREE;
         if (!creative && !bypassCost && !placementCostBundle.isEmpty()) {
             final CostQuote targetQuote = computePlacementCostQuote(
-                    actor, network.ownerId(), normalizedVar, targetVisibility, activeEconomy);
+                    actor, ownerId, normalizedVar, targetVisibility, activeEconomy);
             if (!targetQuote.isFree()) {
                 if (!targetQuote.affordable()) {
                     final Component reason = CostFormatter.formatMissingRequirements(
@@ -3244,7 +3255,7 @@ public final class AetheryteService {
                             Placeholder.component("reason", reason)
                     ));
                     soundService.playError(actor, normalizedVar);
-                    return;
+                    return null;
                 }
                 final CostBundle.ChargeResult chargeResult = placementCostBundle.chargeWithResult(
                         actor, targetQuote, activeEconomy);
@@ -3260,7 +3271,7 @@ public final class AetheryteService {
                             Placeholder.component("reason", reason)
                     ));
                     soundService.playError(actor, normalizedVar);
-                    return;
+                    return null;
                 }
                 chargedCost = chargeResult.chargedQuote();
             }
@@ -3271,18 +3282,7 @@ public final class AetheryteService {
                 refundCostQuoteToPlayer(actor, placementCostBundle, finalChargedCost, activeEconomy);
             }
         };
-        final Location regionLocation = hub != null ? hub.blockLocation(world) : world.getSpawnLocation();
-        executeNetworkVisibilityChange(
-                actor,
-                network.id(),
-                network.visibility(),
-                targetVisibility,
-                world,
-                regionLocation,
-                finalChargedCost,
-                activeEconomy,
-                rollbackCharge
-        );
+        return new VisibilityChargeContext(finalChargedCost, activeEconomy, rollbackCharge);
     }
 
     private void executeNetworkVisibilityChange(
@@ -3369,16 +3369,16 @@ public final class AetheryteService {
             return;
         }
 
-        final UUID ownerId = actor.getUniqueId();
+        final UUID networkOwnerId = hub.ownerId();
         final boolean bypassLimit = Permissions.canBypassLimit(actor);
         final int maxGlobal = bypassLimit ? -1 : maxNetworksPerPlayerSupplier.getAsInt();
         final int maxVar = bypassLimit ? -1 : hubVar.network().limit().maxPerPlayerOrDefault();
-        if (maxGlobal >= 0 && registry.countNetworksByOwner(ownerId) >= maxGlobal) {
+        if (maxGlobal >= 0 && registry.countNetworksByOwner(networkOwnerId) >= maxGlobal) {
             actor.sendMessage(messages.errorNetworkLimitGlobal(actor, maxGlobal));
             soundService.playError(actor, hubVarId);
             return;
         }
-        if (maxVar >= 0 && registry.countNetworksByOwnerAndVariation(ownerId, hubVarId) >= maxVar) {
+        if (maxVar >= 0 && registry.countNetworksByOwnerAndVariation(networkOwnerId, hubVarId) >= maxVar) {
             actor.sendMessage(messages.errorNetworkLimitVariation(actor, hubVar.displayName(), maxVar));
             soundService.playError(actor, hubVarId);
             return;
@@ -3391,8 +3391,8 @@ public final class AetheryteService {
         CostQuote chargedCost = CostQuote.FREE;
         if (!creative && !bypassCost && !createBundle.isEmpty()) {
             final Map<String, Double> costVars = Map.of(
-                    "owned_count", (double) registry.countByOwner(ownerId),
-                    "variation_count", (double) registry.countByOwnerAndVariation(ownerId, hubVarId)
+                    "owned_count", (double) registry.countByOwner(networkOwnerId),
+                    "variation_count", (double) registry.countByOwnerAndVariation(networkOwnerId, hubVarId)
             );
             final CostQuote quoted = createBundle.quote(actor, costVars, activeEconomy);
             if (!quoted.isFree()) {
@@ -3409,7 +3409,7 @@ public final class AetheryteService {
                 final CostBundle.ChargeResult chargeResult = createBundle.chargeWithResult(actor, quoted, activeEconomy);
                 if (!chargeResult.success()) {
                     if (!chargeResult.unrefundedItems().isEmpty()) {
-                        recordPendingRefund(ownerId, chargeResult.unrefundedItems());
+                        recordPendingRefund(actor.getUniqueId(), chargeResult.unrefundedItems());
                     }
                     final Component reason = CostFormatter.formatMissingRequirements(actor, quoted, activeEconomy, messages);
                     actor.sendMessage(messages.get(

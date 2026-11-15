@@ -45,13 +45,19 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.sabafly.clickportals.aetheryte.Aetheryte;
 import net.sabafly.clickportals.aetheryte.AetheryteNetwork;
-import net.sabafly.clickportals.aetheryte.AetheryteVisibility;
 import net.sabafly.clickportals.aetheryte.AetheryteRegistry;
+import net.sabafly.clickportals.aetheryte.AetheryteVisibility;
+import net.sabafly.clickportals.config.VisibilityCostSection;
+import net.sabafly.clickportals.cost.CostEntry;
+import net.sabafly.clickportals.cost.CostType;
 import net.sabafly.clickportals.dialog.WarpSortOrder;
+import net.sabafly.clickportals.economy.EconomyProvider;
 import net.sabafly.clickportals.message.Messages;
 import net.sabafly.clickportals.model.AetheryteModelService;
 import net.sabafly.clickportals.permission.Permissions;
 import net.sabafly.clickportals.variation.AetheryteVariation;
+import net.sabafly.clickportals.variation.AetheryteVariation.NetworkSection;
+import net.sabafly.clickportals.variation.AetheryteVariation.PlacementSection;
 import net.sabafly.clickportals.variation.VariationRegistry;
 import net.sabafly.clickportals.visual.HologramService;
 import org.bukkit.Bukkit;
@@ -634,6 +640,101 @@ class AetheryteManagementServiceTest {
                     .isEqualTo("OldName");
             verify(originalOwner, atLeastOnce()).sendMessage(any(Component.class));
         });
+    }
+
+    @Test
+    void resolveNetworkVisibilityVariationIdPrefersHubVariationAndFallsBack() {
+        final Aetheryte hub = new Aetheryte(
+                UUID.randomUUID(), "Hub", worldId, "world", 0, 64, 0,
+                ownerId, 1000L, "customhub", "Owner");
+        registry.register(world, hub);
+        final AetheryteNetwork netWithHub = new AetheryteNetwork(
+                UUID.randomUUID(), "Net", worldId, "world",
+                ownerId, "Owner", 1000L, AetheryteVisibility.PUBLIC, Set.of(), hub.id());
+        final AetheryteNetwork netMissingHub = new AetheryteNetwork(
+                UUID.randomUUID(), "OrphanNet", worldId, "world",
+                ownerId, "Owner", 1000L, AetheryteVisibility.PUBLIC, Set.of(), UUID.randomUUID());
+
+        assertThat(service.resolveNetworkVisibilityVariationId(netWithHub, "guild"))
+                .isEqualTo("customhub");
+        assertThat(service.resolveNetworkVisibilityVariationId(netMissingHub, "guild"))
+                .isEqualTo("guild");
+    }
+
+    @Test
+    void createNetworkOnHubEnforcesHubOwnerLimitWhenAdminCreates() throws Exception {
+        final Aetheryte hub = createAetheryte("OwnerHub", ownerId, "Alice");
+        registry.register(world, hub);
+        final AetheryteNetwork existing = new AetheryteNetwork(
+                UUID.randomUUID(), "ExistingNet", worldId, "world",
+                ownerId, "Alice", 1000L, AetheryteVisibility.PUBLIC, Set.of(), hub.id());
+        registry.registerNetwork(world, existing);
+        service.setMaxNetworksPerPlayerSupplier(() -> 1);
+
+        final Player admin = mockPlayer(otherPlayerId, "Admin");
+        when(admin.hasPermission(Permissions.ADMIN)).thenReturn(true);
+
+        withMockServer(() -> service.createNetworkOnHub(admin, hub.id(), "SecondNet", AetheryteVisibility.PUBLIC));
+
+        assertThat(registry.getNetworksByHub(hub.id())).hasSize(1);
+        verify(admin, atLeastOnce()).sendMessage(any(Component.class));
+    }
+
+    @Test
+    void changeVisibilityFromChildUsesHubVisibilityCostConsistently() throws Exception {
+        final AetheryteVariation def = AetheryteVariation.defaultVariation();
+        final VisibilityCostSection hubVisCost = new VisibilityCostSection(
+                List.of(),
+                List.of(),
+                List.of(new CostEntry(CostType.VAULT.id(), "500", true))
+        );
+        final AetheryteVariation hubVar = new AetheryteVariation(
+                def.displayName(), AetheryteVariation.VariationType.NORMAL, def.item(), def.recipe(),
+                def.model(), def.hitbox(), def.teleport(),
+                new PlacementSection(def.placement().clearance(), List.of(), def.placement().minDistance(), hubVisCost),
+                def.limit(), def.warp(), def.network(), def.bettermodel(), def.sounds()
+        );
+        final AetheryteVariation childVar = new AetheryteVariation(
+                def.displayName(), AetheryteVariation.VariationType.NETWORK, def.item(), def.recipe(),
+                def.model(), def.hitbox(), def.teleport(),
+                new PlacementSection(def.placement().clearance(), List.of(), def.placement().minDistance(), VisibilityCostSection.inherit()),
+                def.limit(), def.warp(), NetworkSection.defaults(), def.bettermodel(), def.sounds()
+        );
+        when(variationRegistry.getOrDefault("hubvar")).thenReturn(hubVar);
+        when(variationRegistry.getOrDefault("childvar")).thenReturn(childVar);
+
+        final EconomyProvider economy = mock(EconomyProvider.class);
+        when(economy.isAvailable()).thenReturn(true);
+        when(economy.getBalance(any())).thenReturn(100.0);
+        when(economy.format(ArgumentMatchers.anyDouble()))
+                .thenAnswer(inv -> Double.toString(inv.getArgument(0, Double.class)));
+        service.setEconomyProvider(economy);
+
+        final Aetheryte hub = new Aetheryte(
+                UUID.randomUUID(), "Hub", worldId, "world", 0, 64, 0,
+                ownerId, 1000L, "hubvar", "Alice");
+        registry.register(world, hub);
+        final AetheryteNetwork network = new AetheryteNetwork(
+                UUID.randomUUID(), "Net", worldId, "world",
+                ownerId, "Alice", 1000L, AetheryteVisibility.PUBLIC, Set.of(), hub.id());
+        registry.registerNetwork(world, network);
+        final Aetheryte child = new Aetheryte(
+                UUID.randomUUID(), "Child", worldId, "world", 20, 64, 20,
+                ownerId, 1000L, "childvar", "Alice", AetheryteVisibility.PUBLIC, Set.of(), network.id());
+        registry.register(world, child);
+
+        final Player actor = mockPlayer(ownerId, "Alice");
+        when(actor.getGameMode()).thenReturn(GameMode.SURVIVAL);
+
+        withMockServer(() -> {
+            // Attempting from child with balance 100 must be denied by Hub's 500 money cost
+            service.changeVisibility(actor, child.id(), AetheryteVisibility.OWNER_ONLY);
+        });
+
+        assertThat(registry.getNetworkById(network.id())).get()
+                .extracting(AetheryteNetwork::visibility)
+                .isEqualTo(AetheryteVisibility.PUBLIC);
+        verify(economy, never()).withdraw(any(), ArgumentMatchers.anyDouble());
     }
 
     private Aetheryte createAetheryte(final String name, final UUID owner, @Nullable final String ownerName) {

@@ -1325,8 +1325,8 @@ public final class AetheryteDialogFactory {
                 ? createBundle.quote(
                         player,
                         Map.of(
-                                "owned_count", (double) service.registry().countByOwner(player.getUniqueId()),
-                                "variation_count", (double) service.registry().countByOwnerAndVariation(player.getUniqueId(), hub.variation())
+                                "owned_count", (double) service.registry().countByOwner(hub.ownerId()),
+                                "variation_count", (double) service.registry().countByOwnerAndVariation(hub.ownerId(), hub.variation())
                         ),
                         economy)
                 : CostQuote.FREE;
@@ -1423,8 +1423,8 @@ public final class AetheryteDialogFactory {
                 ? createBundle.quote(
                         player,
                         Map.of(
-                                "owned_count", (double) service.registry().countByOwner(player.getUniqueId()),
-                                "variation_count", (double) service.registry().countByOwnerAndVariation(player.getUniqueId(), hub.variation())
+                                "owned_count", (double) service.registry().countByOwner(hub.ownerId()),
+                                "variation_count", (double) service.registry().countByOwnerAndVariation(hub.ownerId(), hub.variation())
                         ),
                         economy)
                 : CostQuote.FREE;
@@ -1699,7 +1699,7 @@ public final class AetheryteDialogFactory {
                 network.name(),
                 network.visibility(),
                 network.invitedPlayers(),
-                hub.variation(),
+                service.resolveNetworkVisibilityVariationId(network, hub.variation()),
                 network.ownerId(),
                 clicker -> openNetworkVisibilityDialog(clicker, hub, network, returnState),
                 (clicker, mode) -> service.changeNetworkVisibilityById(clicker, network.id(), mode),
@@ -1749,13 +1749,17 @@ public final class AetheryteDialogFactory {
         final AetheryteVisibility effectiveVisibility = network != null ? network.visibility() : target.visibility();
         final Set<UUID> effectiveInvitees = network != null ? network.invitedPlayers() : target.invitedPlayers();
         final String titleName = network != null ? network.name() : target.name();
+        final String costVariationId = network != null
+                ? service.resolveNetworkVisibilityVariationId(network, target.variation())
+                : target.variation();
+        final UUID costOwnerId = network != null ? network.ownerId() : target.ownerId();
         showVisibilityMenu(
                 player,
                 titleName,
                 effectiveVisibility,
                 effectiveInvitees,
-                target.variation(),
-                target.ownerId(),
+                costVariationId,
+                costOwnerId,
                 clicker -> openVisibilityDialog(clicker, target, returnState),
                 (clicker, mode) -> service.changeVisibility(clicker, target.id(), mode),
                 clicker -> openInviteAddDialog(clicker, target, returnState),
@@ -2024,10 +2028,12 @@ public final class AetheryteDialogFactory {
                         .afterAction(DialogBase.DialogAfterAction.NONE)
                         .body(List.of(DialogBody.plainMessage(body)))
                         .build())
-                .type(DialogType.multiAction(buttons)
-                        .columns(1)
-                        .exitAction(backButton)
-                        .build())
+                .type(buttons.isEmpty()
+                        ? DialogType.notice(backButton)
+                        : DialogType.multiAction(buttons)
+                                .columns(1)
+                                .exitAction(backButton)
+                                .build())
         );
         player.showDialog(dialog);
     }
