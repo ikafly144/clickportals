@@ -1,5 +1,5 @@
 [versions]
-paper-api = "26.3.build.244-stable"
+paper-api = "26.3.build.252-stable"
 jspecify = "1.0.1"
 errorprone-core = "2.52.0"
 nullaway = "0.14.3"
