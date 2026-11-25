@@ -16,7 +16,7 @@ run-paper = "3.1.0"
 resource-factory = "1.4.0"
 shadow = "9.6.1"
 errorprone-plugin = "5.2.0"
-spotless = "8.11.0"
+spotless = "8.12.0"
 foojay-resolver = "1.0.0"
 
 [libraries]
